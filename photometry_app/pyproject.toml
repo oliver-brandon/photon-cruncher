@@ -1,25 +1,35 @@
 [project]
-name = "photometry_app"
+name = "photon-cruncher"
 version = "0.1.0"
 description = "Fiber photometry analysis suite with MATLAB-faithful preprocessing."
 requires-python = ">=3.11"
-readme = "../README.md"
+readme = "README.md"
 dependencies = [
     "numpy>=1.25",
     "scipy>=1.11",
     "pandas>=2.0",
     "PySide6>=6.6",
+    "matplotlib>=3.8",
 ]
 
 [project.scripts]
-photometry-app = "photometry_app.main:main"
+photon-cruncher = "photometry_app.main:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["."]
+[tool.setuptools]
+package-dir = { "photometry_app" = "." }
+packages = [
+    "photometry_app",
+    "photometry_app.analysis",
+    "photometry_app.export",
+    "photometry_app.gui",
+    "photometry_app.io",
+    "photometry_app.processing",
+    "photometry_app.tests",
+]
 
 [tool.black]
 line-length = 88

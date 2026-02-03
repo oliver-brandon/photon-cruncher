@@ -1,4 +1,16 @@
-# Photon Cruncher
+Metadata-Version: 2.4
+Name: photometry_app
+Version: 0.1.0
+Summary: Fiber photometry analysis suite with MATLAB-faithful preprocessing.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.25
+Requires-Dist: scipy>=1.11
+Requires-Dist: pandas>=2.0
+Requires-Dist: PySide6>=6.6
+Requires-Dist: matplotlib>=3.8
+
+# Photometry App
 
 Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. The
 pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
@@ -25,7 +37,7 @@ pip install -e photometry_app
 ## Run
 
 ```bash
-photon-cruncher
+photometry-app
 ```
 
 ## Data Expectations

@@ -1,0 +1,2 @@
+[console_scripts]
+photometry-app = photometry_app.main:main

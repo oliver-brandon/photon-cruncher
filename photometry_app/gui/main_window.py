@@ -1,31 +1,52 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 from PySide6 import QtCore, QtWidgets
 
-from photometry_app.analysis.runner import run_session
+from photometry_app.analysis.runner import AnalysisResult
+from photometry_app.export.exporter import export_channel
 from photometry_app.io.loader import load_session
-from photometry_app.processing.pipeline import available_channels
+from photometry_app.processing.pipeline import (
+    ProcessingSettings,
+    available_channels,
+    default_settings_for_channel,
+    process_channel,
+)
+
+
+class WorkerSignals(QtCore.QObject):
+    result = QtCore.Signal(object)
+    error = QtCore.Signal(str)
+    finished = QtCore.Signal()
 
 
 class Worker(QtCore.QRunnable):
-    def __init__(self, fn, *args, **kwargs):
+    def __init__(self, fn: Callable[[], object]):
         super().__init__()
         self.fn = fn
-        self.args = args
-        self.kwargs = kwargs
+        self.signals = WorkerSignals()
 
     @QtCore.Slot()
     def run(self) -> None:
-        self.fn(*self.args, **self.kwargs)
+        try:
+            result = self.fn()
+        except Exception as exc:  # pragma: no cover - UI feedback
+            self.signals.error.emit(str(exc))
+        else:
+            self.signals.result.emit(result)
+        finally:
+            self.signals.finished.emit()
 
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Photometry App")
-        self.resize(1200, 800)
+        self.setWindowTitle("Photon Cruncher")
+        self.resize(1400, 900)
 
         self.thread_pool = QtCore.QThreadPool()
 
@@ -33,27 +54,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self.import_tab = QtWidgets.QWidget()
-        self.mapping_tab = QtWidgets.QWidget()
-        self.epoc_tab = QtWidgets.QWidget()
-        self.preprocess_tab = QtWidgets.QWidget()
         self.visualize_tab = QtWidgets.QWidget()
-        self.export_tab = QtWidgets.QWidget()
 
         self.tabs.addTab(self.import_tab, "Import")
-        self.tabs.addTab(self.mapping_tab, "Channel Mapping")
-        self.tabs.addTab(self.epoc_tab, "Epoc Selection")
-        self.tabs.addTab(self.preprocess_tab, "Preprocess")
         self.tabs.addTab(self.visualize_tab, "Align + Visualize")
-        self.tabs.addTab(self.export_tab, "Export")
 
         self._build_import()
-        self._build_mapping()
-        self._build_epoc()
-        self._build_preprocess()
         self._build_visualize()
-        self._build_export()
 
         self.session = None
+        self.results_by_channel: dict[str, AnalysisResult] = {}
+        self._active_worker: Worker | None = None
+
+        self._set_run_state(is_running=False)
 
     def _build_import(self) -> None:
         layout = QtWidgets.QVBoxLayout()
@@ -70,45 +83,147 @@ class MainWindow(QtWidgets.QMainWindow):
         self.metadata_view.setReadOnly(True)
         layout.addWidget(self.metadata_view)
 
-    def _build_mapping(self) -> None:
-        layout = QtWidgets.QVBoxLayout()
-        self.mapping_tab.setLayout(layout)
-        self.mapping_label = QtWidgets.QLabel("Channels will appear after import.")
-        layout.addWidget(self.mapping_label)
-
-    def _build_epoc(self) -> None:
-        layout = QtWidgets.QVBoxLayout()
-        self.epoc_tab.setLayout(layout)
-        self.epoc_combo = QtWidgets.QComboBox()
-        layout.addWidget(QtWidgets.QLabel("Reference epoc"))
-        layout.addWidget(self.epoc_combo)
-
-    def _build_preprocess(self) -> None:
-        layout = QtWidgets.QVBoxLayout()
-        self.preprocess_tab.setLayout(layout)
-        self.preprocess_label = QtWidgets.QLabel(
-            "Defaults: TRANGE [-2, 7], BASELINE_PER [-3, -1], downsample 10x"
-        )
-        layout.addWidget(self.preprocess_label)
-
     def _build_visualize(self) -> None:
         layout = QtWidgets.QVBoxLayout()
         self.visualize_tab.setLayout(layout)
-        self.run_button = QtWidgets.QPushButton("Run Analysis")
-        self.run_button.clicked.connect(self._run_analysis)
-        layout.addWidget(self.run_button)
+
+        splitter = QtWidgets.QSplitter()
+        splitter.setOrientation(QtCore.Qt.Horizontal)
+        layout.addWidget(splitter)
+
+        control_widget = QtWidgets.QWidget()
+        control_layout = QtWidgets.QVBoxLayout()
+        control_widget.setLayout(control_layout)
+        splitter.addWidget(control_widget)
+
+        plot_widget = QtWidgets.QWidget()
+        plot_layout = QtWidgets.QVBoxLayout()
+        plot_widget.setLayout(plot_layout)
+        splitter.addWidget(plot_widget)
+        splitter.setStretchFactor(1, 1)
+
+        control_layout.addWidget(QtWidgets.QLabel("Reference epoc"))
+        self.epoc_combo = QtWidgets.QComboBox()
+        self.epoc_combo.currentTextChanged.connect(self._update_epoc_display)
+        control_layout.addWidget(self.epoc_combo)
+        self.epoc_display = QtWidgets.QLabel("No epoc selected")
+        control_layout.addWidget(self.epoc_display)
+
+        self.channel_list = QtWidgets.QListWidget()
+        self.channel_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        control_layout.addWidget(QtWidgets.QLabel("Channels to analyze"))
+        control_layout.addWidget(self.channel_list)
+
+        settings_group = QtWidgets.QGroupBox("Processing Settings")
+        settings_layout = QtWidgets.QFormLayout()
+        settings_group.setLayout(settings_layout)
+
+        self.trange_start = QtWidgets.QDoubleSpinBox()
+        self.trange_start.setRange(-60.0, 60.0)
+        self.trange_start.setDecimals(2)
+        self.trange_start.setValue(-2.0)
+        self.trange_end = QtWidgets.QDoubleSpinBox()
+        self.trange_end.setRange(-60.0, 120.0)
+        self.trange_end.setDecimals(2)
+        self.trange_end.setValue(5.0)
+        settings_layout.addRow("TRANGE start", self.trange_start)
+        settings_layout.addRow("TRANGE end", self.trange_end)
+
+        self.baseline_start = QtWidgets.QDoubleSpinBox()
+        self.baseline_start.setRange(-60.0, 60.0)
+        self.baseline_start.setDecimals(2)
+        self.baseline_start.setValue(-3.0)
+        self.baseline_end = QtWidgets.QDoubleSpinBox()
+        self.baseline_end.setRange(-60.0, 60.0)
+        self.baseline_end.setDecimals(2)
+        self.baseline_end.setValue(-1.0)
+        settings_layout.addRow("Baseline start", self.baseline_start)
+        settings_layout.addRow("Baseline end", self.baseline_end)
+
+        self.base_adjust = QtWidgets.QDoubleSpinBox()
+        self.base_adjust.setRange(-120.0, 0.0)
+        self.base_adjust.setDecimals(1)
+        self.base_adjust.setValue(-2.0)
+        settings_layout.addRow("Baseline adjust", self.base_adjust)
+
+        self.downsample_factor = QtWidgets.QSpinBox()
+        self.downsample_factor.setRange(1, 200)
+        self.downsample_factor.setValue(10)
+        settings_layout.addRow("Downsample factor", self.downsample_factor)
+
+        self.smooth_factor = QtWidgets.QSpinBox()
+        self.smooth_factor.setRange(1, 200)
+        self.smooth_factor.setValue(10)
+        settings_layout.addRow("Smooth factor", self.smooth_factor)
+
+        self.use_channel_smooth = QtWidgets.QCheckBox("Use channel default smoothing")
+        self.use_channel_smooth.setChecked(True)
+        settings_layout.addRow("", self.use_channel_smooth)
+
+        self.plot_smooth = QtWidgets.QCheckBox("Plot smoothed")
+        self.plot_smooth.setChecked(True)
+        settings_layout.addRow("", self.plot_smooth)
+
+        self.set_baseline = QtWidgets.QCheckBox("Apply baseline correction")
+        self.set_baseline.setChecked(True)
+        settings_layout.addRow("", self.set_baseline)
+
+        self.artifact_405 = QtWidgets.QDoubleSpinBox()
+        self.artifact_405.setRange(0.0, 1e6)
+        self.artifact_405.setDecimals(2)
+        self.artifact_405.setValue(1e6)
+        settings_layout.addRow("Artifact 405", self.artifact_405)
+
+        self.artifact_465 = QtWidgets.QDoubleSpinBox()
+        self.artifact_465.setRange(0.0, 1e6)
+        self.artifact_465.setDecimals(2)
+        self.artifact_465.setValue(1e6)
+        settings_layout.addRow("Artifact 465", self.artifact_465)
+
+        control_layout.addWidget(settings_group)
+
+        button_row = QtWidgets.QHBoxLayout()
+        self.preview_button = QtWidgets.QPushButton("Preview Signals")
+        self.preview_button.clicked.connect(self._preview_signals)
+        button_row.addWidget(self.preview_button)
+
+        self.export_csv_button = QtWidgets.QPushButton("Export CSV")
+        self.export_csv_button.clicked.connect(self._export_csv)
+        button_row.addWidget(self.export_csv_button)
+
+        self.export_fig_button = QtWidgets.QPushButton("Export Figures")
+        self.export_fig_button.clicked.connect(self._export_figures)
+        button_row.addWidget(self.export_fig_button)
+
+        control_layout.addLayout(button_row)
+
+        folder_row = QtWidgets.QHBoxLayout()
+        self.output_dir_input = QtWidgets.QLineEdit()
+        self.output_dir_input.setText(str(Path.home() / "photometry_exports"))
+        folder_row.addWidget(self.output_dir_input)
+        self.output_dir_button = QtWidgets.QPushButton("Choose Output Folder")
+        self.output_dir_button.clicked.connect(self._choose_output_dir)
+        folder_row.addWidget(self.output_dir_button)
+        control_layout.addLayout(folder_row)
 
         self.results_box = QtWidgets.QTextEdit()
         self.results_box.setReadOnly(True)
-        layout.addWidget(self.results_box)
+        control_layout.addWidget(self.results_box)
 
-    def _build_export(self) -> None:
-        layout = QtWidgets.QVBoxLayout()
-        self.export_tab.setLayout(layout)
-        self.export_label = QtWidgets.QLabel(
-            "Exports include heatmap/time/PSTH CSV + settings JSON."
-        )
-        layout.addWidget(self.export_label)
+        plot_controls = QtWidgets.QHBoxLayout()
+        plot_controls.addWidget(QtWidgets.QLabel("Display channel"))
+        self.display_channel = QtWidgets.QComboBox()
+        self.display_channel.currentTextChanged.connect(self._update_plot_for_channel)
+        plot_controls.addWidget(self.display_channel)
+        plot_controls.addStretch()
+        plot_layout.addLayout(plot_controls)
+
+        self.figure = Figure(figsize=(7, 6))
+        self.canvas = FigureCanvas(self.figure)
+        plot_layout.addWidget(self.canvas)
+
+        self.status_bar = QtWidgets.QStatusBar()
+        self.setStatusBar(self.status_bar)
 
     def _select_file(self) -> None:
         path_str, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -122,21 +237,70 @@ class MainWindow(QtWidgets.QMainWindow):
         self.metadata_view.setText(str(self.session.info))
         self._refresh_channels()
         self._refresh_epocs()
+        self._clear_results()
 
     def _refresh_channels(self) -> None:
         if not self.session:
             return
         channel_map = available_channels(self.session)
-        channels = ", ".join(channel_map.keys()) or "No channels detected"
-        self.mapping_label.setText(f"Detected channels: {channels}")
+        self.channel_list.clear()
+        for channel in channel_map.keys():
+            item = QtWidgets.QListWidgetItem(channel)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.Checked)
+            self.channel_list.addItem(item)
 
     def _refresh_epocs(self) -> None:
         if not self.session:
             return
         self.epoc_combo.clear()
         self.epoc_combo.addItems(sorted(self.session.epocs.keys()))
+        self._update_epoc_display(self.epoc_combo.currentText())
 
-    def _run_analysis(self) -> None:
+    def _update_epoc_display(self, value: str) -> None:
+        self.epoc_display.setText(value or "No epoc selected")
+
+    def _set_run_state(self, is_running: bool) -> None:
+        self.preview_button.setEnabled(not is_running)
+        self.export_csv_button.setEnabled(bool(self.results_by_channel) and not is_running)
+        self.export_fig_button.setEnabled(bool(self.results_by_channel) and not is_running)
+        self.status_bar.showMessage("Running analysis..." if is_running else "Ready")
+
+    def _finish_run(self) -> None:
+        self._set_run_state(False)
+        self._active_worker = None
+
+    def _clear_results(self) -> None:
+        self.results_by_channel = {}
+        self.display_channel.clear()
+        self.results_box.clear()
+        self.figure.clear()
+        self.canvas.draw_idle()
+        self._set_run_state(is_running=False)
+
+    def _selected_channels(self) -> list[str]:
+        channels = []
+        for idx in range(self.channel_list.count()):
+            item = self.channel_list.item(idx)
+            if item.checkState() == QtCore.Qt.Checked:
+                channels.append(item.text())
+        return channels
+
+    def _build_settings_for_channel(self, channel_key: str) -> ProcessingSettings:
+        settings = default_settings_for_channel(channel_key)
+        settings.trange = (self.trange_start.value(), self.trange_end.value())
+        settings.baseline_per = (self.baseline_start.value(), self.baseline_end.value())
+        settings.base_adjust = self.base_adjust.value()
+        settings.plot_smooth = self.plot_smooth.isChecked()
+        settings.set_baseline = self.set_baseline.isChecked()
+        settings.downsample_factor = int(self.downsample_factor.value())
+        settings.artifact_405 = self.artifact_405.value()
+        settings.artifact_465 = self.artifact_465.value()
+        if not self.use_channel_smooth.isChecked():
+            settings.smooth_factor = int(self.smooth_factor.value())
+        return settings
+
+    def _preview_signals(self) -> None:
         if not self.session:
             self.results_box.setText("Load a session first.")
             return
@@ -145,18 +309,194 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results_box.setText("Select an epoc.")
             return
 
-        def task() -> None:
-            results = run_session(self.session, epoc_name)
+        channel_keys = self._selected_channels()
+        if not channel_keys:
+            channel_keys = list(available_channels(self.session).keys())
+        if not channel_keys:
+            self.results_box.setText("No channels available.")
+            return
+
+        def task() -> list[AnalysisResult]:
+            if epoc_name not in self.session.epocs:
+                raise ValueError(f"Epoc '{epoc_name}' not found.")
+            epoc = self.session.epocs[epoc_name]
+            channel_map = available_channels(self.session)
+            results: list[AnalysisResult] = []
+            for channel_key in channel_keys:
+                if channel_key not in channel_map:
+                    continue
+                iso_stream, signal_stream, _ = channel_map[channel_key]
+                settings = self._build_settings_for_channel(channel_key)
+                processed = process_channel(
+                    self.session, iso_stream, signal_stream, epoc, settings
+                )
+                results.append(
+                    AnalysisResult(
+                        session=self.session,
+                        epoc=epoc,
+                        channel_key=channel_key,
+                        processed=processed,
+                        settings=settings,
+                        stream_store=(iso_stream, signal_stream),
+                    )
+                )
+            return results
+
+        def handle_results(results: list[AnalysisResult]) -> None:
+            self.results_by_channel = {result.channel_key: result for result in results}
+            self.display_channel.blockSignals(True)
+            self.display_channel.clear()
+            self.display_channel.addItems(list(self.results_by_channel.keys()))
+            self.display_channel.blockSignals(False)
+
             summary = [
                 f"{result.channel_key}: trials={result.processed.zall.shape[0]}"
                 for result in results
             ]
-            QtCore.QMetaObject.invokeMethod(
-                self.results_box,
-                "setText",
-                QtCore.Qt.QueuedConnection,
-                QtCore.Q_ARG(str, "\n".join(summary) or "No results."),
-            )
+            self.results_box.setText("\n".join(summary) or "No results.")
+            if results:
+                self.display_channel.setCurrentText(results[0].channel_key)
+                self._plot_result(results[0])
+            self._finish_run()
 
         worker = Worker(task)
+        worker.setAutoDelete(False)
+        worker.signals.result.connect(handle_results)
+        worker.signals.error.connect(self._show_error)
+        worker.signals.finished.connect(self._finish_run)
+        self._set_run_state(True)
+        self._active_worker = worker
         self.thread_pool.start(worker)
+
+    def _update_plot_for_channel(self, channel_key: str) -> None:
+        if not channel_key:
+            return
+        result = self.results_by_channel.get(channel_key)
+        if result:
+            self._plot_result(result)
+
+    def _plot_result(self, result: AnalysisResult) -> None:
+        self.figure.clear()
+        ax_heatmap = self.figure.add_subplot(2, 1, 1)
+        ax_line = self.figure.add_subplot(2, 1, 2)
+
+        processed = result.processed
+        ts = processed.ts
+        if result.settings.plot_smooth:
+            z_data = processed.zall_smooth
+            mean = processed.mean_z_smooth
+            sem = processed.sem_z_smooth
+        else:
+            z_data = processed.zall
+            mean = processed.mean_z
+            sem = processed.sem_z
+
+        heatmap = ax_heatmap.imshow(
+            z_data,
+            aspect="auto",
+            origin="lower",
+            extent=[ts[0], ts[-1], 1, z_data.shape[0]],
+            cmap="viridis",
+        )
+        ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
+        ax_heatmap.set_ylabel("Trial")
+        self.figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
+
+        ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
+        ax_line.fill_between(
+            ts, mean - sem, mean + sem, color="#1f77b4", alpha=0.2, label="SEM"
+        )
+        ax_line.axvline(0, color="#222222", linestyle="--", linewidth=1)
+        ax_line.set_xlabel("Time (s)")
+        ax_line.set_ylabel("Z-score")
+        ax_line.set_title("Mean ± SEM")
+        ax_line.legend(loc="upper right")
+
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+    def _choose_output_dir(self) -> None:
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select Output Folder", self.output_dir_input.text()
+        )
+        if directory:
+            self.output_dir_input.setText(directory)
+
+    def _export_csv(self) -> None:
+        if not self.results_by_channel:
+            self._show_error("Run preview first to generate results.")
+            return
+        output_dir = Path(self.output_dir_input.text()).expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for result in self.results_by_channel.values():
+            export_channel(
+                output_dir=output_dir,
+                session_name=result.session.source_path.stem,
+                epoc_name=result.epoc.name,
+                channel_key=result.channel_key,
+                processed=result.processed,
+                settings=result.settings,
+                dropped_trials=[],
+                stream_store=result.stream_store,
+                metadata={
+                    "source_path": str(result.session.source_path),
+                    **result.session.info,
+                },
+                export_smoothed=result.settings.plot_smooth,
+            )
+        self.status_bar.showMessage(f"CSV exported to {output_dir}")
+
+    def _export_figures(self) -> None:
+        if not self.results_by_channel:
+            self._show_error("Run preview first to generate results.")
+            return
+        output_dir = Path(self.output_dir_input.text()).expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for result in self.results_by_channel.values():
+            self._save_figures(output_dir, result)
+        self.status_bar.showMessage(f"Figures exported to {output_dir}")
+
+    def _save_figures(self, output_dir: Path, result: AnalysisResult) -> None:
+        fig = Figure(figsize=(7, 6))
+        ax_heatmap = fig.add_subplot(2, 1, 1)
+        ax_line = fig.add_subplot(2, 1, 2)
+
+        processed = result.processed
+        ts = processed.ts
+        if result.settings.plot_smooth:
+            z_data = processed.zall_smooth
+            mean = processed.mean_z_smooth
+            sem = processed.sem_z_smooth
+        else:
+            z_data = processed.zall
+            mean = processed.mean_z
+            sem = processed.sem_z
+
+        heatmap = ax_heatmap.imshow(
+            z_data,
+            aspect="auto",
+            origin="lower",
+            extent=[ts[0], ts[-1], 1, z_data.shape[0]],
+            cmap="viridis",
+        )
+        ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
+        ax_heatmap.set_ylabel("Trial")
+        fig.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
+
+        ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
+        ax_line.fill_between(
+            ts, mean - sem, mean + sem, color="#1f77b4", alpha=0.2, label="SEM"
+        )
+        ax_line.axvline(0, color="#222222", linestyle="--", linewidth=1)
+        ax_line.set_xlabel("Time (s)")
+        ax_line.set_ylabel("Z-score")
+        ax_line.set_title("Mean ± SEM")
+        ax_line.legend(loc="upper right")
+
+        fig.tight_layout()
+        prefix = f"{result.session.source_path.stem}_{result.epoc.name}_{result.channel_key}"
+        fig.savefig(output_dir / f"{prefix}_summary.png", dpi=150)
+
+    def _show_error(self, message: str) -> None:
+        self.results_box.setText(message)
+        self.status_bar.showMessage(message)
