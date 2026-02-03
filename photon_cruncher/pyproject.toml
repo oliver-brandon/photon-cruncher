@@ -13,22 +13,22 @@ dependencies = [
 ]
 
 [project.scripts]
-photon-cruncher = "photometry_app.main:main"
+photon-cruncher = "photon_cruncher.main:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = { "photometry_app" = "." }
+package-dir = { "photon_cruncher" = "." }
 packages = [
-    "photometry_app",
-    "photometry_app.analysis",
-    "photometry_app.export",
-    "photometry_app.gui",
-    "photometry_app.io",
-    "photometry_app.processing",
-    "photometry_app.tests",
+    "photon_cruncher",
+    "photon_cruncher.analysis",
+    "photon_cruncher.export",
+    "photon_cruncher.gui",
+    "photon_cruncher.io",
+    "photon_cruncher.processing",
+    "photon_cruncher.tests",
 ]
 
 [tool.black]

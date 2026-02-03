@@ -1,5 +1,5 @@
 Metadata-Version: 2.4
-Name: photometry_app
+Name: photon-cruncher
 Version: 0.1.0
 Summary: Fiber photometry analysis suite with MATLAB-faithful preprocessing.
 Requires-Python: >=3.11
@@ -10,7 +10,7 @@ Requires-Dist: pandas>=2.0
 Requires-Dist: PySide6>=6.6
 Requires-Dist: matplotlib>=3.8
 
-# Photometry App
+# Photon Cruncher
 
 Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. The
 pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
@@ -23,7 +23,7 @@ processing, and exports all plotted data as CSV.
 ```bash
 conda create -n photometry-app python=3.11
 conda activate photometry-app
-pip install -e photometry_app
+pip install -e photon_cruncher
 ```
 
 ### venv
@@ -31,13 +31,13 @@ pip install -e photometry_app
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e photometry_app
+pip install -e photon_cruncher
 ```
 
 ## Run
 
 ```bash
-photometry-app
+photon-cruncher
 ```
 
 ## Data Expectations
@@ -49,5 +49,5 @@ TDTbin2mat, with streams/epocs schema described in the project prompt.
 
 * The preprocessing pipeline follows the MATLAB script exactly, including
   downsampling, regression, baseline logic, and smoothing.
-* Export outputs include heatmap, time vector, PSTH mean/SEM, and settings JSON
-  per session + epoc + channel.
+* Export outputs include heatmap CSVs with the time vector in the first row,
+  followed by per-trial z-score rows.

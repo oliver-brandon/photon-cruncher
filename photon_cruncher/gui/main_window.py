@@ -7,10 +7,10 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PySide6 import QtCore, QtWidgets
 
-from photometry_app.analysis.runner import AnalysisResult
-from photometry_app.export.exporter import export_channel
-from photometry_app.io.loader import load_session
-from photometry_app.processing.pipeline import (
+from photon_cruncher.analysis.runner import AnalysisResult
+from photon_cruncher.export.exporter import export_channel
+from photon_cruncher.io.loader import load_session
+from photon_cruncher.processing.pipeline import (
     ProcessingSettings,
     available_channels,
     default_settings_for_channel,
@@ -397,6 +397,7 @@ class MainWindow(QtWidgets.QMainWindow):
             origin="lower",
             extent=[ts[0], ts[-1], 1, z_data.shape[0]],
             cmap="viridis",
+            interpolation="nearest",
         )
         ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
         ax_heatmap.set_ylabel("Trial")
@@ -478,6 +479,7 @@ class MainWindow(QtWidgets.QMainWindow):
             origin="lower",
             extent=[ts[0], ts[-1], 1, z_data.shape[0]],
             cmap="viridis",
+            interpolation="nearest",
         )
         ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
         ax_heatmap.set_ylabel("Trial")
@@ -495,7 +497,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         fig.tight_layout()
         prefix = f"{result.session.source_path.stem}_{result.epoc.name}_{result.channel_key}"
-        fig.savefig(output_dir / f"{prefix}_summary.png", dpi=150)
+        fig.savefig(output_dir / f"{prefix}_summary.png", dpi=300)
 
     def _show_error(self, message: str) -> None:
         self.results_box.setText(message)

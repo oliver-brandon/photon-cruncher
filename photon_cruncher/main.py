@@ -4,7 +4,7 @@ import sys
 
 from PySide6 import QtWidgets
 
-from photometry_app.gui.main_window import MainWindow
+from photon_cruncher.gui.main_window import MainWindow
 
 
 def main() -> None:

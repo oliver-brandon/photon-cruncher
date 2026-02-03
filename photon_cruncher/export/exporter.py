@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from photometry_app.processing.pipeline import ProcessedSignal, ProcessingSettings
+from photon_cruncher.processing.pipeline import ProcessedSignal, ProcessingSettings
 
 
 def export_channel(

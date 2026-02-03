@@ -5,7 +5,7 @@ from typing import Iterable
 
 import numpy as np
 
-from photometry_app.model import Epoc, PhotometrySession
+from photon_cruncher.model import Epoc, PhotometrySession
 
 
 @dataclass

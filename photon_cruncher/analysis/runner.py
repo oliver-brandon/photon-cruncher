@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from photometry_app.export.exporter import export_batch_summary, export_channel
-from photometry_app.io.loader import load_session
-from photometry_app.model import Epoc, PhotometrySession
-from photometry_app.processing.pipeline import (
+from photon_cruncher.export.exporter import export_batch_summary, export_channel
+from photon_cruncher.io.loader import load_session
+from photon_cruncher.model import Epoc, PhotometrySession
+from photon_cruncher.processing.pipeline import (
     ProcessedSignal,
     ProcessingSettings,
     available_channels,

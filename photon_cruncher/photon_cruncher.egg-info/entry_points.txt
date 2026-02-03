@@ -1,0 +1,2 @@
+[console_scripts]
+photon-cruncher = photon_cruncher.main:main

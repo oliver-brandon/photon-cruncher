@@ -11,7 +11,7 @@ processing, and exports all plotted data as CSV.
 ```bash
 conda create -n photometry-app python=3.11
 conda activate photometry-app
-pip install -e photometry_app
+pip install -e photon_cruncher
 ```
 
 ### venv
@@ -19,7 +19,7 @@ pip install -e photometry_app
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e photometry_app
+pip install -e photon_cruncher
 ```
 
 ## Run
@@ -37,5 +37,5 @@ TDTbin2mat, with streams/epocs schema described in the project prompt.
 
 * The preprocessing pipeline follows the MATLAB script exactly, including
   downsampling, regression, baseline logic, and smoothing.
-* Export outputs include heatmap, time vector, PSTH mean/SEM, and settings JSON
-  per session + epoc + channel.
+* Export outputs include heatmap CSVs with the time vector in the first row,
+  followed by per-trial z-score rows.

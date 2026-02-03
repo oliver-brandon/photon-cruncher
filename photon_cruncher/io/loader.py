@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 from scipy.io import loadmat
 
-from photometry_app.model import Epoc, PhotometrySession, Stream
+from photon_cruncher.model import Epoc, PhotometrySession, Stream
 
 
 def _mat_to_dict(obj: Any) -> Any:
