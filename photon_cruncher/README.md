@@ -9,8 +9,8 @@ processing, and exports all plotted data as CSV.
 ### Conda (Recommended)
 
 ```bash
-conda create -n photometry-app python=3.11
-conda activate photometry-app
+conda create -n photon-cruncher python=3.11
+conda activate photon-cruncher
 pip install -e photon_cruncher
 ```
 
@@ -26,6 +26,14 @@ pip install -e photon_cruncher
 
 ```bash
 photon-cruncher
+```
+
+## macOS Dock Icon (Optional)
+
+To reliably set the Dock icon at runtime, install the optional macOS extra:
+
+```bash
+pip install -e "photon_cruncher[macos]"
 ```
 
 ## Data Expectations
