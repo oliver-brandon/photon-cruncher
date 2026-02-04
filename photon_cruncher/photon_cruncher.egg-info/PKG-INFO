@@ -9,6 +9,8 @@ Requires-Dist: scipy>=1.11
 Requires-Dist: pandas>=2.0
 Requires-Dist: PySide6>=6.6
 Requires-Dist: matplotlib>=3.8
+Provides-Extra: macos
+Requires-Dist: pyobjc; extra == "macos"
 
 # Photon Cruncher
 
@@ -38,6 +40,14 @@ pip install -e photon_cruncher
 
 ```bash
 photon-cruncher
+```
+
+## macOS Dock Icon (Optional)
+
+To reliably set the Dock icon at runtime, install the optional macOS extra:
+
+```bash
+pip install -e "photon_cruncher[macos]"
 ```
 
 ## Data Expectations

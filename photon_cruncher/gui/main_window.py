@@ -7,7 +7,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PySide6 import QtCore, QtWidgets
 
-from photon_cruncher.analysis.runner import AnalysisResult
+from photon_cruncher.analysis.runner import AnalysisResult, run_batch_custom
 from photon_cruncher.export.exporter import export_channel
 from photon_cruncher.io.loader import load_session
 from photon_cruncher.processing.pipeline import (
@@ -47,10 +47,19 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.setWindowTitle("Photon Cruncher")
         self.resize(1400, 900)
+        self.setMinimumSize(900, 700)
+        self.setMaximumSize(QtCore.QSize(16777215, 16777215))
+
+        QtCore.QCoreApplication.setOrganizationName("PhotonCruncher")
+        QtCore.QCoreApplication.setApplicationName("PhotonCruncher")
+        self.settings = QtCore.QSettings()
 
         self.thread_pool = QtCore.QThreadPool()
 
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding
+        )
         self.setCentralWidget(self.tabs)
 
         self.import_tab = QtWidgets.QWidget()
@@ -72,7 +81,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout()
         self.import_tab.setLayout(layout)
 
-        self.file_picker = QtWidgets.QPushButton("Select MAT File")
+        self.file_picker = QtWidgets.QPushButton("Select MAT File(s)")
         self.file_picker.clicked.connect(self._select_file)
         layout.addWidget(self.file_picker)
 
@@ -85,6 +94,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_visualize(self) -> None:
         layout = QtWidgets.QVBoxLayout()
+        layout.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
         self.visualize_tab.setLayout(layout)
 
         splitter = QtWidgets.QSplitter()
@@ -93,11 +103,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         control_widget = QtWidgets.QWidget()
         control_layout = QtWidgets.QVBoxLayout()
+        control_layout.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
         control_widget.setLayout(control_layout)
-        splitter.addWidget(control_widget)
+
+        control_scroll = QtWidgets.QScrollArea()
+        control_scroll.setWidgetResizable(True)
+        control_scroll.setWidget(control_widget)
+        splitter.addWidget(control_scroll)
 
         plot_widget = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout()
+        plot_layout.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
         plot_widget.setLayout(plot_layout)
         splitter.addWidget(plot_widget)
         splitter.setStretchFactor(1, 1)
@@ -199,12 +215,47 @@ class MainWindow(QtWidgets.QMainWindow):
 
         folder_row = QtWidgets.QHBoxLayout()
         self.output_dir_input = QtWidgets.QLineEdit()
-        self.output_dir_input.setText(str(Path.home() / "photometry_exports"))
+        saved_output = self.settings.value("output_dir", str(Path.home() / "photometry_exports"))
+        self.output_dir_input.setText(saved_output)
         folder_row.addWidget(self.output_dir_input)
         self.output_dir_button = QtWidgets.QPushButton("Choose Output Folder")
         self.output_dir_button.clicked.connect(self._choose_output_dir)
         folder_row.addWidget(self.output_dir_button)
         control_layout.addLayout(folder_row)
+
+        batch_group = QtWidgets.QGroupBox("Batch Processing")
+        batch_layout = QtWidgets.QVBoxLayout()
+        batch_group.setLayout(batch_layout)
+
+        self.batch_file_list = QtWidgets.QListWidget()
+        batch_layout.addWidget(QtWidgets.QLabel("Batch files (.mat)"))
+        batch_layout.addWidget(self.batch_file_list)
+
+        batch_buttons = QtWidgets.QHBoxLayout()
+        self.batch_add_files = QtWidgets.QPushButton("Add Files")
+        self.batch_add_files.clicked.connect(self._add_batch_files)
+        batch_buttons.addWidget(self.batch_add_files)
+        self.batch_add_folder = QtWidgets.QPushButton("Add Folder")
+        self.batch_add_folder.clicked.connect(self._add_batch_folder)
+        batch_buttons.addWidget(self.batch_add_folder)
+        self.batch_clear = QtWidgets.QPushButton("Clear")
+        self.batch_clear.clicked.connect(self._clear_batch_files)
+        batch_buttons.addWidget(self.batch_clear)
+        batch_layout.addLayout(batch_buttons)
+
+        batch_layout.addWidget(QtWidgets.QLabel("Epocs to include"))
+        self.batch_epoc_list = QtWidgets.QListWidget()
+        self.batch_epoc_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        batch_layout.addWidget(self.batch_epoc_list)
+
+        self.batch_run_button = QtWidgets.QPushButton("Run Batch")
+        self.batch_run_button.clicked.connect(self._run_batch)
+        batch_layout.addWidget(self.batch_run_button)
+
+        self.batch_progress = QtWidgets.QLabel("")
+        batch_layout.addWidget(self.batch_progress)
+
+        control_layout.addWidget(batch_group)
 
         self.results_box = QtWidgets.QTextEdit()
         self.results_box.setReadOnly(True)
@@ -226,18 +277,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setStatusBar(self.status_bar)
 
     def _select_file(self) -> None:
-        path_str, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Select MAT File", str(Path.home()), "MAT Files (*.mat)"
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "Select MAT File(s)", str(Path.home()), "MAT Files (*.mat)"
         )
-        if not path_str:
+        if not paths:
             return
-        path = Path(path_str)
-        self.session = load_session(path)
-        self.session_label.setText(f"Loaded: {path.name}")
+        path_list = [Path(path) for path in paths]
+        primary = path_list[0]
+        self.session = load_session(primary)
+        self.session_label.setText(f"Loaded: {primary.name}")
         self.metadata_view.setText(str(self.session.info))
         self._refresh_channels()
         self._refresh_epocs()
         self._clear_results()
+        if len(path_list) > 1:
+            self._add_batch_paths(path_list)
 
     def _refresh_channels(self) -> None:
         if not self.session:
@@ -256,14 +310,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.epoc_combo.clear()
         self.epoc_combo.addItems(sorted(self.session.epocs.keys()))
         self._update_epoc_display(self.epoc_combo.currentText())
+        self._refresh_batch_epocs()
 
     def _update_epoc_display(self, value: str) -> None:
         self.epoc_display.setText(value or "No epoc selected")
+
+    def _refresh_batch_epocs(self) -> None:
+        self.batch_epoc_list.clear()
+        if not self.session:
+            return
+        for epoc_name in sorted(self.session.epocs.keys()):
+            item = QtWidgets.QListWidgetItem(epoc_name)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setCheckState(QtCore.Qt.Checked)
+            self.batch_epoc_list.addItem(item)
 
     def _set_run_state(self, is_running: bool) -> None:
         self.preview_button.setEnabled(not is_running)
         self.export_csv_button.setEnabled(bool(self.results_by_channel) and not is_running)
         self.export_fig_button.setEnabled(bool(self.results_by_channel) and not is_running)
+        self.batch_run_button.setEnabled(not is_running)
         self.status_bar.showMessage("Running analysis..." if is_running else "Ready")
 
     def _finish_run(self) -> None:
@@ -285,6 +351,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if item.checkState() == QtCore.Qt.Checked:
                 channels.append(item.text())
         return channels
+
+    def _selected_batch_epocs(self) -> list[str]:
+        epocs = []
+        for idx in range(self.batch_epoc_list.count()):
+            item = self.batch_epoc_list.item(idx)
+            if item.checkState() == QtCore.Qt.Checked:
+                epocs.append(item.text())
+        return epocs
 
     def _build_settings_for_channel(self, channel_key: str) -> ProcessingSettings:
         settings = default_settings_for_channel(channel_key)
@@ -422,6 +496,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if directory:
             self.output_dir_input.setText(directory)
+            self.settings.setValue("output_dir", directory)
 
     def _export_csv(self) -> None:
         if not self.results_by_channel:
@@ -499,6 +574,137 @@ class MainWindow(QtWidgets.QMainWindow):
         prefix = f"{result.session.source_path.stem}_{result.epoc.name}_{result.channel_key}"
         fig.savefig(output_dir / f"{prefix}_summary.png", dpi=300)
 
+    def _add_batch_files(self) -> None:
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self, "Select MAT Files", str(Path.home()), "MAT Files (*.mat)"
+        )
+        if not paths:
+            return
+        self._add_batch_paths([Path(path) for path in paths])
+
+    def _add_batch_folder(self) -> None:
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select Folder", str(Path.home())
+        )
+        if not folder:
+            return
+        paths = sorted(Path(folder).glob("*.mat"))
+        self._add_batch_paths(paths)
+
+    def _add_batch_paths(self, paths: list[Path]) -> None:
+        existing = {
+            self.batch_file_list.item(idx).data(QtCore.Qt.UserRole)
+            for idx in range(self.batch_file_list.count())
+        }
+        first_loaded = False
+        for path in paths:
+            resolved = str(path.resolve())
+            if resolved in existing:
+                continue
+            item = QtWidgets.QListWidgetItem(path.name)
+            item.setToolTip(resolved)
+            item.setData(QtCore.Qt.UserRole, resolved)
+            self.batch_file_list.addItem(item)
+            if self.session is None and not first_loaded:
+                self.session = load_session(path)
+                self.session_label.setText(f"Loaded: {path.name}")
+                self.metadata_view.setText(str(self.session.info))
+                self._refresh_channels()
+                self._refresh_epocs()
+                first_loaded = True
+
+    def _clear_batch_files(self) -> None:
+        self.batch_file_list.clear()
+
+    def _run_batch(self) -> None:
+        if self.batch_file_list.count() == 0:
+            self._show_error("Add batch files before running.")
+            return
+        if not self.session:
+            first_path = Path(self.batch_file_list.item(0).data(QtCore.Qt.UserRole))
+            self.session = load_session(first_path)
+            self.session_label.setText(f"Loaded: {first_path.name}")
+            self.metadata_view.setText(str(self.session.info))
+            self._refresh_channels()
+            self._refresh_epocs()
+
+        input_paths = [
+            Path(self.batch_file_list.item(idx).data(QtCore.Qt.UserRole))
+            for idx in range(self.batch_file_list.count())
+        ]
+        epoc_names = self._selected_batch_epocs()
+        if not epoc_names:
+            self._show_error("Select at least one epoc for batch processing.")
+            return
+
+        def task() -> str:
+            output_dir = Path(self.output_dir_input.text()).expanduser()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            empty_epocs: dict[str, list[str]] = {}
+            for path in input_paths:
+                session = load_session(path)
+                empty = [
+                    epoc
+                    for epoc in epoc_names
+                    if epoc in session.epocs and session.epocs[epoc].onset.size == 0
+                ]
+                if empty:
+                    empty_epocs[str(path)] = empty
+
+            run_batch_custom(
+                input_paths=input_paths,
+                epoc_names=epoc_names,
+                output_dir=output_dir,
+                channel_keys=channel_keys,
+                settings_factory=self._build_settings_for_channel,
+                export_summary=False,
+                per_session_subdir=True,
+            )
+            skipped = {}
+            for path in input_paths:
+                session = load_session(path)
+                missing = [epoc for epoc in epoc_names if epoc not in session.epocs]
+                empty = [
+                    epoc
+                    for epoc in epoc_names
+                    if epoc in session.epocs and session.epocs[epoc].onset.size == 0
+                ]
+                combined = missing + empty
+                if combined:
+                    skipped[str(path)] = combined
+
+            if skipped:
+                skipped_details = "; ".join(
+                    f"{Path(path).name}: {', '.join(epocs)}"
+                    for path, epocs in skipped.items()
+                )
+                return (
+                    f"Batch export complete ({len(input_paths)} files). "
+                    f"Skipped epocs: {skipped_details}"
+                )
+            return f"Batch export complete ({len(input_paths)} files)."
+
+        channel_keys = self._selected_channels()
+        if not channel_keys:
+            channel_keys = list(available_channels(self.session).keys())
+
+        def handle_done(message: str) -> None:
+            self.batch_progress.setText(message)
+            self.status_bar.showMessage(message)
+            self._finish_run()
+
+        worker = Worker(task)
+        worker.setAutoDelete(False)
+        worker.signals.result.connect(handle_done)
+        worker.signals.error.connect(self._show_error)
+        worker.signals.finished.connect(self._finish_run)
+        self.batch_progress.setText("Running batch...")
+        self._set_run_state(True)
+        self._active_worker = worker
+        self.thread_pool.start(worker)
+
     def _show_error(self, message: str) -> None:
         self.results_box.setText(message)
+        if hasattr(self, "batch_progress"):
+            self.batch_progress.setText(message)
         self.status_bar.showMessage(message)
