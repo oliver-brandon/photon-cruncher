@@ -64,15 +64,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.import_tab = QtWidgets.QWidget()
         self.visualize_tab = QtWidgets.QWidget()
+        self.batch_tab = QtWidgets.QWidget()
 
         self.tabs.addTab(self.import_tab, "Import")
         self.tabs.addTab(self.visualize_tab, "Align + Visualize")
+        self.tabs.addTab(self.batch_tab, "Batch Export")
 
         self._build_import()
         self._build_visualize()
+        self._build_batch()
 
         self.session = None
+        self._active_session_path: Path | None = None
         self.results_by_channel: dict[str, AnalysisResult] = {}
+        self.channel_smooth_overrides: dict[str, int] = {}
+        self.channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
         self._active_worker: Worker | None = None
 
         self._set_run_state(is_running=False)
@@ -99,6 +105,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         splitter = QtWidgets.QSplitter()
         splitter.setOrientation(QtCore.Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setCollapsible(0, False)
+        self.visualize_splitter = splitter
         layout.addWidget(splitter)
 
         control_widget = QtWidgets.QWidget()
@@ -109,6 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         control_scroll = QtWidgets.QScrollArea()
         control_scroll.setWidgetResizable(True)
         control_scroll.setWidget(control_widget)
+        control_scroll.setMinimumWidth(430)
         splitter.addWidget(control_scroll)
 
         plot_widget = QtWidgets.QWidget()
@@ -117,6 +127,12 @@ class MainWindow(QtWidgets.QMainWindow):
         plot_widget.setLayout(plot_layout)
         splitter.addWidget(plot_widget)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([520, 880])
+
+        control_layout.addWidget(QtWidgets.QLabel("Preview file"))
+        self.preview_file_combo = QtWidgets.QComboBox()
+        self.preview_file_combo.currentIndexChanged.connect(self._on_preview_file_changed)
+        control_layout.addWidget(self.preview_file_combo)
 
         control_layout.addWidget(QtWidgets.QLabel("Reference epoc"))
         self.epoc_combo = QtWidgets.QComboBox()
@@ -129,6 +145,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.channel_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         control_layout.addWidget(QtWidgets.QLabel("Channels to analyze"))
         control_layout.addWidget(self.channel_list)
+
+        channel_smooth_group = QtWidgets.QGroupBox("Channel Smoothing")
+        channel_smooth_layout = QtWidgets.QFormLayout()
+        channel_smooth_group.setLayout(channel_smooth_layout)
+        self.channel_smooth_container = channel_smooth_group
+        self.channel_smooth_layout = channel_smooth_layout
+        control_layout.addWidget(channel_smooth_group)
 
         settings_group = QtWidgets.QGroupBox("Processing Settings")
         settings_layout = QtWidgets.QFormLayout()
@@ -167,15 +190,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.downsample_factor.setValue(10)
         settings_layout.addRow("Downsample factor", self.downsample_factor)
 
-        self.smooth_factor = QtWidgets.QSpinBox()
-        self.smooth_factor.setRange(1, 200)
-        self.smooth_factor.setValue(10)
-        settings_layout.addRow("Smooth factor", self.smooth_factor)
-
-        self.use_channel_smooth = QtWidgets.QCheckBox("Use channel default smoothing")
-        self.use_channel_smooth.setChecked(True)
-        settings_layout.addRow("", self.use_channel_smooth)
-
         self.plot_smooth = QtWidgets.QCheckBox("Plot smoothed")
         self.plot_smooth.setChecked(True)
         settings_layout.addRow("", self.plot_smooth)
@@ -213,15 +227,54 @@ class MainWindow(QtWidgets.QMainWindow):
 
         control_layout.addLayout(button_row)
 
-        folder_row = QtWidgets.QHBoxLayout()
+        self.results_box = QtWidgets.QTextEdit()
+        self.results_box.setReadOnly(True)
+        control_layout.addWidget(self.results_box)
+
+        plot_controls = QtWidgets.QHBoxLayout()
+        plot_controls.addWidget(QtWidgets.QLabel("Display channel"))
+        self.display_channel = QtWidgets.QComboBox()
+        self.display_channel.currentTextChanged.connect(self._update_plot_for_channel)
+        plot_controls.addWidget(self.display_channel)
+        plot_controls.addStretch()
+        plot_layout.addLayout(plot_controls)
+
+        self.figure = Figure(figsize=(7, 6))
+        self.canvas = FigureCanvas(self.figure)
+        plot_layout.addWidget(self.canvas)
+
+        self.status_bar = QtWidgets.QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+    def _build_batch(self) -> None:
+        layout = QtWidgets.QVBoxLayout()
+        self.batch_tab.setLayout(layout)
+
+        output_group = QtWidgets.QGroupBox("Export Output")
+        output_layout = QtWidgets.QVBoxLayout()
+        output_group.setLayout(output_layout)
+        output_path_row = QtWidgets.QHBoxLayout()
         self.output_dir_input = QtWidgets.QLineEdit()
-        saved_output = self.settings.value("output_dir", str(Path.home() / "photometry_exports"))
+        saved_output = self.settings.value(
+            "output_dir", str(Path.home() / "photometry_exports")
+        )
         self.output_dir_input.setText(saved_output)
-        folder_row.addWidget(self.output_dir_input)
+        output_path_row.addWidget(self.output_dir_input)
         self.output_dir_button = QtWidgets.QPushButton("Choose Output Folder")
         self.output_dir_button.clicked.connect(self._choose_output_dir)
-        folder_row.addWidget(self.output_dir_button)
-        control_layout.addLayout(folder_row)
+        output_path_row.addWidget(self.output_dir_button)
+        output_layout.addLayout(output_path_row)
+
+        export_actions_row = QtWidgets.QHBoxLayout()
+        self.batch_export_csv_button = QtWidgets.QPushButton("Export CSV")
+        self.batch_export_csv_button.clicked.connect(self._export_csv)
+        export_actions_row.addWidget(self.batch_export_csv_button)
+        self.batch_export_fig_button = QtWidgets.QPushButton("Export Figures")
+        self.batch_export_fig_button.clicked.connect(self._export_figures)
+        export_actions_row.addWidget(self.batch_export_fig_button)
+        export_actions_row.addStretch()
+        output_layout.addLayout(export_actions_row)
+        layout.addWidget(output_group)
 
         batch_group = QtWidgets.QGroupBox("Batch Processing")
         batch_layout = QtWidgets.QVBoxLayout()
@@ -254,27 +307,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.batch_progress = QtWidgets.QLabel("")
         batch_layout.addWidget(self.batch_progress)
-
-        control_layout.addWidget(batch_group)
-
-        self.results_box = QtWidgets.QTextEdit()
-        self.results_box.setReadOnly(True)
-        control_layout.addWidget(self.results_box)
-
-        plot_controls = QtWidgets.QHBoxLayout()
-        plot_controls.addWidget(QtWidgets.QLabel("Display channel"))
-        self.display_channel = QtWidgets.QComboBox()
-        self.display_channel.currentTextChanged.connect(self._update_plot_for_channel)
-        plot_controls.addWidget(self.display_channel)
-        plot_controls.addStretch()
-        plot_layout.addLayout(plot_controls)
-
-        self.figure = Figure(figsize=(7, 6))
-        self.canvas = FigureCanvas(self.figure)
-        plot_layout.addWidget(self.canvas)
-
-        self.status_bar = QtWidgets.QStatusBar()
-        self.setStatusBar(self.status_bar)
+        layout.addWidget(batch_group)
+        layout.addStretch()
 
     def _select_file(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -283,26 +317,45 @@ class MainWindow(QtWidgets.QMainWindow):
         if not paths:
             return
         path_list = [Path(path) for path in paths]
-        primary = path_list[0]
-        self.session = load_session(primary)
-        self.session_label.setText(f"Loaded: {primary.name}")
-        self.metadata_view.setText(str(self.session.info))
-        self._refresh_channels()
-        self._refresh_epocs()
-        self._clear_results()
-        if len(path_list) > 1:
-            self._add_batch_paths(path_list)
+        self._add_batch_paths(path_list, clear_existing=True)
+        self._set_session_from_path(path_list[0])
 
     def _refresh_channels(self) -> None:
         if not self.session:
             return
         channel_map = available_channels(self.session)
         self.channel_list.clear()
+        for idx in reversed(range(self.channel_smooth_layout.rowCount())):
+            self.channel_smooth_layout.removeRow(idx)
+        self.channel_smooth_inputs.clear()
         for channel in channel_map.keys():
             item = QtWidgets.QListWidgetItem(channel)
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
             item.setCheckState(QtCore.Qt.Checked)
             self.channel_list.addItem(item)
+
+            default_smooth = default_settings_for_channel(channel).smooth_factor
+            smooth_value = self.channel_smooth_overrides.get(channel, default_smooth)
+            self.channel_smooth_overrides[channel] = smooth_value
+            smooth_input = QtWidgets.QSpinBox()
+            smooth_input.setRange(1, 200)
+            smooth_input.setValue(smooth_value)
+            smooth_input.valueChanged.connect(
+                lambda value, key=channel: self._set_channel_smooth(key, value)
+            )
+            self.channel_smooth_inputs[channel] = smooth_input
+            self.channel_smooth_layout.addRow(channel, smooth_input)
+
+        known_channels = set(channel_map.keys())
+        self.channel_smooth_overrides = {
+            key: value
+            for key, value in self.channel_smooth_overrides.items()
+            if key in known_channels
+        }
+        self.channel_smooth_container.setVisible(bool(known_channels))
+
+    def _set_channel_smooth(self, channel_key: str, value: int) -> None:
+        self.channel_smooth_overrides[channel_key] = int(value)
 
     def _refresh_epocs(self) -> None:
         if not self.session:
@@ -325,10 +378,50 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setCheckState(QtCore.Qt.Checked)
             self.batch_epoc_list.addItem(item)
 
+    def _refresh_preview_file_options(self) -> None:
+        current_path = (
+            str(self._active_session_path.resolve()) if self._active_session_path else None
+        )
+        self.preview_file_combo.blockSignals(True)
+        self.preview_file_combo.clear()
+        for idx in range(self.batch_file_list.count()):
+            file_path = self.batch_file_list.item(idx).data(QtCore.Qt.UserRole)
+            self.preview_file_combo.addItem(Path(file_path).name, file_path)
+        if current_path:
+            selected_idx = self.preview_file_combo.findData(current_path)
+            if selected_idx >= 0:
+                self.preview_file_combo.setCurrentIndex(selected_idx)
+        self.preview_file_combo.blockSignals(False)
+
+    def _on_preview_file_changed(self, _: int) -> None:
+        file_path = self.preview_file_combo.currentData()
+        if not file_path:
+            return
+        path = Path(file_path)
+        if self._active_session_path and path.resolve() == self._active_session_path:
+            return
+        self._set_session_from_path(path)
+
+    def _set_session_from_path(self, path: Path) -> None:
+        self.session = load_session(path)
+        self._active_session_path = path.resolve()
+        self.session_label.setText(f"Loaded: {path.name}")
+        self.metadata_view.setText(str(self.session.info))
+        self._refresh_channels()
+        self._refresh_epocs()
+        self._refresh_preview_file_options()
+        self._clear_results()
+
     def _set_run_state(self, is_running: bool) -> None:
         self.preview_button.setEnabled(not is_running)
         self.export_csv_button.setEnabled(bool(self.results_by_channel) and not is_running)
         self.export_fig_button.setEnabled(bool(self.results_by_channel) and not is_running)
+        self.batch_export_csv_button.setEnabled(
+            bool(self.results_by_channel) and not is_running
+        )
+        self.batch_export_fig_button.setEnabled(
+            bool(self.results_by_channel) and not is_running
+        )
         self.batch_run_button.setEnabled(not is_running)
         self.status_bar.showMessage("Running analysis..." if is_running else "Ready")
 
@@ -370,8 +463,9 @@ class MainWindow(QtWidgets.QMainWindow):
         settings.downsample_factor = int(self.downsample_factor.value())
         settings.artifact_405 = self.artifact_405.value()
         settings.artifact_465 = self.artifact_465.value()
-        if not self.use_channel_smooth.isChecked():
-            settings.smooth_factor = int(self.smooth_factor.value())
+        channel_smooth = self.channel_smooth_overrides.get(channel_key)
+        if channel_smooth is not None:
+            settings.smooth_factor = int(channel_smooth)
         return settings
 
     def _preview_signals(self) -> None:
@@ -451,8 +545,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _plot_result(self, result: AnalysisResult) -> None:
         self.figure.clear()
-        ax_heatmap = self.figure.add_subplot(2, 1, 1)
-        ax_line = self.figure.add_subplot(2, 1, 2)
+        grid = self.figure.add_gridspec(1, 2, width_ratios=[2, 1])
+        ax_line = self.figure.add_subplot(grid[0, 0])
+        ax_heatmap = self.figure.add_subplot(grid[0, 1])
 
         processed = result.processed
         ts = processed.ts
@@ -474,6 +569,7 @@ class MainWindow(QtWidgets.QMainWindow):
             interpolation="nearest",
         )
         ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
+        ax_heatmap.set_xlabel("Time (s)")
         ax_heatmap.set_ylabel("Trial")
         self.figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
 
@@ -533,9 +629,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_bar.showMessage(f"Figures exported to {output_dir}")
 
     def _save_figures(self, output_dir: Path, result: AnalysisResult) -> None:
-        fig = Figure(figsize=(7, 6))
-        ax_heatmap = fig.add_subplot(2, 1, 1)
-        ax_line = fig.add_subplot(2, 1, 2)
+        fig = Figure(figsize=(10, 4.5))
+        grid = fig.add_gridspec(1, 2, width_ratios=[2, 1])
+        ax_line = fig.add_subplot(grid[0, 0])
+        ax_heatmap = fig.add_subplot(grid[0, 1])
 
         processed = result.processed
         ts = processed.ts
@@ -557,6 +654,7 @@ class MainWindow(QtWidgets.QMainWindow):
             interpolation="nearest",
         )
         ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
+        ax_heatmap.set_xlabel("Time (s)")
         ax_heatmap.set_ylabel("Trial")
         fig.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
 
@@ -591,12 +689,13 @@ class MainWindow(QtWidgets.QMainWindow):
         paths = sorted(Path(folder).glob("*.mat"))
         self._add_batch_paths(paths)
 
-    def _add_batch_paths(self, paths: list[Path]) -> None:
+    def _add_batch_paths(self, paths: list[Path], clear_existing: bool = False) -> None:
+        if clear_existing:
+            self.batch_file_list.clear()
         existing = {
             self.batch_file_list.item(idx).data(QtCore.Qt.UserRole)
             for idx in range(self.batch_file_list.count())
         }
-        first_loaded = False
         for path in paths:
             resolved = str(path.resolve())
             if resolved in existing:
@@ -605,16 +704,24 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setToolTip(resolved)
             item.setData(QtCore.Qt.UserRole, resolved)
             self.batch_file_list.addItem(item)
-            if self.session is None and not first_loaded:
-                self.session = load_session(path)
-                self.session_label.setText(f"Loaded: {path.name}")
-                self.metadata_view.setText(str(self.session.info))
-                self._refresh_channels()
-                self._refresh_epocs()
-                first_loaded = True
+            existing.add(resolved)
+
+        self._refresh_preview_file_options()
+        if self.session is None and self.batch_file_list.count() > 0:
+            first_path = Path(self.batch_file_list.item(0).data(QtCore.Qt.UserRole))
+            self._set_session_from_path(first_path)
 
     def _clear_batch_files(self) -> None:
         self.batch_file_list.clear()
+        self.preview_file_combo.clear()
+        self.session = None
+        self._active_session_path = None
+        self.session_label.setText("No session loaded")
+        self.metadata_view.clear()
+        self.epoc_combo.clear()
+        self.batch_epoc_list.clear()
+        self.channel_list.clear()
+        self._clear_results()
 
     def _run_batch(self) -> None:
         if self.batch_file_list.count() == 0:
@@ -622,11 +729,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self.session:
             first_path = Path(self.batch_file_list.item(0).data(QtCore.Qt.UserRole))
-            self.session = load_session(first_path)
-            self.session_label.setText(f"Loaded: {first_path.name}")
-            self.metadata_view.setText(str(self.session.info))
-            self._refresh_channels()
-            self._refresh_epocs()
+            self._set_session_from_path(first_path)
 
         input_paths = [
             Path(self.batch_file_list.item(idx).data(QtCore.Qt.UserRole))
