@@ -16,6 +16,51 @@ from photon_cruncher.processing.pipeline import (
 )
 
 
+BatchEpocSelection = tuple[str, tuple[str, ...]] | tuple[str, tuple[str, ...], str]
+
+
+def _epoc_suffix_side(epoc_name: str) -> str | None:
+    if epoc_name.endswith("1_") or epoc_name.endswith("A"):
+        return "left"
+    if epoc_name.endswith("2_") or epoc_name.endswith("C"):
+        return "right"
+    return None
+
+
+def epoc_names_for_selection(
+    session: PhotometrySession,
+    selection: BatchEpocSelection,
+) -> list[str]:
+    _, epoc_members, *mode_parts = selection
+    mode = mode_parts[0] if mode_parts else "all"
+    present_members = [
+        epoc_name for epoc_name in epoc_members if epoc_name in session.epocs
+    ]
+    if mode == "prefer_left":
+        preferred = [
+            epoc_name
+            for epoc_name in present_members
+            if _epoc_suffix_side(epoc_name) == "left"
+        ]
+        return preferred or [
+            epoc_name
+            for epoc_name in present_members
+            if _epoc_suffix_side(epoc_name) == "right"
+        ]
+    if mode == "prefer_right":
+        preferred = [
+            epoc_name
+            for epoc_name in present_members
+            if _epoc_suffix_side(epoc_name) == "right"
+        ]
+        return preferred or [
+            epoc_name
+            for epoc_name in present_members
+            if _epoc_suffix_side(epoc_name) == "left"
+        ]
+    return present_members
+
+
 @dataclass
 class AnalysisResult:
     session: PhotometrySession
@@ -131,7 +176,7 @@ def run_batch(
 
 def run_batch_custom(
     input_paths: list[Path],
-    epoc_names: list[str],
+    epoc_selections: list[BatchEpocSelection],
     output_dir: Path,
     channel_keys: list[str] | None,
     settings_factory: Callable[[str], ProcessingSettings],
@@ -142,45 +187,44 @@ def run_batch_custom(
     for path in input_paths:
         session = load_session(path)
         session_output = output_dir / session.source_path.stem if per_session_subdir else output_dir
-        for epoc_name in epoc_names:
-            if epoc_name not in session.epocs:
-                continue
-            if session.epocs[epoc_name].onset.size == 0:
-                continue
-            try:
-                results = run_session_with_settings(
-                    session=session,
-                    epoc_name=epoc_name,
-                    channel_keys=channel_keys,
-                    settings_factory=settings_factory,
-                )
-            except ValueError:
-                continue
-            for result in results:
-                export_channel(
-                    output_dir=session_output,
-                    session_name=session.source_path.stem,
-                    epoc_name=epoc_name,
-                    channel_key=result.channel_key,
-                    processed=result.processed,
-                    settings=result.settings,
-                    dropped_trials=[],
-                    stream_store=result.stream_store,
-                    metadata={
-                        "source_path": str(session.source_path),
-                        **session.info,
-                    },
-                    export_smoothed=result.settings.plot_smooth,
-                )
-                if export_summary:
-                    summary_rows.append(
-                        {
-                            "session": session.source_path.stem,
-                            "epoc": epoc_name,
-                            "channel": result.channel_key,
-                            "num_trials": result.processed.zall.shape[0],
-                            "num_artifacts": result.processed.num_artifacts,
-                        }
+        for selection in epoc_selections:
+            for epoc_name in epoc_names_for_selection(session, selection):
+                if session.epocs[epoc_name].onset.size == 0:
+                    continue
+                try:
+                    results = run_session_with_settings(
+                        session=session,
+                        epoc_name=epoc_name,
+                        channel_keys=channel_keys,
+                        settings_factory=settings_factory,
                     )
+                except ValueError:
+                    continue
+                for result in results:
+                    export_channel(
+                        output_dir=session_output,
+                        session_name=session.source_path.stem,
+                        epoc_name=epoc_name,
+                        channel_key=result.channel_key,
+                        processed=result.processed,
+                        settings=result.settings,
+                        dropped_trials=[],
+                        stream_store=result.stream_store,
+                        metadata={
+                            "source_path": str(session.source_path),
+                            **session.info,
+                        },
+                        export_smoothed=result.settings.plot_smooth,
+                    )
+                    if export_summary:
+                        summary_rows.append(
+                            {
+                                "session": session.source_path.stem,
+                                "epoc": epoc_name,
+                                "channel": result.channel_key,
+                                "num_trials": result.processed.zall.shape[0],
+                                "num_artifacts": result.processed.num_artifacts,
+                            }
+                        )
     if export_summary:
         export_batch_summary(output_dir, summary_rows)

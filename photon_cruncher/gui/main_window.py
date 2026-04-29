@@ -7,7 +7,11 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PySide6 import QtCore, QtWidgets
 
-from photon_cruncher.analysis.runner import AnalysisResult, run_batch_custom
+from photon_cruncher.analysis.runner import (
+    AnalysisResult,
+    epoc_names_for_selection,
+    run_batch_custom,
+)
 from photon_cruncher.export.exporter import export_channel
 from photon_cruncher.io.loader import load_session
 from photon_cruncher.processing.pipeline import (
@@ -79,6 +83,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results_by_channel: dict[str, AnalysisResult] = {}
         self.channel_smooth_overrides: dict[str, int] = {}
         self.channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
+        self._batch_session_options: dict[
+            str, tuple[tuple[str, ...], tuple[str, ...]]
+        ] = {}
         self._active_worker: Worker | None = None
 
         self._set_run_state(is_running=False)
@@ -297,6 +304,40 @@ class MainWindow(QtWidgets.QMainWindow):
         batch_layout.addLayout(batch_buttons)
 
         batch_layout.addWidget(QtWidgets.QLabel("Epocs to include"))
+        policy_row = QtWidgets.QHBoxLayout()
+        policy_row.addWidget(QtWidgets.QLabel("Suffix handling"))
+        self.batch_epoc_policy = QtWidgets.QComboBox()
+        self.batch_epoc_policy.addItem("Exact checked epocs", "all")
+        self.batch_epoc_policy.addItem(
+            "Prefer A / 1_ when both exist", "prefer_left"
+        )
+        self.batch_epoc_policy.addItem(
+            "Prefer C / 2_ when both exist", "prefer_right"
+        )
+        policy_row.addWidget(self.batch_epoc_policy)
+        policy_row.addStretch()
+        batch_layout.addLayout(policy_row)
+
+        epoc_buttons = QtWidgets.QHBoxLayout()
+        self.batch_epoc_all = QtWidgets.QPushButton("All")
+        self.batch_epoc_all.clicked.connect(self._select_all_batch_epocs)
+        epoc_buttons.addWidget(self.batch_epoc_all)
+        self.batch_epoc_none = QtWidgets.QPushButton("None")
+        self.batch_epoc_none.clicked.connect(self._clear_batch_epocs)
+        epoc_buttons.addWidget(self.batch_epoc_none)
+        self.batch_epoc_left_suffixes = QtWidgets.QPushButton("Only A / 1_")
+        self.batch_epoc_left_suffixes.clicked.connect(
+            self._select_left_suffix_batch_epocs
+        )
+        epoc_buttons.addWidget(self.batch_epoc_left_suffixes)
+        self.batch_epoc_right_suffixes = QtWidgets.QPushButton("Only C / 2_")
+        self.batch_epoc_right_suffixes.clicked.connect(
+            self._select_right_suffix_batch_epocs
+        )
+        epoc_buttons.addWidget(self.batch_epoc_right_suffixes)
+        epoc_buttons.addStretch()
+        batch_layout.addLayout(epoc_buttons)
+
         self.batch_epoc_list = QtWidgets.QListWidget()
         self.batch_epoc_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         batch_layout.addWidget(self.batch_epoc_list)
@@ -321,17 +362,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_session_from_path(path_list[0])
 
     def _refresh_channels(self) -> None:
-        if not self.session:
-            return
-        channel_map = available_channels(self.session)
+        channel_names = self._batch_channel_names()
+        if not channel_names and self.session:
+            channel_names = list(available_channels(self.session).keys())
+
+        selected_channels = set(self._selected_channels())
         self.channel_list.clear()
         for idx in reversed(range(self.channel_smooth_layout.rowCount())):
             self.channel_smooth_layout.removeRow(idx)
         self.channel_smooth_inputs.clear()
-        for channel in channel_map.keys():
+        for channel in channel_names:
             item = QtWidgets.QListWidgetItem(channel)
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked)
+            item.setCheckState(
+                QtCore.Qt.Checked
+                if not selected_channels or channel in selected_channels
+                else QtCore.Qt.Unchecked
+            )
             self.channel_list.addItem(item)
 
             default_smooth = default_settings_for_channel(channel).smooth_factor
@@ -346,7 +393,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.channel_smooth_inputs[channel] = smooth_input
             self.channel_smooth_layout.addRow(channel, smooth_input)
 
-        known_channels = set(channel_map.keys())
+        known_channels = set(channel_names)
         self.channel_smooth_overrides = {
             key: value
             for key, value in self.channel_smooth_overrides.items()
@@ -369,14 +416,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self.epoc_display.setText(value or "No epoc selected")
 
     def _refresh_batch_epocs(self) -> None:
+        selected_labels = set(self._selected_batch_epoc_labels())
         self.batch_epoc_list.clear()
-        if not self.session:
-            return
-        for epoc_name in sorted(self.session.epocs.keys()):
-            item = QtWidgets.QListWidgetItem(epoc_name)
+        entries = self._batch_epoc_entries()
+        if not entries and self.session:
+            entries = [
+                (epoc_name, (epoc_name,))
+                for epoc_name in sorted(self.session.epocs.keys())
+            ]
+        for label, members in entries:
+            item = QtWidgets.QListWidgetItem(label)
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked)
+            item.setData(QtCore.Qt.UserRole, list(members))
+            item.setCheckState(
+                QtCore.Qt.Checked
+                if not selected_labels or label in selected_labels
+                else QtCore.Qt.Unchecked
+            )
             self.batch_epoc_list.addItem(item)
+
+    def _set_batch_epoc_checks(self, should_check: Callable[[str], bool]) -> None:
+        for idx in range(self.batch_epoc_list.count()):
+            item = self.batch_epoc_list.item(idx)
+            item.setCheckState(
+                QtCore.Qt.Checked if should_check(item.text()) else QtCore.Qt.Unchecked
+            )
+
+    def _select_all_batch_epocs(self) -> None:
+        self._set_batch_epoc_checks(lambda _: True)
+
+    def _clear_batch_epocs(self) -> None:
+        self._set_batch_epoc_checks(lambda _: False)
+
+    def _select_left_suffix_batch_epocs(self) -> None:
+        self._set_batch_epoc_checks(
+            lambda name: self._batch_epoc_suffix_side(name) == "left"
+        )
+
+    def _select_right_suffix_batch_epocs(self) -> None:
+        self._set_batch_epoc_checks(
+            lambda name: self._batch_epoc_suffix_side(name) == "right"
+        )
 
     def _refresh_preview_file_options(self) -> None:
         current_path = (
@@ -445,13 +525,98 @@ class MainWindow(QtWidgets.QMainWindow):
                 channels.append(item.text())
         return channels
 
-    def _selected_batch_epocs(self) -> list[str]:
-        epocs = []
+    def _selected_batch_epocs(
+        self,
+    ) -> list[tuple[str, tuple[str, ...]] | tuple[str, tuple[str, ...], str]]:
+        selected_names: list[str] = []
         for idx in range(self.batch_epoc_list.count()):
             item = self.batch_epoc_list.item(idx)
             if item.checkState() == QtCore.Qt.Checked:
-                epocs.append(item.text())
-        return epocs
+                selected_names.append(item.text())
+
+        policy = self.batch_epoc_policy.currentData() or "all"
+        if policy == "all":
+            return [(name, (name,)) for name in selected_names]
+
+        grouped: dict[tuple[str, str], list[str]] = {}
+        ungrouped: list[str] = []
+        for epoc_name in selected_names:
+            suffix_info = self._batch_epoc_suffix_info(epoc_name)
+            if suffix_info is None:
+                ungrouped.append(epoc_name)
+                continue
+            base_name, suffix_family, _ = suffix_info
+            grouped.setdefault((base_name, suffix_family), []).append(epoc_name)
+
+        selections: list[
+            tuple[str, tuple[str, ...]] | tuple[str, tuple[str, ...], str]
+        ] = [(name, (name,)) for name in ungrouped]
+        for (base_name, _), members in sorted(grouped.items()):
+            label = (
+                f"{base_name} (prefer A/1_)"
+                if policy == "prefer_left"
+                else f"{base_name} (prefer C/2_)"
+            )
+            selections.append((label, tuple(sorted(members)), policy))
+        return selections
+
+    def _selected_batch_epoc_labels(self) -> list[str]:
+        labels = []
+        for idx in range(self.batch_epoc_list.count()):
+            item = self.batch_epoc_list.item(idx)
+            if item.checkState() == QtCore.Qt.Checked:
+                labels.append(item.text())
+        return labels
+
+    def _batch_paths(self) -> list[Path]:
+        return [
+            Path(self.batch_file_list.item(idx).data(QtCore.Qt.UserRole))
+            for idx in range(self.batch_file_list.count())
+        ]
+
+    def _index_batch_path(self, path: Path) -> None:
+        session = load_session(path)
+        self._batch_session_options[str(path.resolve())] = (
+            tuple(sorted(available_channels(session).keys())),
+            tuple(sorted(session.epocs.keys())),
+        )
+
+    def _batch_channel_names(self) -> list[str]:
+        channel_names = {
+            channel
+            for channels, _ in self._batch_session_options.values()
+            for channel in channels
+        }
+        return sorted(channel_names)
+
+    def _batch_epoc_suffix_info(
+        self, epoc_name: str
+    ) -> tuple[str, str, str] | None:
+        if epoc_name.endswith("1_"):
+            return epoc_name[:-2], "number_underscore", "left"
+        if epoc_name.endswith("2_"):
+            return epoc_name[:-2], "number_underscore", "right"
+        if epoc_name.endswith("A"):
+            return epoc_name[:-1], "letter", "left"
+        if epoc_name.endswith("C"):
+            return epoc_name[:-1], "letter", "right"
+        return None
+
+    def _batch_epoc_suffix_side(self, epoc_name: str) -> str | None:
+        suffix_info = self._batch_epoc_suffix_info(epoc_name)
+        return suffix_info[2] if suffix_info else None
+
+    def _batch_epoc_entries(self) -> list[tuple[str, tuple[str, ...]]]:
+        return [
+            (epoc_name, (epoc_name,))
+            for epoc_name in sorted(
+                {
+                    epoc_name
+                    for _, epocs in self._batch_session_options.values()
+                    for epoc_name in epocs
+                }
+            )
+        ]
 
     def _build_settings_for_channel(self, channel_key: str) -> ProcessingSettings:
         settings = default_settings_for_channel(channel_key)
@@ -479,6 +644,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         channel_keys = self._selected_channels()
         if not channel_keys:
+            channel_keys = self._batch_channel_names()
+        if not channel_keys and self.session:
             channel_keys = list(available_channels(self.session).keys())
         if not channel_keys:
             self.results_box.setText("No channels available.")
@@ -692,6 +859,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _add_batch_paths(self, paths: list[Path], clear_existing: bool = False) -> None:
         if clear_existing:
             self.batch_file_list.clear()
+            self._batch_session_options.clear()
         existing = {
             self.batch_file_list.item(idx).data(QtCore.Qt.UserRole)
             for idx in range(self.batch_file_list.count())
@@ -705,7 +873,10 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setData(QtCore.Qt.UserRole, resolved)
             self.batch_file_list.addItem(item)
             existing.add(resolved)
+            self._index_batch_path(path)
 
+        self._refresh_channels()
+        self._refresh_batch_epocs()
         self._refresh_preview_file_options()
         if self.session is None and self.batch_file_list.count() > 0:
             first_path = Path(self.batch_file_list.item(0).data(QtCore.Qt.UserRole))
@@ -713,6 +884,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _clear_batch_files(self) -> None:
         self.batch_file_list.clear()
+        self._batch_session_options.clear()
         self.preview_file_combo.clear()
         self.session = None
         self._active_session_path = None
@@ -731,48 +903,40 @@ class MainWindow(QtWidgets.QMainWindow):
             first_path = Path(self.batch_file_list.item(0).data(QtCore.Qt.UserRole))
             self._set_session_from_path(first_path)
 
-        input_paths = [
-            Path(self.batch_file_list.item(idx).data(QtCore.Qt.UserRole))
-            for idx in range(self.batch_file_list.count())
-        ]
-        epoc_names = self._selected_batch_epocs()
-        if not epoc_names:
+        input_paths = self._batch_paths()
+        epoc_selections = self._selected_batch_epocs()
+        if not epoc_selections:
             self._show_error("Select at least one epoc for batch processing.")
             return
 
         def task() -> str:
             output_dir = Path(self.output_dir_input.text()).expanduser()
             output_dir.mkdir(parents=True, exist_ok=True)
-            empty_epocs: dict[str, list[str]] = {}
-            for path in input_paths:
-                session = load_session(path)
-                empty = [
-                    epoc
-                    for epoc in epoc_names
-                    if epoc in session.epocs and session.epocs[epoc].onset.size == 0
-                ]
-                if empty:
-                    empty_epocs[str(path)] = empty
 
             run_batch_custom(
                 input_paths=input_paths,
-                epoc_names=epoc_names,
+                epoc_selections=epoc_selections,
                 output_dir=output_dir,
                 channel_keys=channel_keys,
                 settings_factory=self._build_settings_for_channel,
                 export_summary=False,
                 per_session_subdir=True,
             )
-            skipped = {}
+            skipped: dict[str, list[str]] = {}
             for path in input_paths:
                 session = load_session(path)
-                missing = [epoc for epoc in epoc_names if epoc not in session.epocs]
-                empty = [
-                    epoc
-                    for epoc in epoc_names
-                    if epoc in session.epocs and session.epocs[epoc].onset.size == 0
-                ]
-                combined = missing + empty
+                combined: list[str] = []
+                for selection in epoc_selections:
+                    label = selection[0]
+                    selected_members = epoc_names_for_selection(session, selection)
+                    if not selected_members:
+                        combined.append(label)
+                        continue
+                    if all(
+                        session.epocs[epoc].onset.size == 0
+                        for epoc in selected_members
+                    ):
+                        combined.append(label)
                 if combined:
                     skipped[str(path)] = combined
 
@@ -789,6 +953,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         channel_keys = self._selected_channels()
         if not channel_keys:
+            channel_keys = self._batch_channel_names()
+        if not channel_keys and self.session:
             channel_keys = list(available_channels(self.session).keys())
 
         def handle_done(message: str) -> None:
