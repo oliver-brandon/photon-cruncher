@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 macos = ["pyobjc"]
+build = ["pyinstaller>=6.0"]
 
 [project.scripts]
 photon-cruncher = "photon_cruncher.main:main"

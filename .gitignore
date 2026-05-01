@@ -1,2 +1,7 @@
 .DS_Store
 .codex
+__pycache__/
+.build-venv/
+build/
+dist/
+*.spec.bak

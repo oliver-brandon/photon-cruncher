@@ -8,8 +8,29 @@ from PySide6 import QtGui, QtWidgets
 from photon_cruncher.gui.main_window import MainWindow
 
 
+def _assets_dir() -> Path:
+    source_assets = Path(__file__).resolve().parent / "assets"
+    candidates = [source_assets]
+
+    if getattr(sys, "frozen", False):
+        executable = Path(sys.executable).resolve()
+        if len(executable.parents) > 1:
+            candidates.append(
+                executable.parents[1] / "Resources" / "photon_cruncher" / "assets"
+            )
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if bundle_root:
+            candidates.append(Path(bundle_root) / "photon_cruncher" / "assets")
+
+    for path in candidates:
+        if path.exists():
+            return path
+
+    return source_assets
+
+
 def _set_app_icon(app: QtWidgets.QApplication) -> None:
-    icons_dir = Path(__file__).resolve().parent / "assets" / "icons"
+    icons_dir = _assets_dir() / "icons"
     icns_path = icons_dir / "photon-cruncher.icns"
     ico_path = icons_dir / "photon-cruncher.ico"
     png_dir = icons_dir / "png"

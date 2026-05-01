@@ -11,6 +11,8 @@ Requires-Dist: PySide6>=6.6
 Requires-Dist: matplotlib>=3.8
 Provides-Extra: macos
 Requires-Dist: pyobjc; extra == "macos"
+Provides-Extra: build
+Requires-Dist: pyinstaller>=6.0; extra == "build"
 
 # Photon Cruncher
 
@@ -41,6 +43,25 @@ pip install -e photon_cruncher
 ```bash
 photon-cruncher
 ```
+
+## Build a macOS App
+
+Build a double-clickable `.app` bundle for users who should not need Terminal,
+Automator, Python, Conda, or this project folder:
+
+```bash
+scripts/build_macos_app.sh
+```
+
+The app is written to:
+
+```text
+dist/Photon Cruncher.app
+```
+
+You can move `Photon Cruncher.app` anywhere on the same Mac, including
+`/Applications`. The app bundle contains its own Python runtime, dependencies,
+and icons, so launch does not depend on the original project folder path.
 
 ## macOS Dock Icon (Optional)
 

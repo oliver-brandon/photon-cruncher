@@ -28,6 +28,25 @@ pip install -e photon_cruncher
 photon-cruncher
 ```
 
+## Build a macOS App
+
+Build a double-clickable `.app` bundle for users who should not need Terminal,
+Automator, Python, Conda, or this project folder:
+
+```bash
+scripts/build_macos_app.sh
+```
+
+The app is written to:
+
+```text
+dist/Photon Cruncher.app
+```
+
+You can move `Photon Cruncher.app` anywhere on the same Mac, including
+`/Applications`. The app bundle contains its own Python runtime, dependencies,
+and icons, so launch does not depend on the original project folder path.
+
 ## macOS Dock Icon (Optional)
 
 To reliably set the Dock icon at runtime, install the optional macOS extra:
