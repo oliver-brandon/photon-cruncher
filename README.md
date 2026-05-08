@@ -55,6 +55,61 @@ Settings** > **Privacy & Security**, scroll to the security message about
 `Photon Cruncher.app`, and choose **Open Anyway**. Only do this for app files
 downloaded from the lab's GitHub release page.
 
+## Update the App
+
+The app does not update itself automatically. When a new version is posted on
+GitHub, download the new zip and replace the old app copy. Your data files and
+exported results are not stored inside the app, so replacing the app should not
+delete your recordings or exports.
+
+### Update on Windows
+
+1. Quit `Photon Cruncher` if it is open.
+2. Open the GitHub repository page.
+3. Click **Releases** on the right side of the page.
+4. Open the newest release.
+5. Download `Photon-Cruncher-Windows.zip`.
+6. Right-click the zip file and choose **Extract All...**.
+7. Open the extracted folder.
+8. You should see a folder named `Photon Cruncher`.
+9. Go to the place where your old `Photon Cruncher` folder lives.
+10. Rename the old folder to `Photon Cruncher old`.
+11. Move the new `Photon Cruncher` folder into that same place.
+12. Double-click `Photon Cruncher.exe` inside the new folder.
+13. After the new version opens correctly, delete `Photon Cruncher old`.
+
+Keep the whole `Photon Cruncher` folder together. Do not move only
+`Photon Cruncher.exe` by itself, because the `.exe` needs the files beside it.
+
+If Windows says files with the same name already exist, choose **Replace** only
+if you are replacing the entire old `Photon Cruncher` folder with the newly
+extracted one. The rename-first method above is safer because it keeps the old
+copy available until you confirm the new one opens.
+
+### Update on macOS
+
+1. Quit `Photon Cruncher` if it is open.
+2. Open the GitHub repository page.
+3. Click **Releases** on the right side of the page.
+4. Open the newest release.
+5. Download `Photon-Cruncher-macOS.zip`.
+6. Double-click the zip file to expand it.
+7. You should see `Photon Cruncher.app`.
+8. Go to the place where your old `Photon Cruncher.app` lives, usually
+   **Applications**.
+9. Rename the old app to `Photon Cruncher old.app`.
+10. Drag the new `Photon Cruncher.app` into that same place.
+11. Double-click the new `Photon Cruncher.app`.
+12. After the new version opens correctly, delete `Photon Cruncher old.app`.
+
+If macOS asks whether to replace the existing app, you can choose **Replace**,
+but the rename-first method above is safer because it keeps the old copy
+available until you confirm the new one opens.
+
+If macOS shows the Apple verification warning again after an update, repeat the
+same first-open steps: Control-click or right-click `Photon Cruncher.app`,
+choose **Open**, then choose **Open** again.
+
 ## Data Expectations
 
 The app accepts either:
