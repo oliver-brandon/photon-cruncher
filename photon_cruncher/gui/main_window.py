@@ -211,18 +211,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_baseline.setChecked(True)
         settings_layout.addRow("", self.set_baseline)
 
-        self.artifact_405 = QtWidgets.QDoubleSpinBox()
-        self.artifact_405.setRange(0.0, 1e6)
-        self.artifact_405.setDecimals(2)
-        self.artifact_405.setValue(1e6)
-        settings_layout.addRow("Artifact 405", self.artifact_405)
-
-        self.artifact_465 = QtWidgets.QDoubleSpinBox()
-        self.artifact_465.setRange(0.0, 1e6)
-        self.artifact_465.setDecimals(2)
-        self.artifact_465.setValue(1e6)
-        settings_layout.addRow("Artifact 465", self.artifact_465)
-
         control_layout.addWidget(settings_group)
 
         button_row = QtWidgets.QHBoxLayout()
@@ -278,15 +266,6 @@ class MainWindow(QtWidgets.QMainWindow):
         output_path_row.addWidget(self.output_dir_button)
         output_layout.addLayout(output_path_row)
 
-        export_actions_row = QtWidgets.QHBoxLayout()
-        self.batch_export_csv_button = QtWidgets.QPushButton("Export CSV")
-        self.batch_export_csv_button.clicked.connect(self._export_csv)
-        export_actions_row.addWidget(self.batch_export_csv_button)
-        self.batch_export_fig_button = QtWidgets.QPushButton("Export Figures")
-        self.batch_export_fig_button.clicked.connect(self._export_figures)
-        export_actions_row.addWidget(self.batch_export_fig_button)
-        export_actions_row.addStretch()
-        output_layout.addLayout(export_actions_row)
         layout.addWidget(output_group)
 
         batch_group = QtWidgets.QGroupBox("Batch Processing")
@@ -517,12 +496,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview_button.setEnabled(not is_running)
         self.export_csv_button.setEnabled(bool(self.results_by_channel) and not is_running)
         self.export_fig_button.setEnabled(bool(self.results_by_channel) and not is_running)
-        self.batch_export_csv_button.setEnabled(
-            bool(self.results_by_channel) and not is_running
-        )
-        self.batch_export_fig_button.setEnabled(
-            bool(self.results_by_channel) and not is_running
-        )
         self.batch_run_button.setEnabled(not is_running)
         self.status_bar.showMessage("Running analysis..." if is_running else "Ready")
 
@@ -647,8 +620,6 @@ class MainWindow(QtWidgets.QMainWindow):
         settings.plot_smooth = self.plot_smooth.isChecked()
         settings.set_baseline = self.set_baseline.isChecked()
         settings.downsample_factor = int(self.downsample_factor.value())
-        settings.artifact_405 = self.artifact_405.value()
-        settings.artifact_465 = self.artifact_465.value()
         channel_smooth = self.channel_smooth_overrides.get(channel_key)
         if channel_smooth is not None:
             settings.smooth_factor = int(channel_smooth)
@@ -782,11 +753,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.output_dir_input.setText(directory)
             self.settings.setValue("output_dir", directory)
 
+    def _choose_single_export_dir(self, title: str) -> Path | None:
+        directory = QtWidgets.QFileDialog.getExistingDirectory(
+            self, title, self.output_dir_input.text()
+        )
+        if not directory:
+            return None
+        self.output_dir_input.setText(directory)
+        self.settings.setValue("output_dir", directory)
+        return Path(directory).expanduser()
+
     def _export_csv(self) -> None:
         if not self.results_by_channel:
             self._show_error("Run preview first to generate results.")
             return
-        output_dir = Path(self.output_dir_input.text()).expanduser()
+        output_dir = self._choose_single_export_dir("Choose Folder for CSV Export")
+        if output_dir is None:
+            return
         output_dir.mkdir(parents=True, exist_ok=True)
         for result in self.results_by_channel.values():
             export_channel(
@@ -810,7 +793,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.results_by_channel:
             self._show_error("Run preview first to generate results.")
             return
-        output_dir = Path(self.output_dir_input.text()).expanduser()
+        output_dir = self._choose_single_export_dir("Choose Folder for Figure Export")
+        if output_dir is None:
+            return
         output_dir.mkdir(parents=True, exist_ok=True)
         for result in self.results_by_channel.values():
             self._save_figures(output_dir, result)
