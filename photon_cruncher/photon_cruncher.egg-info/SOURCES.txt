@@ -1,4 +1,3 @@
-README.md
 __init__.py
 main.py
 model.py

@@ -131,3 +131,7 @@ mixed folder containing `.mat` files and TDT blocks.
   downsampling, regression, baseline logic, and smoothing.
 * Export outputs include heatmap CSVs with the time vector in the first row,
   followed by per-trial z-score rows.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
