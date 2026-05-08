@@ -43,6 +43,18 @@ certificate.
 The macOS app bundle contains its own Python runtime, dependencies, and icons,
 so it can be moved without depending on the original project folder path.
 
+If macOS says the app cannot be opened because Apple cannot verify it, this is
+expected for an unsigned lab build. Open it once using this path:
+
+1. Control-click or right-click `Photon Cruncher.app`.
+2. Choose **Open**.
+3. In the warning dialog, choose **Open** again.
+
+If macOS blocks the app without showing an **Open** button, go to **System
+Settings** > **Privacy & Security**, scroll to the security message about
+`Photon Cruncher.app`, and choose **Open Anyway**. Only do this for app files
+downloaded from the lab's GitHub release page.
+
 ## Data Expectations
 
 The app accepts either:
