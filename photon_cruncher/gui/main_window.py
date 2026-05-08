@@ -13,7 +13,7 @@ from photon_cruncher.analysis.runner import (
     run_batch_custom,
 )
 from photon_cruncher.export.exporter import export_channel
-from photon_cruncher.io.loader import load_session
+from photon_cruncher.io.loader import discover_tdt_block_paths, load_session
 from photon_cruncher.processing.pipeline import (
     ProcessingSettings,
     available_channels,
@@ -94,9 +94,15 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout()
         self.import_tab.setLayout(layout)
 
+        import_buttons = QtWidgets.QHBoxLayout()
         self.file_picker = QtWidgets.QPushButton("Select MAT File(s)")
         self.file_picker.clicked.connect(self._select_file)
-        layout.addWidget(self.file_picker)
+        import_buttons.addWidget(self.file_picker)
+        self.tdt_folder_picker = QtWidgets.QPushButton("Select TDT Block Folder")
+        self.tdt_folder_picker.clicked.connect(self._select_tdt_folder)
+        import_buttons.addWidget(self.tdt_folder_picker)
+        import_buttons.addStretch()
+        layout.addLayout(import_buttons)
 
         self.session_label = QtWidgets.QLabel("No session loaded")
         layout.addWidget(self.session_label)
@@ -288,7 +294,7 @@ class MainWindow(QtWidgets.QMainWindow):
         batch_group.setLayout(batch_layout)
 
         self.batch_file_list = QtWidgets.QListWidget()
-        batch_layout.addWidget(QtWidgets.QLabel("Batch files (.mat)"))
+        batch_layout.addWidget(QtWidgets.QLabel("Batch data sources"))
         batch_layout.addWidget(self.batch_file_list)
 
         batch_buttons = QtWidgets.QHBoxLayout()
@@ -298,6 +304,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_add_folder = QtWidgets.QPushButton("Add Folder")
         self.batch_add_folder.clicked.connect(self._add_batch_folder)
         batch_buttons.addWidget(self.batch_add_folder)
+        self.batch_add_tdt_tank = QtWidgets.QPushButton("Add TDT Tank")
+        self.batch_add_tdt_tank.clicked.connect(self._add_tdt_tank)
+        batch_buttons.addWidget(self.batch_add_tdt_tank)
         self.batch_clear = QtWidgets.QPushButton("Clear")
         self.batch_clear.clicked.connect(self._clear_batch_files)
         batch_buttons.addWidget(self.batch_clear)
@@ -358,8 +367,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if not paths:
             return
         path_list = [Path(path) for path in paths]
-        self._add_batch_paths(path_list, clear_existing=True)
-        self._set_session_from_path(path_list[0])
+        accepted = self._add_batch_paths(path_list, clear_existing=True)
+        if accepted:
+            self._set_session_from_path(accepted[0])
+
+    def _select_tdt_folder(self) -> None:
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select TDT Block Folder", str(Path.home())
+        )
+        if not folder:
+            return
+        path = Path(folder)
+        accepted = self._add_batch_paths([path], clear_existing=True)
+        if accepted:
+            self._set_session_from_path(accepted[0])
 
     def _refresh_channels(self) -> None:
         channel_names = self._batch_channel_names()
@@ -849,14 +870,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _add_batch_folder(self) -> None:
         folder = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "Select Folder", str(Path.home())
+            self, "Select Folder Containing MAT Files or TDT Blocks", str(Path.home())
         )
         if not folder:
             return
-        paths = sorted(Path(folder).glob("*.mat"))
+        paths = self._discover_data_sources(Path(folder))
         self._add_batch_paths(paths)
 
-    def _add_batch_paths(self, paths: list[Path], clear_existing: bool = False) -> None:
+    def _add_tdt_tank(self) -> None:
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select TDT Tank Folder", str(Path.home())
+        )
+        if not folder:
+            return
+        paths = discover_tdt_block_paths(Path(folder))
+        if not paths:
+            self._show_error(f"No TDT blocks found in {Path(folder).name}.")
+            return
+        self._add_batch_paths(paths)
+
+    def _discover_data_sources(self, folder: Path) -> list[Path]:
+        paths = list(sorted(folder.glob("*.mat")))
+        paths.extend(discover_tdt_block_paths(folder))
+        return paths
+
+    def _add_batch_paths(
+        self,
+        paths: list[Path],
+        clear_existing: bool = False,
+    ) -> list[Path]:
         if clear_existing:
             self.batch_file_list.clear()
             self._batch_session_options.clear()
@@ -864,16 +906,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.batch_file_list.item(idx).data(QtCore.Qt.UserRole)
             for idx in range(self.batch_file_list.count())
         }
+        accepted: list[Path] = []
         for path in paths:
             resolved = str(path.resolve())
             if resolved in existing:
+                continue
+            try:
+                self._index_batch_path(path)
+            except Exception as exc:
+                self._show_error(f"Could not load {path.name}: {exc}")
                 continue
             item = QtWidgets.QListWidgetItem(path.name)
             item.setToolTip(resolved)
             item.setData(QtCore.Qt.UserRole, resolved)
             self.batch_file_list.addItem(item)
             existing.add(resolved)
-            self._index_batch_path(path)
+            accepted.append(path)
 
         self._refresh_channels()
         self._refresh_batch_epocs()
@@ -881,6 +929,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.session is None and self.batch_file_list.count() > 0:
             first_path = Path(self.batch_file_list.item(0).data(QtCore.Qt.UserRole))
             self._set_session_from_path(first_path)
+        return accepted
 
     def _clear_batch_files(self) -> None:
         self.batch_file_list.clear()

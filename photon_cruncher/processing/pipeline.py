@@ -8,6 +8,9 @@ import numpy as np
 from photon_cruncher.model import Epoc, PhotometrySession
 
 
+SAMPLE_INDEX_EPSILON = 0.005
+
+
 @dataclass
 class ProcessingSettings:
     trange: tuple[float, float] = (-2.0, 7.0)
@@ -40,14 +43,21 @@ def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
     return np.convolve(trace, kernel, mode="same")
 
 
-def _extract_trials(stream: np.ndarray, fs: float, onsets: np.ndarray, trange: tuple[float, float]) -> list[np.ndarray]:
-    time = np.arange(stream.size) / fs
+def _extract_trials(
+    stream: np.ndarray,
+    fs: float,
+    onsets: np.ndarray,
+    trange: tuple[float, float],
+    t0: float = 0.0,
+) -> list[np.ndarray]:
     trials: list[np.ndarray] = []
     for onset in onsets:
         start_time = onset + trange[0]
         end_time = onset + trange[1]
-        start_idx = int(np.searchsorted(time, start_time, side="left"))
-        end_idx = int(np.searchsorted(time, end_time, side="right"))
+        start_idx = int(np.rint((start_time - t0) * fs + SAMPLE_INDEX_EPSILON))
+        end_idx = int(np.rint((end_time - t0) * fs + SAMPLE_INDEX_EPSILON)) + 1
+        start_idx = max(0, start_idx)
+        end_idx = min(stream.size, end_idx)
         if end_idx > start_idx:
             trials.append(stream[start_idx:end_idx])
     return trials
@@ -106,8 +116,20 @@ def process_channel(
     stream_405 = session.streams[iso_stream]
     stream_465 = session.streams[signal_stream]
 
-    trials_405 = _extract_trials(stream_405.data, stream_405.fs, epoc.onset, settings.trange)
-    trials_465 = _extract_trials(stream_465.data, stream_465.fs, epoc.onset, settings.trange)
+    trials_405 = _extract_trials(
+        stream_405.data,
+        stream_405.fs,
+        epoc.onset,
+        settings.trange,
+        stream_405.t0,
+    )
+    trials_465 = _extract_trials(
+        stream_465.data,
+        stream_465.fs,
+        epoc.onset,
+        settings.trange,
+        stream_465.t0,
+    )
 
     trials_405, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
     trials_465, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
@@ -123,6 +145,9 @@ def process_channel(
 
     f405 = _downsample_trials(trials_405, settings.downsample_factor)
     f465 = _downsample_trials(trials_465, settings.downsample_factor)
+    common_length = min(f405.shape[1], f465.shape[1])
+    f405 = f405[:, :common_length]
+    f465 = f465[:, :common_length]
 
     min_length1 = f405.shape[1]
     min_length2 = f465.shape[1]

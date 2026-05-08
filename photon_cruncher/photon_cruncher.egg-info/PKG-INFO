@@ -9,6 +9,7 @@ Requires-Dist: scipy>=1.11
 Requires-Dist: pandas>=2.0
 Requires-Dist: PySide6>=6.6
 Requires-Dist: matplotlib>=3.8
+Requires-Dist: tdt>=0.7.3
 Provides-Extra: macos
 Requires-Dist: pyobjc; extra == "macos"
 Provides-Extra: build
@@ -18,7 +19,8 @@ Requires-Dist: pyinstaller>=6.0; extra == "build"
 
 Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. The
 pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
-processing, and exports all plotted data as CSV.
+processing, reads MATLAB exports or raw TDT block folders, and exports all
+plotted data as CSV.
 
 ## Setup
 
@@ -73,8 +75,18 @@ pip install -e "photon_cruncher[macos]"
 
 ## Data Expectations
 
-The app expects MATLAB `.mat` files with a top-level `data` struct produced by
-TDTbin2mat, with streams/epocs schema described in the project prompt.
+The app accepts either:
+
+* MATLAB `.mat` files with a top-level `data` struct produced by TDTbin2mat.
+* TDT block folders that can be read by `tdt.read_block`.
+
+Streams should include the expected photometry stores such as `x405A`, `x465A`,
+`x560A`, `x405C`, `x465C`, or `x560C`. Epocs are read from the TDT `epocs`
+collection or the equivalent MATLAB export schema.
+
+For batch processing, use **Add Files** for `.mat` files, **Add TDT Tank** for a
+TDT tank folder containing one or more block folders, or **Add Folder** for a
+mixed folder containing `.mat` files and TDT blocks.
 
 ## Notes
 

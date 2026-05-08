@@ -17,6 +17,7 @@ pyproject.toml
 ./processing/__init__.py
 ./processing/pipeline.py
 ./tests/__init__.py
+./tests/test_loader.py
 analysis/__init__.py
 analysis/runner.py
 export/__init__.py
@@ -34,3 +35,4 @@ photon_cruncher.egg-info/top_level.txt
 processing/__init__.py
 processing/pipeline.py
 tests/__init__.py
+tests/test_loader.py

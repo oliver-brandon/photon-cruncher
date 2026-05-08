@@ -1,0 +1,80 @@
+name: Build desktop apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Windows bundle
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Windows app
+        shell: pwsh
+        run: .\scripts\build_windows_app.ps1
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photon-Cruncher-Windows
+          path: dist/Photon-Cruncher-Windows.zip
+
+  build-macos:
+    name: macOS bundle
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build macOS app
+        run: scripts/build_macos_app.sh
+
+      - name: Zip macOS app
+        run: ditto -c -k --keepParent "dist/Photon Cruncher.app" "dist/Photon-Cruncher-macOS.zip"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Photon-Cruncher-macOS
+          path: dist/Photon-Cruncher-macOS.zip
+
+  publish-release:
+    name: Publish release assets
+    needs:
+      - build-windows
+      - build-macos
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Attach zips to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.zip

@@ -2,6 +2,8 @@
 .codex
 __pycache__/
 .build-venv/
+.build-venv-windows/
 build/
 dist/
 *.spec.bak
+local-test-data/

@@ -5,7 +5,7 @@ from pathlib import Path
 
 project_root = Path(SPECPATH).parents[1]
 package_root = project_root / "photon_cruncher"
-icon_path = package_root / "assets" / "icons" / "photon-cruncher.icns"
+icon_path = package_root / "assets" / "icons" / "photon-cruncher.ico"
 
 
 a = Analysis(
@@ -41,7 +41,6 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
@@ -55,18 +54,4 @@ coll = COLLECT(
     upx=False,
     upx_exclude=[],
     name="Photon Cruncher",
-)
-app = BUNDLE(
-    coll,
-    name="Photon Cruncher.app",
-    icon=str(icon_path),
-    bundle_identifier="com.photoncruncher.app",
-    info_plist={
-        "CFBundleDisplayName": "Photon Cruncher",
-        "CFBundleName": "Photon Cruncher",
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "0.1.0",
-        "LSApplicationCategoryType": "public.app-category.science",
-        "NSHighResolutionCapable": True,
-    },
 )
