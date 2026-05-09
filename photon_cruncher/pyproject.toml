@@ -1,6 +1,6 @@
 [project]
 name = "photon-cruncher"
-version = "0.1.0"
+version = "1.0.1"
 description = "Fiber photometry analysis suite with MATLAB-faithful preprocessing."
 requires-python = ">=3.11"
 readme = "README.md"

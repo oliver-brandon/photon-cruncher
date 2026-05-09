@@ -7,6 +7,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PySide6 import QtCore, QtWidgets
 
+from photon_cruncher import app_title
 from photon_cruncher.analysis.runner import (
     AnalysisResult,
     epoc_names_for_selection,
@@ -49,7 +50,7 @@ class Worker(QtCore.QRunnable):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Photon Cruncher")
+        self.setWindowTitle(app_title())
         self.resize(1400, 900)
         self.setMinimumSize(900, 700)
         self.setMaximumSize(QtCore.QSize(16777215, 16777215))
