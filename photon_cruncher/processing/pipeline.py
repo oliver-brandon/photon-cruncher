@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 import numpy as np
@@ -34,6 +34,15 @@ class ProcessedSignal:
     mean_z_smooth: np.ndarray
     sem_z_smooth: np.ndarray
     num_artifacts: int
+    num_edge_trials: int = 0
+    dropped_edge_trials: list[int] = field(default_factory=list)
+
+
+@dataclass
+class ExtractedTrials:
+    trials: list[np.ndarray]
+    trial_numbers: list[int]
+    dropped_edge_trials: list[int]
 
 
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
@@ -50,17 +59,35 @@ def _extract_trials(
     trange: tuple[float, float],
     t0: float = 0.0,
 ) -> list[np.ndarray]:
+    return _extract_trials_with_edge_drops(stream, fs, onsets, trange, t0).trials
+
+
+def _extract_trials_with_edge_drops(
+    stream: np.ndarray,
+    fs: float,
+    onsets: np.ndarray,
+    trange: tuple[float, float],
+    t0: float = 0.0,
+) -> ExtractedTrials:
     trials: list[np.ndarray] = []
-    for onset in onsets:
+    trial_numbers: list[int] = []
+    dropped_edge_trials: list[int] = []
+    for trial_idx, onset in enumerate(onsets, start=1):
         start_time = onset + trange[0]
         end_time = onset + trange[1]
         start_idx = int(np.rint((start_time - t0) * fs + SAMPLE_INDEX_EPSILON))
         end_idx = int(np.rint((end_time - t0) * fs + SAMPLE_INDEX_EPSILON)) + 1
-        start_idx = max(0, start_idx)
-        end_idx = min(stream.size, end_idx)
+        if start_idx < 0 or end_idx > stream.size:
+            dropped_edge_trials.append(trial_idx)
+            continue
         if end_idx > start_idx:
             trials.append(stream[start_idx:end_idx])
-    return trials
+            trial_numbers.append(trial_idx)
+    return ExtractedTrials(
+        trials=trials,
+        trial_numbers=trial_numbers,
+        dropped_edge_trials=dropped_edge_trials,
+    )
 
 
 def _remove_artifacts(trials: list[np.ndarray], artifact: float) -> tuple[list[np.ndarray], np.ndarray]:
@@ -116,24 +143,44 @@ def process_channel(
     stream_405 = session.streams[iso_stream]
     stream_465 = session.streams[signal_stream]
 
-    trials_405 = _extract_trials(
+    extracted_405 = _extract_trials_with_edge_drops(
         stream_405.data,
         stream_405.fs,
         epoc.onset,
         settings.trange,
         stream_405.t0,
     )
-    trials_465 = _extract_trials(
+    extracted_465 = _extract_trials_with_edge_drops(
         stream_465.data,
         stream_465.fs,
         epoc.onset,
         settings.trange,
         stream_465.t0,
     )
+    trials_by_number_405 = dict(zip(extracted_405.trial_numbers, extracted_405.trials))
+    trials_by_number_465 = dict(zip(extracted_465.trial_numbers, extracted_465.trials))
+    kept_trial_numbers = sorted(
+        set(trials_by_number_405).intersection(trials_by_number_465)
+    )
+    trials_405 = [trials_by_number_405[number] for number in kept_trial_numbers]
+    trials_465 = [trials_by_number_465[number] for number in kept_trial_numbers]
+    dropped_edge_trials = sorted(
+        set(extracted_405.dropped_edge_trials) | set(extracted_465.dropped_edge_trials)
+    )
 
-    trials_405, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
-    trials_465, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
+    if not trials_405 or not trials_465:
+        raise ValueError("No complete trials remain after dropping edge trials.")
+
+    _, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
+    _, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
     num_artifacts = int((~good_405).sum() + (~good_465).sum())
+    good_trials = good_405 & good_465
+    trials_405 = [
+        trial for trial, keep in zip(trials_405, good_trials) if keep
+    ]
+    trials_465 = [
+        trial for trial, keep in zip(trials_465, good_trials) if keep
+    ]
 
     if not trials_405 or not trials_465:
         raise ValueError("No trials remain after artifact removal.")
@@ -205,6 +252,8 @@ def process_channel(
         mean_z_smooth=mean_z_smooth,
         sem_z_smooth=sem_z_smooth,
         num_artifacts=num_artifacts,
+        num_edge_trials=len(dropped_edge_trials),
+        dropped_edge_trials=dropped_edge_trials,
     )
 
 

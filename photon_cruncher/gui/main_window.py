@@ -677,10 +677,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.display_channel.addItems(list(self.results_by_channel.keys()))
             self.display_channel.blockSignals(False)
 
-            summary = [
-                f"{result.channel_key}: trials={result.processed.zall.shape[0]}"
-                for result in results
-            ]
+            summary = [self._result_summary_line(result) for result in results]
             self.results_box.setText("\n".join(summary) or "No results.")
             if results:
                 self.display_channel.setCurrentText(results[0].channel_key)
@@ -695,6 +692,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_run_state(True)
         self._active_worker = worker
         self.thread_pool.start(worker)
+
+    def _result_summary_line(self, result: AnalysisResult) -> str:
+        processed = result.processed
+        line = f"{result.channel_key}: trials={processed.zall.shape[0]}"
+        if processed.num_edge_trials:
+            line += (
+                f", dropped incomplete edge trials={processed.num_edge_trials} "
+                f"({self._format_trial_numbers(processed.dropped_edge_trials)})"
+            )
+        if processed.num_artifacts:
+            line += f", artifact removals={processed.num_artifacts}"
+        return line
+
+    def _format_trial_numbers(self, trial_numbers: list[int]) -> str:
+        if len(trial_numbers) <= 8:
+            return ", ".join(str(number) for number in trial_numbers)
+        shown = ", ".join(str(number) for number in trial_numbers[:8])
+        return f"{shown}, ..."
 
     def _update_plot_for_channel(self, channel_key: str) -> None:
         if not channel_key:

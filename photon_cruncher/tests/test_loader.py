@@ -13,7 +13,12 @@ from photon_cruncher.io.loader import (
     is_tdt_block_path,
     load_session,
 )
-from photon_cruncher.processing.pipeline import _extract_trials
+from photon_cruncher.model import Epoc, PhotometrySession, Stream
+from photon_cruncher.processing.pipeline import (
+    ProcessingSettings,
+    _extract_trials,
+    process_channel,
+)
 
 
 class Struct:
@@ -110,6 +115,61 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(len(trials), 1)
         np.testing.assert_array_equal(trials[0], np.array([1.0, 2.0, 3.0]))
+
+    def test_trial_extraction_drops_incomplete_edge_trials(self) -> None:
+        stream = np.arange(10, dtype=float)
+        trials = _extract_trials(
+            stream=stream,
+            fs=1.0,
+            onsets=np.array([0.0, 5.0, 9.0]),
+            trange=(-1.0, 1.0),
+        )
+
+        self.assertEqual(len(trials), 1)
+        np.testing.assert_array_equal(trials[0], np.array([4.0, 5.0, 6.0]))
+
+    def test_process_channel_reports_dropped_edge_trials(self) -> None:
+        session = PhotometrySession(
+            streams={
+                "x405A": Stream(
+                    name="x405A",
+                    fs=1.0,
+                    data=np.linspace(1.0, 20.0, 20),
+                ),
+                "x465A": Stream(
+                    name="x465A",
+                    fs=1.0,
+                    data=np.linspace(2.0, 40.0, 20) ** 1.01,
+                ),
+            },
+            epocs={
+                "Cue": Epoc(
+                    name="Cue",
+                    onset=np.array([0.0, 6.0, 10.0, 18.0]),
+                )
+            },
+            info={},
+            source_path=Path("synthetic.mat"),
+        )
+        settings = ProcessingSettings(
+            trange=(-2.0, 2.0),
+            baseline_per=(-2.0, 1.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+
+        processed = process_channel(
+            session=session,
+            iso_stream="x405A",
+            signal_stream="x465A",
+            epoc=session.epocs["Cue"],
+            settings=settings,
+        )
+
+        self.assertEqual(processed.num_edge_trials, 2)
+        self.assertEqual(processed.dropped_edge_trials, [1, 4])
+        self.assertEqual(processed.zall.shape[0], 2)
 
     def test_trial_extraction_tolerates_export_timestamp_roundoff(self) -> None:
         stream = np.arange(260_000, dtype=float)
