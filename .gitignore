@@ -7,3 +7,4 @@ build/
 dist/
 *.spec.bak
 local-test-data/
+*.py[cod]
