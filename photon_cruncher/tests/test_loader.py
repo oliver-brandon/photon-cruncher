@@ -17,6 +17,7 @@ from photon_cruncher.model import Epoc, PhotometrySession, Stream
 from photon_cruncher.processing.pipeline import (
     ProcessingSettings,
     _extract_trials,
+    default_settings_for_channel,
     process_channel,
 )
 
@@ -27,6 +28,11 @@ class Struct:
 
 
 class LoaderTests(unittest.TestCase):
+    def test_default_trange_end_is_seconds_after_epoc(self) -> None:
+        settings = default_settings_for_channel("A_465")
+
+        self.assertEqual(settings.trange, (-2.0, 5.0))
+
     def test_tdt_block_detection_requires_known_block_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

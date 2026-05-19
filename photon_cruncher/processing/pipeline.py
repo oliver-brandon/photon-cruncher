@@ -13,7 +13,7 @@ SAMPLE_INDEX_EPSILON = 0.005
 
 @dataclass
 class ProcessingSettings:
-    trange: tuple[float, float] = (-2.0, 7.0)
+    trange: tuple[float, float] = (-2.0, 5.0)
     baseline_per: tuple[float, float] = (-3.0, -1.0)
     base_adjust: float = -30.0
     plot_smooth: bool = True

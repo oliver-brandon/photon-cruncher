@@ -64,8 +64,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "Photon Cruncher Dev",
         "CFBundleName": "Photon Cruncher Dev",
-        "CFBundleShortVersionString": "1.0.2",
-        "CFBundleVersion": "1.0.2",
+        "CFBundleShortVersionString": "1.0.3",
+        "CFBundleVersion": "1.0.3",
         "LSApplicationCategoryType": "public.app-category.science",
         "NSHighResolutionCapable": True,
     },

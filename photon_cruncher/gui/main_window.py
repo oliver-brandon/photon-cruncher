@@ -180,7 +180,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trange_end.setDecimals(2)
         self.trange_end.setValue(5.0)
         settings_layout.addRow("TRANGE start", self.trange_start)
-        settings_layout.addRow("TRANGE end", self.trange_end)
+        settings_layout.addRow("TRANGE end after epoc", self.trange_end)
 
         self.baseline_start = QtWidgets.QDoubleSpinBox()
         self.baseline_start.setRange(-60.0, 60.0)
