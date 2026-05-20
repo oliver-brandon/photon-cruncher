@@ -1,5 +1,6 @@
 .DS_Store
 .codex
+AGENTS.md
 __pycache__/
 .build-venv/
 .build-venv-windows/
