@@ -60,6 +60,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = QtCore.QSettings()
 
         self.thread_pool = QtCore.QThreadPool()
+        self.channel_smooth_overrides: dict[str, int] = {}
+        self.channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setSizePolicy(
@@ -82,8 +84,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.session = None
         self._active_session_path: Path | None = None
         self.results_by_channel: dict[str, AnalysisResult] = {}
-        self.channel_smooth_overrides: dict[str, int] = {}
-        self.channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
         self._batch_session_options: dict[
             str, tuple[tuple[str, ...], tuple[str, ...]]
         ] = {}
@@ -174,43 +174,56 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trange_start = QtWidgets.QDoubleSpinBox()
         self.trange_start.setRange(-60.0, 60.0)
         self.trange_start.setDecimals(2)
-        self.trange_start.setValue(-2.0)
+        self.trange_start.setValue(
+            self._settings_float("processing/trange_start", -2.0)
+        )
         self.trange_end = QtWidgets.QDoubleSpinBox()
         self.trange_end.setRange(-60.0, 120.0)
         self.trange_end.setDecimals(2)
-        self.trange_end.setValue(5.0)
+        self.trange_end.setValue(self._settings_float("processing/trange_end", 5.0))
         settings_layout.addRow("TRANGE start", self.trange_start)
         settings_layout.addRow("TRANGE end after epoc", self.trange_end)
 
         self.baseline_start = QtWidgets.QDoubleSpinBox()
         self.baseline_start.setRange(-60.0, 60.0)
         self.baseline_start.setDecimals(2)
-        self.baseline_start.setValue(-3.0)
+        self.baseline_start.setValue(
+            self._settings_float("processing/baseline_start", -3.0)
+        )
         self.baseline_end = QtWidgets.QDoubleSpinBox()
         self.baseline_end.setRange(-60.0, 60.0)
         self.baseline_end.setDecimals(2)
-        self.baseline_end.setValue(-1.0)
+        self.baseline_end.setValue(
+            self._settings_float("processing/baseline_end", -1.0)
+        )
         settings_layout.addRow("Baseline start", self.baseline_start)
         settings_layout.addRow("Baseline end", self.baseline_end)
 
         self.base_adjust = QtWidgets.QDoubleSpinBox()
         self.base_adjust.setRange(-120.0, 0.0)
         self.base_adjust.setDecimals(1)
-        self.base_adjust.setValue(-2.0)
+        self.base_adjust.setValue(
+            self._settings_float("processing/base_adjust", -2.0)
+        )
         settings_layout.addRow("Baseline adjust", self.base_adjust)
 
         self.downsample_factor = QtWidgets.QSpinBox()
         self.downsample_factor.setRange(1, 200)
-        self.downsample_factor.setValue(10)
+        self.downsample_factor.setValue(
+            self._settings_int("processing/downsample_factor", 10)
+        )
         settings_layout.addRow("Downsample factor", self.downsample_factor)
 
         self.plot_smooth = QtWidgets.QCheckBox("Plot smoothed")
-        self.plot_smooth.setChecked(True)
+        self.plot_smooth.setChecked(self._settings_bool("processing/plot_smooth", True))
         settings_layout.addRow("", self.plot_smooth)
 
         self.set_baseline = QtWidgets.QCheckBox("Apply baseline correction")
-        self.set_baseline.setChecked(True)
+        self.set_baseline.setChecked(
+            self._settings_bool("processing/set_baseline", True)
+        )
         settings_layout.addRow("", self.set_baseline)
+        self._connect_processing_setting_persistence()
 
         control_layout.addWidget(settings_group)
 
@@ -382,7 +395,10 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.channel_list.addItem(item)
 
-            default_smooth = default_settings_for_channel(channel).smooth_factor
+            default_smooth = self._settings_int(
+                f"processing/channel_smooth/{channel}",
+                default_settings_for_channel(channel).smooth_factor,
+            )
             smooth_value = self.channel_smooth_overrides.get(channel, default_smooth)
             self.channel_smooth_overrides[channel] = smooth_value
             smooth_input = QtWidgets.QSpinBox()
@@ -403,7 +419,59 @@ class MainWindow(QtWidgets.QMainWindow):
         self.channel_smooth_container.setVisible(bool(known_channels))
 
     def _set_channel_smooth(self, channel_key: str, value: int) -> None:
-        self.channel_smooth_overrides[channel_key] = int(value)
+        smooth_value = int(value)
+        self.channel_smooth_overrides[channel_key] = smooth_value
+        self.settings.setValue(f"processing/channel_smooth/{channel_key}", smooth_value)
+
+    def _settings_float(self, key: str, default: float) -> float:
+        value = self.settings.value(key, default)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _settings_int(self, key: str, default: int) -> int:
+        value = self.settings.value(key, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _settings_bool(self, key: str, default: bool) -> bool:
+        value = self.settings.value(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def _connect_processing_setting_persistence(self) -> None:
+        self.trange_start.valueChanged.connect(
+            lambda value: self.settings.setValue("processing/trange_start", value)
+        )
+        self.trange_end.valueChanged.connect(
+            lambda value: self.settings.setValue("processing/trange_end", value)
+        )
+        self.baseline_start.valueChanged.connect(
+            lambda value: self.settings.setValue("processing/baseline_start", value)
+        )
+        self.baseline_end.valueChanged.connect(
+            lambda value: self.settings.setValue("processing/baseline_end", value)
+        )
+        self.base_adjust.valueChanged.connect(
+            lambda value: self.settings.setValue("processing/base_adjust", value)
+        )
+        self.downsample_factor.valueChanged.connect(
+            lambda value: self.settings.setValue(
+                "processing/downsample_factor", int(value)
+            )
+        )
+        self.plot_smooth.toggled.connect(
+            lambda checked: self.settings.setValue("processing/plot_smooth", checked)
+        )
+        self.set_baseline.toggled.connect(
+            lambda checked: self.settings.setValue("processing/set_baseline", checked)
+        )
 
     def _refresh_epocs(self) -> None:
         if not self.session:
