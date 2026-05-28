@@ -36,6 +36,9 @@ class ProcessedSignal:
     num_artifacts: int
     num_edge_trials: int = 0
     dropped_edge_trials: list[int] = field(default_factory=list)
+    trial_numbers: list[int] = field(default_factory=list)
+    trial_labels: list[str] = field(default_factory=list)
+    trial_times: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -117,6 +120,15 @@ def _downsample_trials(trials: list[np.ndarray], factor: int) -> np.ndarray:
     return np.vstack(downsampled)
 
 
+def _mean_and_sem(z_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mean = z_data.mean(axis=0)
+    if z_data.shape[0] <= 1:
+        sem = np.zeros_like(mean)
+    else:
+        sem = z_data.std(axis=0, ddof=1) / np.sqrt(z_data.shape[0])
+    return mean, sem
+
+
 def _baseline_correct(z_data: np.ndarray, ts: np.ndarray, base_adjust: float) -> np.ndarray:
     idx_candidates = np.where(ts > base_adjust)[0]
     if idx_candidates.size == 0:
@@ -181,6 +193,9 @@ def process_channel(
     trials_465 = [
         trial for trial, keep in zip(trials_465, good_trials) if keep
     ]
+    kept_trial_numbers = [
+        number for number, keep in zip(kept_trial_numbers, good_trials) if keep
+    ]
 
     if not trials_405 or not trials_465:
         raise ValueError("No trials remain after artifact removal.")
@@ -234,14 +249,12 @@ def process_channel(
     if settings.set_baseline:
         zall_smooth = _baseline_correct(zall_smooth, ts1, settings.base_adjust)
 
-    mean_z_smooth = zall_smooth.mean(axis=0)
-    sem_z_smooth = zall_smooth.std(axis=0, ddof=1) / np.sqrt(zall_smooth.shape[0])
+    mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
 
     if settings.set_baseline:
         zall = _baseline_correct(zall, ts1, settings.base_adjust)
 
-    mean_z = zall.mean(axis=0)
-    sem_z = zall.std(axis=0, ddof=1) / np.sqrt(zall.shape[0])
+    mean_z, sem_z = _mean_and_sem(zall)
 
     return ProcessedSignal(
         ts=ts2,
@@ -254,6 +267,67 @@ def process_channel(
         num_artifacts=num_artifacts,
         num_edge_trials=len(dropped_edge_trials),
         dropped_edge_trials=dropped_edge_trials,
+        trial_numbers=kept_trial_numbers,
+    )
+
+
+def subset_processed_signal(
+    processed: ProcessedSignal,
+    selected_trial_numbers: Iterable[int],
+) -> ProcessedSignal:
+    selected = {int(number) for number in selected_trial_numbers}
+    if not selected:
+        raise ValueError("Select at least one trial.")
+
+    trial_numbers = (
+        processed.trial_numbers
+        if processed.trial_numbers
+        else list(range(1, processed.zall.shape[0] + 1))
+    )
+    keep_mask = np.array([number in selected for number in trial_numbers], dtype=bool)
+    if not keep_mask.any():
+        raise ValueError("None of the selected trials are available for this channel.")
+
+    zall = processed.zall[keep_mask, :].copy()
+    zall_smooth = processed.zall_smooth[keep_mask, :].copy()
+    mean_z, sem_z = _mean_and_sem(zall)
+    mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
+    kept_trial_numbers = [
+        number for number, keep in zip(trial_numbers, keep_mask) if keep
+    ]
+    trial_labels = (
+        [
+            label
+            for label, keep in zip(processed.trial_labels, keep_mask)
+            if keep
+        ]
+        if len(processed.trial_labels) == len(trial_numbers)
+        else []
+    )
+    trial_times = (
+        [
+            time
+            for time, keep in zip(processed.trial_times, keep_mask)
+            if keep
+        ]
+        if len(processed.trial_times) == len(trial_numbers)
+        else []
+    )
+
+    return ProcessedSignal(
+        ts=processed.ts.copy(),
+        zall=zall,
+        zall_smooth=zall_smooth,
+        mean_z=mean_z,
+        sem_z=sem_z,
+        mean_z_smooth=mean_z_smooth,
+        sem_z_smooth=sem_z_smooth,
+        num_artifacts=processed.num_artifacts,
+        num_edge_trials=processed.num_edge_trials,
+        dropped_edge_trials=list(processed.dropped_edge_trials),
+        trial_numbers=kept_trial_numbers,
+        trial_labels=trial_labels,
+        trial_times=trial_times,
     )
 
 

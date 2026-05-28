@@ -13,13 +13,19 @@ from photon_cruncher.analysis.runner import (
     epoc_names_for_selection,
     run_batch_custom,
 )
+from photon_cruncher.analysis.trial_classifier import (
+    ClassifiedTrialSource,
+    classified_trial_sources,
+)
 from photon_cruncher.export.exporter import export_channel
 from photon_cruncher.io.loader import discover_tdt_block_paths, load_session
+from photon_cruncher.model import Epoc
 from photon_cruncher.processing.pipeline import (
     ProcessingSettings,
     available_channels,
     default_settings_for_channel,
     process_channel,
+    subset_processed_signal,
 )
 
 
@@ -62,6 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.thread_pool = QtCore.QThreadPool()
         self.channel_smooth_overrides: dict[str, int] = {}
         self.channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
+        self.trial_channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setSizePolicy(
@@ -71,19 +78,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.import_tab = QtWidgets.QWidget()
         self.visualize_tab = QtWidgets.QWidget()
+        self.trial_explorer_tab = QtWidgets.QWidget()
         self.batch_tab = QtWidgets.QWidget()
 
         self.tabs.addTab(self.import_tab, "Import")
         self.tabs.addTab(self.visualize_tab, "Align + Visualize")
+        self.tabs.addTab(self.trial_explorer_tab, "Trial Explorer")
         self.tabs.addTab(self.batch_tab, "Batch Export")
 
         self._build_import()
         self._build_visualize()
+        self._build_trial_explorer()
+        self._connect_processing_setting_persistence()
         self._build_batch()
 
         self.session = None
         self._active_session_path: Path | None = None
         self.results_by_channel: dict[str, AnalysisResult] = {}
+        self.trial_results_by_channel: dict[str, AnalysisResult] = {}
+        self.trial_sources_by_key: dict[str, ClassifiedTrialSource] = {}
+        self.active_trial_source: ClassifiedTrialSource | None = None
         self._batch_session_options: dict[
             str, tuple[tuple[str, ...], tuple[str, ...]]
         ] = {}
@@ -120,7 +134,6 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter = QtWidgets.QSplitter()
         splitter.setOrientation(QtCore.Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        splitter.setCollapsible(0, False)
         self.visualize_splitter = splitter
         layout.addWidget(splitter)
 
@@ -131,6 +144,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         control_scroll = QtWidgets.QScrollArea()
         control_scroll.setWidgetResizable(True)
+        control_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         control_scroll.setWidget(control_widget)
         control_scroll.setMinimumWidth(430)
         splitter.addWidget(control_scroll)
@@ -223,7 +237,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._settings_bool("processing/set_baseline", True)
         )
         settings_layout.addRow("", self.set_baseline)
-        self._connect_processing_setting_persistence()
 
         control_layout.addWidget(settings_group)
 
@@ -260,6 +273,192 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.status_bar = QtWidgets.QStatusBar()
         self.setStatusBar(self.status_bar)
+
+    def _build_trial_explorer(self) -> None:
+        layout = QtWidgets.QVBoxLayout()
+        layout.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
+        self.trial_explorer_tab.setLayout(layout)
+
+        splitter = QtWidgets.QSplitter()
+        splitter.setOrientation(QtCore.Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        layout.addWidget(splitter)
+
+        control_widget = QtWidgets.QWidget()
+        control_layout = QtWidgets.QVBoxLayout()
+        control_layout.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
+        control_widget.setLayout(control_layout)
+
+        control_scroll = QtWidgets.QScrollArea()
+        control_scroll.setWidgetResizable(True)
+        control_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        control_scroll.setWidget(control_widget)
+        control_scroll.setMinimumWidth(430)
+        splitter.addWidget(control_scroll)
+
+        plot_widget = QtWidgets.QWidget()
+        plot_layout = QtWidgets.QVBoxLayout()
+        plot_layout.setSizeConstraint(QtWidgets.QLayout.SetDefaultConstraint)
+        plot_widget.setLayout(plot_layout)
+        splitter.addWidget(plot_widget)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([520, 880])
+
+        control_layout.addWidget(QtWidgets.QLabel("Preview file"))
+        self.trial_file_combo = QtWidgets.QComboBox()
+        self.trial_file_combo.currentIndexChanged.connect(
+            self._on_trial_file_changed
+        )
+        control_layout.addWidget(self.trial_file_combo)
+
+        control_layout.addWidget(QtWidgets.QLabel("Reference epoc"))
+        self.trial_epoc_combo = QtWidgets.QComboBox()
+        self.trial_epoc_combo.currentTextChanged.connect(
+            lambda _: self._clear_trial_results()
+        )
+        control_layout.addWidget(self.trial_epoc_combo)
+
+        self.trial_channel_list = QtWidgets.QListWidget()
+        self.trial_channel_list.setSelectionMode(
+            QtWidgets.QAbstractItemView.NoSelection
+        )
+        control_layout.addWidget(QtWidgets.QLabel("Channels to analyze"))
+        control_layout.addWidget(self.trial_channel_list)
+
+        trial_channel_smooth_group = QtWidgets.QGroupBox("Channel Smoothing")
+        trial_channel_smooth_layout = QtWidgets.QFormLayout()
+        trial_channel_smooth_group.setLayout(trial_channel_smooth_layout)
+        self.trial_channel_smooth_container = trial_channel_smooth_group
+        self.trial_channel_smooth_layout = trial_channel_smooth_layout
+        control_layout.addWidget(trial_channel_smooth_group)
+
+        trial_settings_group = QtWidgets.QGroupBox("Processing Settings")
+        trial_settings_layout = QtWidgets.QFormLayout()
+        trial_settings_group.setLayout(trial_settings_layout)
+
+        self.trial_trange_start = QtWidgets.QDoubleSpinBox()
+        self.trial_trange_start.setRange(-60.0, 60.0)
+        self.trial_trange_start.setDecimals(2)
+        self.trial_trange_start.setValue(self.trange_start.value())
+        self.trial_trange_end = QtWidgets.QDoubleSpinBox()
+        self.trial_trange_end.setRange(-60.0, 120.0)
+        self.trial_trange_end.setDecimals(2)
+        self.trial_trange_end.setValue(self.trange_end.value())
+        trial_settings_layout.addRow("TRANGE start", self.trial_trange_start)
+        trial_settings_layout.addRow(
+            "TRANGE end after epoc", self.trial_trange_end
+        )
+
+        self.trial_baseline_start = QtWidgets.QDoubleSpinBox()
+        self.trial_baseline_start.setRange(-60.0, 60.0)
+        self.trial_baseline_start.setDecimals(2)
+        self.trial_baseline_start.setValue(self.baseline_start.value())
+        self.trial_baseline_end = QtWidgets.QDoubleSpinBox()
+        self.trial_baseline_end.setRange(-60.0, 60.0)
+        self.trial_baseline_end.setDecimals(2)
+        self.trial_baseline_end.setValue(self.baseline_end.value())
+        trial_settings_layout.addRow("Baseline start", self.trial_baseline_start)
+        trial_settings_layout.addRow("Baseline end", self.trial_baseline_end)
+
+        self.trial_base_adjust = QtWidgets.QDoubleSpinBox()
+        self.trial_base_adjust.setRange(-120.0, 0.0)
+        self.trial_base_adjust.setDecimals(1)
+        self.trial_base_adjust.setValue(self.base_adjust.value())
+        trial_settings_layout.addRow("Baseline adjust", self.trial_base_adjust)
+
+        self.trial_downsample_factor = QtWidgets.QSpinBox()
+        self.trial_downsample_factor.setRange(1, 200)
+        self.trial_downsample_factor.setValue(self.downsample_factor.value())
+        trial_settings_layout.addRow(
+            "Downsample factor", self.trial_downsample_factor
+        )
+
+        self.trial_plot_smooth = QtWidgets.QCheckBox("Plot smoothed")
+        self.trial_plot_smooth.setChecked(self.plot_smooth.isChecked())
+        trial_settings_layout.addRow("", self.trial_plot_smooth)
+
+        self.trial_set_baseline = QtWidgets.QCheckBox("Apply baseline correction")
+        self.trial_set_baseline.setChecked(self.set_baseline.isChecked())
+        trial_settings_layout.addRow("", self.trial_set_baseline)
+
+        control_layout.addWidget(trial_settings_group)
+
+        self.trial_load_button = QtWidgets.QPushButton("Load Trials")
+        self.trial_load_button.clicked.connect(self._load_trial_explorer)
+        control_layout.addWidget(self.trial_load_button)
+
+        trial_buttons = QtWidgets.QHBoxLayout()
+        self.trial_select_all = QtWidgets.QPushButton("All")
+        self.trial_select_all.clicked.connect(self._select_all_trials)
+        trial_buttons.addWidget(self.trial_select_all)
+        self.trial_select_none = QtWidgets.QPushButton("None")
+        self.trial_select_none.clicked.connect(self._clear_selected_trials)
+        trial_buttons.addWidget(self.trial_select_none)
+        self.trial_select_invert = QtWidgets.QPushButton("Invert")
+        self.trial_select_invert.clicked.connect(self._invert_selected_trials)
+        trial_buttons.addWidget(self.trial_select_invert)
+        control_layout.addLayout(trial_buttons)
+
+        trial_type_buttons = QtWidgets.QGridLayout()
+        self.trial_type_buttons: dict[str, QtWidgets.QPushButton] = {}
+        trial_type_labels = [
+            ("correct rewarded", "Correct Rewarded"),
+            ("correct not rewarded", "Correct No Reward"),
+            ("incorrect rewarded", "Incorrect Rewarded"),
+            ("incorrect not rewarded", "Incorrect No Reward"),
+            ("unclassified", "Unclassified"),
+        ]
+        for idx, (trial_type, button_label) in enumerate(trial_type_labels):
+            button = QtWidgets.QPushButton(button_label)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
+            )
+            button.clicked.connect(
+                lambda _, selected_type=trial_type: self._select_trials_by_type(
+                    selected_type
+                )
+            )
+            self.trial_type_buttons[trial_type] = button
+            trial_type_buttons.addWidget(button, idx // 2, idx % 2)
+        trial_type_buttons.setColumnStretch(0, 1)
+        trial_type_buttons.setColumnStretch(1, 1)
+        control_layout.addLayout(trial_type_buttons)
+
+        self.trial_list = QtWidgets.QListWidget()
+        self.trial_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.trial_list.itemChanged.connect(self._on_trial_selection_changed)
+        control_layout.addWidget(QtWidgets.QLabel("Trials"))
+        control_layout.addWidget(self.trial_list)
+
+        export_buttons = QtWidgets.QHBoxLayout()
+        self.trial_export_csv_button = QtWidgets.QPushButton("Export Selected CSV")
+        self.trial_export_csv_button.clicked.connect(self._export_selected_trial_csv)
+        export_buttons.addWidget(self.trial_export_csv_button)
+        self.trial_export_fig_button = QtWidgets.QPushButton("Export Selected Figures")
+        self.trial_export_fig_button.clicked.connect(
+            self._export_selected_trial_figures
+        )
+        export_buttons.addWidget(self.trial_export_fig_button)
+        control_layout.addLayout(export_buttons)
+
+        self.trial_results_box = QtWidgets.QTextEdit()
+        self.trial_results_box.setReadOnly(True)
+        control_layout.addWidget(self.trial_results_box)
+
+        plot_controls = QtWidgets.QHBoxLayout()
+        plot_controls.addWidget(QtWidgets.QLabel("Display channel"))
+        self.trial_display_channel = QtWidgets.QComboBox()
+        self.trial_display_channel.currentTextChanged.connect(
+            self._update_trial_plot_for_channel
+        )
+        plot_controls.addWidget(self.trial_display_channel)
+        plot_controls.addStretch()
+        plot_layout.addLayout(plot_controls)
+
+        self.trial_figure = Figure(figsize=(7, 6))
+        self.trial_canvas = FigureCanvas(self.trial_figure)
+        plot_layout.addWidget(self.trial_canvas)
 
     def _build_batch(self) -> None:
         layout = QtWidgets.QVBoxLayout()
@@ -375,16 +574,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if accepted:
             self._set_session_from_path(accepted[0])
 
-    def _refresh_channels(self) -> None:
-        channel_names = self._batch_channel_names()
-        if not channel_names and self.session:
-            channel_names = list(available_channels(self.session).keys())
-
-        selected_channels = set(self._selected_channels())
-        self.channel_list.clear()
-        for idx in reversed(range(self.channel_smooth_layout.rowCount())):
-            self.channel_smooth_layout.removeRow(idx)
-        self.channel_smooth_inputs.clear()
+    def _populate_channel_checklist(
+        self,
+        channel_list: QtWidgets.QListWidget,
+        channel_names: list[str],
+        selected_channels: set[str],
+    ) -> None:
+        channel_list.clear()
         for channel in channel_names:
             item = QtWidgets.QListWidgetItem(channel)
             item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
@@ -393,22 +589,65 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not selected_channels or channel in selected_channels
                 else QtCore.Qt.Unchecked
             )
-            self.channel_list.addItem(item)
+            channel_list.addItem(item)
 
+    def _clear_form_layout(self, layout: QtWidgets.QFormLayout) -> None:
+        for idx in reversed(range(layout.rowCount())):
+            layout.removeRow(idx)
+
+    def _add_channel_smooth_input(
+        self,
+        layout: QtWidgets.QFormLayout,
+        input_store: dict[str, QtWidgets.QSpinBox],
+        channel: str,
+        smooth_value: int,
+    ) -> None:
+        smooth_input = QtWidgets.QSpinBox()
+        smooth_input.setRange(1, 200)
+        smooth_input.setValue(smooth_value)
+        smooth_input.valueChanged.connect(
+            lambda value, key=channel: self._set_channel_smooth(key, value)
+        )
+        input_store[channel] = smooth_input
+        layout.addRow(channel, smooth_input)
+
+    def _refresh_channels(self) -> None:
+        channel_names = self._batch_channel_names()
+        if not channel_names and self.session:
+            channel_names = list(available_channels(self.session).keys())
+
+        selected_channels = set(self._selected_channels())
+        selected_trial_channels = set(self._selected_trial_channels())
+        self._populate_channel_checklist(
+            self.channel_list, channel_names, selected_channels
+        )
+        self._populate_channel_checklist(
+            self.trial_channel_list, channel_names, selected_trial_channels
+        )
+
+        self._clear_form_layout(self.channel_smooth_layout)
+        self._clear_form_layout(self.trial_channel_smooth_layout)
+        self.channel_smooth_inputs.clear()
+        self.trial_channel_smooth_inputs.clear()
+        for channel in channel_names:
             default_smooth = self._settings_int(
                 f"processing/channel_smooth/{channel}",
                 default_settings_for_channel(channel).smooth_factor,
             )
             smooth_value = self.channel_smooth_overrides.get(channel, default_smooth)
             self.channel_smooth_overrides[channel] = smooth_value
-            smooth_input = QtWidgets.QSpinBox()
-            smooth_input.setRange(1, 200)
-            smooth_input.setValue(smooth_value)
-            smooth_input.valueChanged.connect(
-                lambda value, key=channel: self._set_channel_smooth(key, value)
+            self._add_channel_smooth_input(
+                self.channel_smooth_layout,
+                self.channel_smooth_inputs,
+                channel,
+                smooth_value,
             )
-            self.channel_smooth_inputs[channel] = smooth_input
-            self.channel_smooth_layout.addRow(channel, smooth_input)
+            self._add_channel_smooth_input(
+                self.trial_channel_smooth_layout,
+                self.trial_channel_smooth_inputs,
+                channel,
+                smooth_value,
+            )
 
         known_channels = set(channel_names)
         self.channel_smooth_overrides = {
@@ -417,11 +656,22 @@ class MainWindow(QtWidgets.QMainWindow):
             if key in known_channels
         }
         self.channel_smooth_container.setVisible(bool(known_channels))
+        self.trial_channel_smooth_container.setVisible(bool(known_channels))
 
     def _set_channel_smooth(self, channel_key: str, value: int) -> None:
         smooth_value = int(value)
         self.channel_smooth_overrides[channel_key] = smooth_value
         self.settings.setValue(f"processing/channel_smooth/{channel_key}", smooth_value)
+        for input_store in (
+            self.channel_smooth_inputs,
+            self.trial_channel_smooth_inputs,
+        ):
+            smooth_input = input_store.get(channel_key)
+            if smooth_input is None or smooth_input.value() == smooth_value:
+                continue
+            smooth_input.blockSignals(True)
+            smooth_input.setValue(smooth_value)
+            smooth_input.blockSignals(False)
 
     def _settings_float(self, key: str, default: float) -> float:
         value = self.settings.value(key, default)
@@ -445,39 +695,106 @@ class MainWindow(QtWidgets.QMainWindow):
             return value.lower() in {"1", "true", "yes", "on"}
         return bool(value)
 
+    def _sync_spin_setting(
+        self,
+        target: QtWidgets.QAbstractSpinBox,
+        key: str,
+        value: int | float,
+    ) -> None:
+        self.settings.setValue(key, value)
+        target.blockSignals(True)
+        target.setValue(value)
+        target.blockSignals(False)
+
+    def _sync_checkbox_setting(
+        self,
+        target: QtWidgets.QCheckBox,
+        key: str,
+        checked: bool,
+    ) -> None:
+        self.settings.setValue(key, checked)
+        target.blockSignals(True)
+        target.setChecked(checked)
+        target.blockSignals(False)
+
     def _connect_processing_setting_persistence(self) -> None:
-        self.trange_start.valueChanged.connect(
-            lambda value: self.settings.setValue("processing/trange_start", value)
-        )
-        self.trange_end.valueChanged.connect(
-            lambda value: self.settings.setValue("processing/trange_end", value)
-        )
-        self.baseline_start.valueChanged.connect(
-            lambda value: self.settings.setValue("processing/baseline_start", value)
-        )
-        self.baseline_end.valueChanged.connect(
-            lambda value: self.settings.setValue("processing/baseline_end", value)
-        )
-        self.base_adjust.valueChanged.connect(
-            lambda value: self.settings.setValue("processing/base_adjust", value)
-        )
-        self.downsample_factor.valueChanged.connect(
-            lambda value: self.settings.setValue(
-                "processing/downsample_factor", int(value)
+        spin_pairs = [
+            (self.trange_start, self.trial_trange_start, "processing/trange_start", float),
+            (self.trange_end, self.trial_trange_end, "processing/trange_end", float),
+            (
+                self.baseline_start,
+                self.trial_baseline_start,
+                "processing/baseline_start",
+                float,
+            ),
+            (
+                self.baseline_end,
+                self.trial_baseline_end,
+                "processing/baseline_end",
+                float,
+            ),
+            (self.base_adjust, self.trial_base_adjust, "processing/base_adjust", float),
+            (
+                self.downsample_factor,
+                self.trial_downsample_factor,
+                "processing/downsample_factor",
+                int,
+            ),
+        ]
+        for left, right, key, caster in spin_pairs:
+            left.valueChanged.connect(
+                lambda value, target=right, setting_key=key, cast=caster: self._sync_spin_setting(
+                    target, setting_key, cast(value)
+                )
             )
-        )
-        self.plot_smooth.toggled.connect(
-            lambda checked: self.settings.setValue("processing/plot_smooth", checked)
-        )
-        self.set_baseline.toggled.connect(
-            lambda checked: self.settings.setValue("processing/set_baseline", checked)
-        )
+            right.valueChanged.connect(
+                lambda value, target=left, setting_key=key, cast=caster: self._sync_spin_setting(
+                    target, setting_key, cast(value)
+                )
+            )
+
+        check_pairs = [
+            (self.plot_smooth, self.trial_plot_smooth, "processing/plot_smooth"),
+            (self.set_baseline, self.trial_set_baseline, "processing/set_baseline"),
+        ]
+        for left, right, key in check_pairs:
+            left.toggled.connect(
+                lambda checked, target=right, setting_key=key: self._sync_checkbox_setting(
+                    target, setting_key, checked
+                )
+            )
+            right.toggled.connect(
+                lambda checked, target=left, setting_key=key: self._sync_checkbox_setting(
+                    target, setting_key, checked
+                )
+            )
 
     def _refresh_epocs(self) -> None:
         if not self.session:
             return
+        current_trial_data = self.trial_epoc_combo.currentData()
         self.epoc_combo.clear()
         self.epoc_combo.addItems(sorted(self.session.epocs.keys()))
+
+        self.trial_sources_by_key = {
+            source.key: source for source in classified_trial_sources(self.session)
+        }
+        self.trial_epoc_combo.blockSignals(True)
+        self.trial_epoc_combo.clear()
+        for epoc_name in sorted(self.session.epocs.keys()):
+            self.trial_epoc_combo.addItem(epoc_name, ("epoc", epoc_name))
+        if self.trial_sources_by_key:
+            self.trial_epoc_combo.insertSeparator(self.trial_epoc_combo.count())
+        for source in self.trial_sources_by_key.values():
+            self.trial_epoc_combo.addItem(source.label, ("classified", source.key))
+        selected_idx = (
+            self.trial_epoc_combo.findData(current_trial_data)
+            if current_trial_data is not None
+            else -1
+        )
+        if selected_idx >= 0:
+            self.trial_epoc_combo.setCurrentIndex(selected_idx)
+        self.trial_epoc_combo.blockSignals(False)
         self._update_epoc_display(self.epoc_combo.currentText())
         self._refresh_batch_epocs()
 
@@ -533,17 +850,33 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.preview_file_combo.blockSignals(True)
         self.preview_file_combo.clear()
+        self.trial_file_combo.blockSignals(True)
+        self.trial_file_combo.clear()
         for idx in range(self.batch_file_list.count()):
             file_path = self.batch_file_list.item(idx).data(QtCore.Qt.UserRole)
             self.preview_file_combo.addItem(Path(file_path).name, file_path)
+            self.trial_file_combo.addItem(Path(file_path).name, file_path)
         if current_path:
             selected_idx = self.preview_file_combo.findData(current_path)
             if selected_idx >= 0:
                 self.preview_file_combo.setCurrentIndex(selected_idx)
+            selected_trial_idx = self.trial_file_combo.findData(current_path)
+            if selected_trial_idx >= 0:
+                self.trial_file_combo.setCurrentIndex(selected_trial_idx)
         self.preview_file_combo.blockSignals(False)
+        self.trial_file_combo.blockSignals(False)
 
     def _on_preview_file_changed(self, _: int) -> None:
         file_path = self.preview_file_combo.currentData()
+        if not file_path:
+            return
+        path = Path(file_path)
+        if self._active_session_path and path.resolve() == self._active_session_path:
+            return
+        self._set_session_from_path(path)
+
+    def _on_trial_file_changed(self, _: int) -> None:
+        file_path = self.trial_file_combo.currentData()
         if not file_path:
             return
         path = Path(file_path)
@@ -565,6 +898,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview_button.setEnabled(not is_running)
         self.export_csv_button.setEnabled(bool(self.results_by_channel) and not is_running)
         self.export_fig_button.setEnabled(bool(self.results_by_channel) and not is_running)
+        self.trial_load_button.setEnabled(not is_running)
+        has_trial_export = (
+            bool(self.trial_results_by_channel)
+            and bool(self._selected_trial_numbers())
+            and bool(self.trial_display_channel.currentText())
+        )
+        self.trial_export_csv_button.setEnabled(has_trial_export and not is_running)
+        self.trial_export_fig_button.setEnabled(has_trial_export and not is_running)
         self.batch_run_button.setEnabled(not is_running)
         self.status_bar.showMessage("Running analysis..." if is_running else "Ready")
 
@@ -578,15 +919,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results_box.clear()
         self.figure.clear()
         self.canvas.draw_idle()
+        self._clear_trial_results()
         self._set_run_state(is_running=False)
 
-    def _selected_channels(self) -> list[str]:
+    def _clear_trial_results(self) -> None:
+        self.trial_results_by_channel = {}
+        self.active_trial_source = None
+        self.trial_display_channel.clear()
+        self.trial_list.blockSignals(True)
+        self.trial_list.clear()
+        self.trial_list.blockSignals(False)
+        self.trial_results_box.clear()
+        self.trial_figure.clear()
+        self.trial_canvas.draw_idle()
+        self._set_run_state(is_running=False)
+
+    def _selected_channels_from(self, channel_list: QtWidgets.QListWidget) -> list[str]:
         channels = []
-        for idx in range(self.channel_list.count()):
-            item = self.channel_list.item(idx)
+        for idx in range(channel_list.count()):
+            item = channel_list.item(idx)
             if item.checkState() == QtCore.Qt.Checked:
                 channels.append(item.text())
         return channels
+
+    def _selected_channels(self) -> list[str]:
+        return self._selected_channels_from(self.channel_list)
+
+    def _selected_trial_channels(self) -> list[str]:
+        return self._selected_channels_from(self.trial_channel_list)
 
     def _selected_batch_epocs(
         self,
@@ -681,14 +1041,37 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         ]
 
-    def _build_settings_for_channel(self, channel_key: str) -> ProcessingSettings:
+    def _build_settings_for_channel(
+        self,
+        channel_key: str,
+        source: str = "visualize",
+    ) -> ProcessingSettings:
+        if source == "trial":
+            trange_start = self.trial_trange_start.value()
+            trange_end = self.trial_trange_end.value()
+            baseline_start = self.trial_baseline_start.value()
+            baseline_end = self.trial_baseline_end.value()
+            base_adjust = self.trial_base_adjust.value()
+            plot_smooth = self.trial_plot_smooth.isChecked()
+            set_baseline = self.trial_set_baseline.isChecked()
+            downsample_factor = int(self.trial_downsample_factor.value())
+        else:
+            trange_start = self.trange_start.value()
+            trange_end = self.trange_end.value()
+            baseline_start = self.baseline_start.value()
+            baseline_end = self.baseline_end.value()
+            base_adjust = self.base_adjust.value()
+            plot_smooth = self.plot_smooth.isChecked()
+            set_baseline = self.set_baseline.isChecked()
+            downsample_factor = int(self.downsample_factor.value())
+
         settings = default_settings_for_channel(channel_key)
-        settings.trange = (self.trange_start.value(), self.trange_end.value())
-        settings.baseline_per = (self.baseline_start.value(), self.baseline_end.value())
-        settings.base_adjust = self.base_adjust.value()
-        settings.plot_smooth = self.plot_smooth.isChecked()
-        settings.set_baseline = self.set_baseline.isChecked()
-        settings.downsample_factor = int(self.downsample_factor.value())
+        settings.trange = (trange_start, trange_end)
+        settings.baseline_per = (baseline_start, baseline_end)
+        settings.base_adjust = base_adjust
+        settings.plot_smooth = plot_smooth
+        settings.set_baseline = set_baseline
+        settings.downsample_factor = downsample_factor
         channel_smooth = self.channel_smooth_overrides.get(channel_key)
         if channel_smooth is not None:
             settings.smooth_factor = int(channel_smooth)
@@ -712,10 +1095,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.results_box.setText("No channels available.")
             return
 
+        current_display_channel = self.display_channel.currentText()
+
         def task() -> list[AnalysisResult]:
-            if epoc_name not in self.session.epocs:
-                raise ValueError(f"Epoc '{epoc_name}' not found.")
-            epoc = self.session.epocs[epoc_name]
+            epoc, source = self._selected_trial_epoc()
             channel_map = available_channels(self.session)
             results: list[AnalysisResult] = []
             for channel_key in channel_keys:
@@ -726,6 +1109,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 processed = process_channel(
                     self.session, iso_stream, signal_stream, epoc, settings
                 )
+                self._annotate_processed_trials(processed, epoc, source)
                 results.append(
                     AnalysisResult(
                         session=self.session,
@@ -748,8 +1132,13 @@ class MainWindow(QtWidgets.QMainWindow):
             summary = [self._result_summary_line(result) for result in results]
             self.results_box.setText("\n".join(summary) or "No results.")
             if results:
-                self.display_channel.setCurrentText(results[0].channel_key)
-                self._plot_result(results[0])
+                display_channel = (
+                    current_display_channel
+                    if current_display_channel in self.results_by_channel
+                    else results[0].channel_key
+                )
+                self.display_channel.setCurrentText(display_channel)
+                self._plot_result(self.results_by_channel[display_channel])
             self._finish_run()
 
         worker = Worker(task)
@@ -788,10 +1177,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _plot_result(self, result: AnalysisResult) -> None:
         self.figure.clear()
-        grid = self.figure.add_gridspec(1, 2, width_ratios=[2, 1])
-        ax_line = self.figure.add_subplot(grid[0, 0])
-        ax_heatmap = self.figure.add_subplot(grid[0, 1])
+        self._populate_result_figure(self.figure, result)
+        self.canvas.draw_idle()
 
+    def _plot_trial_result(self, result: AnalysisResult) -> None:
+        self.trial_figure.clear()
+        self._populate_result_figure(self.trial_figure, result)
+        self.trial_canvas.draw_idle()
+
+    def _populate_result_figure(self, figure: Figure, result: AnalysisResult) -> None:
+        grid = figure.add_gridspec(1, 2, width_ratios=[2, 1])
+        ax_line = figure.add_subplot(grid[0, 0])
+        ax_heatmap = figure.add_subplot(grid[0, 1])
         processed = result.processed
         ts = processed.ts
         if result.settings.plot_smooth:
@@ -807,14 +1204,17 @@ class MainWindow(QtWidgets.QMainWindow):
             z_data,
             aspect="auto",
             origin="lower",
-            extent=[ts[0], ts[-1], 1, z_data.shape[0]],
+            extent=[ts[0], ts[-1], 0.5, z_data.shape[0] + 0.5],
             cmap="viridis",
             interpolation="nearest",
         )
         ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
         ax_heatmap.set_xlabel("Time (s)")
         ax_heatmap.set_ylabel("Trial")
-        self.figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
+        if processed.trial_numbers and z_data.shape[0] <= 20:
+            ax_heatmap.set_yticks(range(1, z_data.shape[0] + 1))
+            ax_heatmap.set_yticklabels([str(number) for number in processed.trial_numbers])
+        figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
 
         ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
         ax_line.fill_between(
@@ -826,8 +1226,336 @@ class MainWindow(QtWidgets.QMainWindow):
         ax_line.set_title("Mean ± SEM")
         ax_line.legend(loc="upper right")
 
-        self.figure.tight_layout()
-        self.canvas.draw_idle()
+        figure.tight_layout()
+
+    def _selected_trial_epoc(self) -> tuple[Epoc, ClassifiedTrialSource | None]:
+        selection = self.trial_epoc_combo.currentData()
+        if isinstance(selection, tuple) and selection[0] == "classified":
+            source = self.trial_sources_by_key[selection[1]]
+            return source.epoc, source
+        epoc_name = (
+            selection[1]
+            if isinstance(selection, tuple) and selection[0] == "epoc"
+            else self.trial_epoc_combo.currentText()
+        )
+        if epoc_name not in self.session.epocs:
+            raise ValueError(f"Epoc '{epoc_name}' not found.")
+        return self.session.epocs[epoc_name], None
+
+    def _annotate_processed_trials(
+        self,
+        processed,
+        epoc: Epoc,
+        source: ClassifiedTrialSource | None,
+    ) -> None:
+        if source is not None:
+            trials_by_number = {
+                trial.trial_number: trial for trial in source.trials
+            }
+            processed.trial_labels = [
+                trials_by_number[number].trial_type if number in trials_by_number else ""
+                for number in processed.trial_numbers
+            ]
+            processed.trial_times = [
+                trials_by_number[number].onset if number in trials_by_number else float("nan")
+                for number in processed.trial_numbers
+            ]
+            return
+
+        processed.trial_labels = []
+        processed.trial_times = [
+            float(epoc.onset[number - 1])
+            if 0 < number <= epoc.onset.size
+            else float("nan")
+            for number in processed.trial_numbers
+        ]
+
+    def _load_trial_explorer(self) -> None:
+        if not self.session:
+            self.trial_results_box.setText("Load a session first.")
+            return
+        if self.trial_epoc_combo.currentData() is None:
+            self.trial_results_box.setText("Select an epoc.")
+            return
+        try:
+            trial_epoc, trial_source = self._selected_trial_epoc()
+        except (KeyError, ValueError) as exc:
+            self.trial_results_box.setText(str(exc))
+            return
+
+        channel_keys = self._selected_trial_channels()
+        if not channel_keys:
+            channel_keys = self._selected_channels()
+        if not channel_keys:
+            channel_keys = self._batch_channel_names()
+        if not channel_keys and self.session:
+            channel_keys = list(available_channels(self.session).keys())
+        if not channel_keys:
+            self.trial_results_box.setText("No channels available.")
+            return
+
+        current_display_channel = self.trial_display_channel.currentText()
+
+        def task() -> list[AnalysisResult]:
+            channel_map = available_channels(self.session)
+            results: list[AnalysisResult] = []
+            for channel_key in channel_keys:
+                if channel_key not in channel_map:
+                    continue
+                iso_stream, signal_stream, _ = channel_map[channel_key]
+                settings = self._build_settings_for_channel(channel_key, source="trial")
+                processed = process_channel(
+                    self.session, iso_stream, signal_stream, trial_epoc, settings
+                )
+                self._annotate_processed_trials(processed, trial_epoc, trial_source)
+                results.append(
+                    AnalysisResult(
+                        session=self.session,
+                        epoc=trial_epoc,
+                        channel_key=channel_key,
+                        processed=processed,
+                        settings=settings,
+                        stream_store=(iso_stream, signal_stream),
+                    )
+                )
+            return results
+
+        def handle_results(results: list[AnalysisResult]) -> None:
+            self.active_trial_source = trial_source
+            self.trial_results_by_channel = {
+                result.channel_key: result for result in results
+            }
+            self.trial_display_channel.blockSignals(True)
+            self.trial_display_channel.clear()
+            self.trial_display_channel.addItems(list(self.trial_results_by_channel.keys()))
+            self.trial_display_channel.blockSignals(False)
+
+            trial_numbers = self._common_trial_numbers(results)
+            self._populate_trial_list(trial_numbers, results)
+            if results and trial_numbers:
+                display_channel = (
+                    current_display_channel
+                    if current_display_channel in self.trial_results_by_channel
+                    else results[0].channel_key
+                )
+                self.trial_display_channel.setCurrentText(display_channel)
+                self._update_trial_plot_for_channel(display_channel)
+            elif results:
+                self.trial_results_box.setText(
+                    "No shared trials remain after edge/artifact filtering."
+                )
+                self.trial_figure.clear()
+                self.trial_canvas.draw_idle()
+            else:
+                self.trial_results_box.setText("No results.")
+            self._finish_run()
+
+        worker = Worker(task)
+        worker.setAutoDelete(False)
+        worker.signals.result.connect(handle_results)
+        worker.signals.error.connect(self._show_trial_error)
+        worker.signals.finished.connect(self._finish_run)
+        self.trial_results_box.setText("Loading trials...")
+        self._set_run_state(True)
+        self._active_worker = worker
+        self.thread_pool.start(worker)
+
+    def _common_trial_numbers(self, results: list[AnalysisResult]) -> list[int]:
+        trial_sets: list[set[int]] = []
+        for result in results:
+            processed = result.processed
+            trial_numbers = (
+                processed.trial_numbers
+                if processed.trial_numbers
+                else list(range(1, processed.zall.shape[0] + 1))
+            )
+            trial_sets.append({int(number) for number in trial_numbers})
+        if not trial_sets:
+            return []
+        common = set.intersection(*trial_sets)
+        return sorted(common)
+
+    def _populate_trial_list(
+        self,
+        trial_numbers: list[int],
+        results: list[AnalysisResult],
+    ) -> None:
+        selected = set(self._selected_trial_numbers())
+        metadata_by_number = self._trial_metadata_by_number(results)
+        self.trial_list.blockSignals(True)
+        self.trial_list.clear()
+        for number in trial_numbers:
+            trial_time, trial_label = metadata_by_number.get(number, (None, ""))
+            item = QtWidgets.QListWidgetItem(
+                self._trial_list_label(number, trial_time, trial_label)
+            )
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setData(QtCore.Qt.UserRole, number)
+            item.setData(QtCore.Qt.UserRole + 1, trial_label)
+            item.setData(QtCore.Qt.UserRole + 2, trial_time)
+            should_check = not selected or number in selected
+            item.setCheckState(QtCore.Qt.Checked if should_check else QtCore.Qt.Unchecked)
+            self.trial_list.addItem(item)
+        self.trial_list.blockSignals(False)
+
+    def _trial_metadata_by_number(
+        self,
+        results: list[AnalysisResult],
+    ) -> dict[int, tuple[float | None, str]]:
+        metadata: dict[int, tuple[float | None, str]] = {}
+        for result in results:
+            processed = result.processed
+            for idx, number in enumerate(processed.trial_numbers):
+                if number in metadata:
+                    continue
+                trial_time = (
+                    processed.trial_times[idx]
+                    if idx < len(processed.trial_times)
+                    else None
+                )
+                trial_label = (
+                    processed.trial_labels[idx]
+                    if idx < len(processed.trial_labels)
+                    else ""
+                )
+                metadata[number] = (trial_time, trial_label)
+        return metadata
+
+    def _trial_list_label(
+        self,
+        trial_number: int,
+        trial_time: float | None,
+        trial_label: str,
+    ) -> str:
+        parts = [f"Trial {trial_number}"]
+        if trial_time is not None and trial_time == trial_time:
+            parts.append(f"{trial_time:.3f}s")
+        if trial_label:
+            parts.append(trial_label)
+        return " | ".join(parts)
+
+    def _selected_trial_numbers(self) -> list[int]:
+        trial_numbers: list[int] = []
+        for idx in range(self.trial_list.count()):
+            item = self.trial_list.item(idx)
+            if item.checkState() == QtCore.Qt.Checked:
+                trial_numbers.append(int(item.data(QtCore.Qt.UserRole)))
+        return trial_numbers
+
+    def _set_trial_checks(self, should_check: Callable[[int, str], bool]) -> None:
+        self.trial_list.blockSignals(True)
+        for idx in range(self.trial_list.count()):
+            item = self.trial_list.item(idx)
+            trial_number = int(item.data(QtCore.Qt.UserRole))
+            trial_label = item.data(QtCore.Qt.UserRole + 1) or ""
+            item.setCheckState(
+                QtCore.Qt.Checked
+                if should_check(trial_number, trial_label)
+                else QtCore.Qt.Unchecked
+            )
+        self.trial_list.blockSignals(False)
+        self._update_trial_plot_for_channel(self.trial_display_channel.currentText())
+        self._set_run_state(False)
+
+    def _select_all_trials(self) -> None:
+        self._set_trial_checks(lambda _, __: True)
+
+    def _clear_selected_trials(self) -> None:
+        self._set_trial_checks(lambda _, __: False)
+
+    def _invert_selected_trials(self) -> None:
+        selected = set(self._selected_trial_numbers())
+        self._set_trial_checks(lambda number, _: number not in selected)
+
+    def _select_trials_by_type(self, trial_type: str) -> None:
+        self._set_trial_checks(lambda _, label: label == trial_type)
+
+    def _on_trial_selection_changed(self, _: QtWidgets.QListWidgetItem) -> None:
+        self._update_trial_plot_for_channel(self.trial_display_channel.currentText())
+        self._set_run_state(False)
+
+    def _update_trial_plot_for_channel(self, channel_key: str) -> None:
+        if not channel_key or channel_key not in self.trial_results_by_channel:
+            return
+        selected_result = self._current_trial_subset_result(show_error=False)
+        if selected_result is None:
+            self.trial_figure.clear()
+            self.trial_canvas.draw_idle()
+            self.trial_results_box.setText("No trials selected.")
+            self._set_run_state(False)
+            return
+        self._plot_trial_result(selected_result)
+        full_result = self.trial_results_by_channel[channel_key]
+        self.trial_results_box.setText(
+            self._trial_result_summary_line(full_result, selected_result)
+        )
+        self._set_run_state(False)
+
+    def _current_trial_subset_result(
+        self,
+        show_error: bool = True,
+    ) -> AnalysisResult | None:
+        channel_key = self.trial_display_channel.currentText()
+        result = self.trial_results_by_channel.get(channel_key)
+        if result is None:
+            if show_error:
+                self._show_trial_error("Load trials first.")
+            return None
+        try:
+            processed = subset_processed_signal(
+                result.processed, self._selected_trial_numbers()
+            )
+        except ValueError as exc:
+            if show_error:
+                self._show_trial_error(str(exc))
+            return None
+        return AnalysisResult(
+            session=result.session,
+            epoc=result.epoc,
+            channel_key=result.channel_key,
+            processed=processed,
+            settings=result.settings,
+            stream_store=result.stream_store,
+        )
+
+    def _trial_result_summary_line(
+        self,
+        full_result: AnalysisResult,
+        selected_result: AnalysisResult,
+    ) -> str:
+        full_processed = full_result.processed
+        selected_processed = selected_result.processed
+        line = (
+            f"{full_result.channel_key}: selected trials="
+            f"{selected_processed.zall.shape[0]} of {full_processed.zall.shape[0]}"
+        )
+        if selected_processed.trial_numbers:
+            line += f" ({self._format_trial_numbers(selected_processed.trial_numbers)})"
+        if self.active_trial_source is not None:
+            line += f"\nSource: {self.active_trial_source.label}"
+        type_counts = self._trial_type_counts(selected_processed.trial_labels)
+        if type_counts:
+            line += "\nSelected types: " + ", ".join(
+                f"{trial_type}={count}" for trial_type, count in type_counts.items()
+            )
+        if full_processed.num_edge_trials:
+            line += (
+                f", dropped incomplete edge trials={full_processed.num_edge_trials} "
+                f"({self._format_trial_numbers(full_processed.dropped_edge_trials)})"
+            )
+        if full_processed.num_artifacts:
+            line += f", artifact removals={full_processed.num_artifacts}"
+        if self.active_trial_source and self.active_trial_source.warnings:
+            line += "\nWarnings: " + " ".join(self.active_trial_source.warnings)
+        return line
+
+    def _trial_type_counts(self, trial_labels: list[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for label in trial_labels:
+            if not label:
+                continue
+            counts[label] = counts.get(label, 0) + 1
+        return counts
 
     def _choose_output_dir(self) -> None:
         directory = QtWidgets.QFileDialog.getExistingDirectory(
@@ -885,48 +1613,59 @@ class MainWindow(QtWidgets.QMainWindow):
             self._save_figures(output_dir, result)
         self.status_bar.showMessage(f"Figures exported to {output_dir}")
 
-    def _save_figures(self, output_dir: Path, result: AnalysisResult) -> None:
+    def _export_selected_trial_csv(self) -> None:
+        result = self._current_trial_subset_result()
+        if result is None:
+            return
+        output_dir = self._choose_single_export_dir(
+            "Choose Folder for Selected Trial CSV Export"
+        )
+        if output_dir is None:
+            return
+        output_dir.mkdir(parents=True, exist_ok=True)
+        export_channel(
+            output_dir=output_dir,
+            session_name=result.session.source_path.stem,
+            epoc_name=result.epoc.name,
+            channel_key=result.channel_key,
+            processed=result.processed,
+            settings=result.settings,
+            dropped_trials=[],
+            stream_store=result.stream_store,
+            metadata={
+                "source_path": str(result.session.source_path),
+                **result.session.info,
+            },
+            export_smoothed=result.settings.plot_smooth,
+            filename_suffix="_selected_trials",
+        )
+        self.status_bar.showMessage(f"Selected trial CSV exported to {output_dir}")
+
+    def _export_selected_trial_figures(self) -> None:
+        result = self._current_trial_subset_result()
+        if result is None:
+            return
+        output_dir = self._choose_single_export_dir(
+            "Choose Folder for Selected Trial Figure Export"
+        )
+        if output_dir is None:
+            return
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self._save_figures(output_dir, result, filename_suffix="_selected_trials")
+        self.status_bar.showMessage(f"Selected trial figure exported to {output_dir}")
+
+    def _save_figures(
+        self,
+        output_dir: Path,
+        result: AnalysisResult,
+        filename_suffix: str = "",
+    ) -> None:
         fig = Figure(figsize=(10, 4.5))
-        grid = fig.add_gridspec(1, 2, width_ratios=[2, 1])
-        ax_line = fig.add_subplot(grid[0, 0])
-        ax_heatmap = fig.add_subplot(grid[0, 1])
-
-        processed = result.processed
-        ts = processed.ts
-        if result.settings.plot_smooth:
-            z_data = processed.zall_smooth
-            mean = processed.mean_z_smooth
-            sem = processed.sem_z_smooth
-        else:
-            z_data = processed.zall
-            mean = processed.mean_z
-            sem = processed.sem_z
-
-        heatmap = ax_heatmap.imshow(
-            z_data,
-            aspect="auto",
-            origin="lower",
-            extent=[ts[0], ts[-1], 1, z_data.shape[0]],
-            cmap="viridis",
-            interpolation="nearest",
+        self._populate_result_figure(fig, result)
+        prefix = (
+            f"{result.session.source_path.stem}_{result.epoc.name}_"
+            f"{result.channel_key}{filename_suffix}"
         )
-        ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
-        ax_heatmap.set_xlabel("Time (s)")
-        ax_heatmap.set_ylabel("Trial")
-        fig.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
-
-        ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
-        ax_line.fill_between(
-            ts, mean - sem, mean + sem, color="#1f77b4", alpha=0.2, label="SEM"
-        )
-        ax_line.axvline(0, color="#222222", linestyle="--", linewidth=1)
-        ax_line.set_xlabel("Time (s)")
-        ax_line.set_ylabel("Z-score")
-        ax_line.set_title("Mean ± SEM")
-        ax_line.legend(loc="upper right")
-
-        fig.tight_layout()
-        prefix = f"{result.session.source_path.stem}_{result.epoc.name}_{result.channel_key}"
         fig.savefig(output_dir / f"{prefix}_summary.png", dpi=300)
 
     def _add_batch_files(self) -> None:
@@ -1004,13 +1743,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.batch_file_list.clear()
         self._batch_session_options.clear()
         self.preview_file_combo.clear()
+        self.trial_file_combo.clear()
+        self.trial_sources_by_key.clear()
+        self.active_trial_source = None
         self.session = None
         self._active_session_path = None
         self.session_label.setText("No session loaded")
         self.metadata_view.clear()
         self.epoc_combo.clear()
+        self.trial_epoc_combo.clear()
         self.batch_epoc_list.clear()
         self.channel_list.clear()
+        self.trial_channel_list.clear()
         self._clear_results()
 
     def _run_batch(self) -> None:
@@ -1094,4 +1838,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results_box.setText(message)
         if hasattr(self, "batch_progress"):
             self.batch_progress.setText(message)
+        self.status_bar.showMessage(message)
+
+    def _show_trial_error(self, message: str) -> None:
+        self.trial_results_box.setText(message)
         self.status_bar.showMessage(message)
