@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 import numpy as np
@@ -13,7 +13,7 @@ SAMPLE_INDEX_EPSILON = 0.005
 
 @dataclass
 class ProcessingSettings:
-    trange: tuple[float, float] = (-2.0, 7.0)
+    trange: tuple[float, float] = (-2.0, 5.0)
     baseline_per: tuple[float, float] = (-3.0, -1.0)
     base_adjust: float = -30.0
     plot_smooth: bool = True
@@ -34,6 +34,18 @@ class ProcessedSignal:
     mean_z_smooth: np.ndarray
     sem_z_smooth: np.ndarray
     num_artifacts: int
+    num_edge_trials: int = 0
+    dropped_edge_trials: list[int] = field(default_factory=list)
+    trial_numbers: list[int] = field(default_factory=list)
+    trial_labels: list[str] = field(default_factory=list)
+    trial_times: list[float] = field(default_factory=list)
+
+
+@dataclass
+class ExtractedTrials:
+    trials: list[np.ndarray]
+    trial_numbers: list[int]
+    dropped_edge_trials: list[int]
 
 
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
@@ -50,17 +62,35 @@ def _extract_trials(
     trange: tuple[float, float],
     t0: float = 0.0,
 ) -> list[np.ndarray]:
+    return _extract_trials_with_edge_drops(stream, fs, onsets, trange, t0).trials
+
+
+def _extract_trials_with_edge_drops(
+    stream: np.ndarray,
+    fs: float,
+    onsets: np.ndarray,
+    trange: tuple[float, float],
+    t0: float = 0.0,
+) -> ExtractedTrials:
     trials: list[np.ndarray] = []
-    for onset in onsets:
+    trial_numbers: list[int] = []
+    dropped_edge_trials: list[int] = []
+    for trial_idx, onset in enumerate(onsets, start=1):
         start_time = onset + trange[0]
         end_time = onset + trange[1]
         start_idx = int(np.rint((start_time - t0) * fs + SAMPLE_INDEX_EPSILON))
         end_idx = int(np.rint((end_time - t0) * fs + SAMPLE_INDEX_EPSILON)) + 1
-        start_idx = max(0, start_idx)
-        end_idx = min(stream.size, end_idx)
+        if start_idx < 0 or end_idx > stream.size:
+            dropped_edge_trials.append(trial_idx)
+            continue
         if end_idx > start_idx:
             trials.append(stream[start_idx:end_idx])
-    return trials
+            trial_numbers.append(trial_idx)
+    return ExtractedTrials(
+        trials=trials,
+        trial_numbers=trial_numbers,
+        dropped_edge_trials=dropped_edge_trials,
+    )
 
 
 def _remove_artifacts(trials: list[np.ndarray], artifact: float) -> tuple[list[np.ndarray], np.ndarray]:
@@ -90,6 +120,15 @@ def _downsample_trials(trials: list[np.ndarray], factor: int) -> np.ndarray:
     return np.vstack(downsampled)
 
 
+def _mean_and_sem(z_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mean = z_data.mean(axis=0)
+    if z_data.shape[0] <= 1:
+        sem = np.zeros_like(mean)
+    else:
+        sem = z_data.std(axis=0, ddof=1) / np.sqrt(z_data.shape[0])
+    return mean, sem
+
+
 def _baseline_correct(z_data: np.ndarray, ts: np.ndarray, base_adjust: float) -> np.ndarray:
     idx_candidates = np.where(ts > base_adjust)[0]
     if idx_candidates.size == 0:
@@ -116,24 +155,47 @@ def process_channel(
     stream_405 = session.streams[iso_stream]
     stream_465 = session.streams[signal_stream]
 
-    trials_405 = _extract_trials(
+    extracted_405 = _extract_trials_with_edge_drops(
         stream_405.data,
         stream_405.fs,
         epoc.onset,
         settings.trange,
         stream_405.t0,
     )
-    trials_465 = _extract_trials(
+    extracted_465 = _extract_trials_with_edge_drops(
         stream_465.data,
         stream_465.fs,
         epoc.onset,
         settings.trange,
         stream_465.t0,
     )
+    trials_by_number_405 = dict(zip(extracted_405.trial_numbers, extracted_405.trials))
+    trials_by_number_465 = dict(zip(extracted_465.trial_numbers, extracted_465.trials))
+    kept_trial_numbers = sorted(
+        set(trials_by_number_405).intersection(trials_by_number_465)
+    )
+    trials_405 = [trials_by_number_405[number] for number in kept_trial_numbers]
+    trials_465 = [trials_by_number_465[number] for number in kept_trial_numbers]
+    dropped_edge_trials = sorted(
+        set(extracted_405.dropped_edge_trials) | set(extracted_465.dropped_edge_trials)
+    )
 
-    trials_405, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
-    trials_465, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
+    if not trials_405 or not trials_465:
+        raise ValueError("No complete trials remain after dropping edge trials.")
+
+    _, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
+    _, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
     num_artifacts = int((~good_405).sum() + (~good_465).sum())
+    good_trials = good_405 & good_465
+    trials_405 = [
+        trial for trial, keep in zip(trials_405, good_trials) if keep
+    ]
+    trials_465 = [
+        trial for trial, keep in zip(trials_465, good_trials) if keep
+    ]
+    kept_trial_numbers = [
+        number for number, keep in zip(kept_trial_numbers, good_trials) if keep
+    ]
 
     if not trials_405 or not trials_465:
         raise ValueError("No trials remain after artifact removal.")
@@ -187,14 +249,12 @@ def process_channel(
     if settings.set_baseline:
         zall_smooth = _baseline_correct(zall_smooth, ts1, settings.base_adjust)
 
-    mean_z_smooth = zall_smooth.mean(axis=0)
-    sem_z_smooth = zall_smooth.std(axis=0, ddof=1) / np.sqrt(zall_smooth.shape[0])
+    mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
 
     if settings.set_baseline:
         zall = _baseline_correct(zall, ts1, settings.base_adjust)
 
-    mean_z = zall.mean(axis=0)
-    sem_z = zall.std(axis=0, ddof=1) / np.sqrt(zall.shape[0])
+    mean_z, sem_z = _mean_and_sem(zall)
 
     return ProcessedSignal(
         ts=ts2,
@@ -205,6 +265,69 @@ def process_channel(
         mean_z_smooth=mean_z_smooth,
         sem_z_smooth=sem_z_smooth,
         num_artifacts=num_artifacts,
+        num_edge_trials=len(dropped_edge_trials),
+        dropped_edge_trials=dropped_edge_trials,
+        trial_numbers=kept_trial_numbers,
+    )
+
+
+def subset_processed_signal(
+    processed: ProcessedSignal,
+    selected_trial_numbers: Iterable[int],
+) -> ProcessedSignal:
+    selected = {int(number) for number in selected_trial_numbers}
+    if not selected:
+        raise ValueError("Select at least one trial.")
+
+    trial_numbers = (
+        processed.trial_numbers
+        if processed.trial_numbers
+        else list(range(1, processed.zall.shape[0] + 1))
+    )
+    keep_mask = np.array([number in selected for number in trial_numbers], dtype=bool)
+    if not keep_mask.any():
+        raise ValueError("None of the selected trials are available for this channel.")
+
+    zall = processed.zall[keep_mask, :].copy()
+    zall_smooth = processed.zall_smooth[keep_mask, :].copy()
+    mean_z, sem_z = _mean_and_sem(zall)
+    mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
+    kept_trial_numbers = [
+        number for number, keep in zip(trial_numbers, keep_mask) if keep
+    ]
+    trial_labels = (
+        [
+            label
+            for label, keep in zip(processed.trial_labels, keep_mask)
+            if keep
+        ]
+        if len(processed.trial_labels) == len(trial_numbers)
+        else []
+    )
+    trial_times = (
+        [
+            time
+            for time, keep in zip(processed.trial_times, keep_mask)
+            if keep
+        ]
+        if len(processed.trial_times) == len(trial_numbers)
+        else []
+    )
+
+    return ProcessedSignal(
+        ts=processed.ts.copy(),
+        zall=zall,
+        zall_smooth=zall_smooth,
+        mean_z=mean_z,
+        sem_z=sem_z,
+        mean_z_smooth=mean_z_smooth,
+        sem_z_smooth=sem_z_smooth,
+        num_artifacts=processed.num_artifacts,
+        num_edge_trials=processed.num_edge_trials,
+        dropped_edge_trials=list(processed.dropped_edge_trials),
+        trial_numbers=kept_trial_numbers,
+        trial_labels=trial_labels,
+        trial_times=trial_times,
     )
 
 

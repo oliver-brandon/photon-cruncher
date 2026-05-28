@@ -8,7 +8,4 @@ build/
 dist/
 *.spec.bak
 local-test-data/
-<<<<<<< HEAD
-=======
 *.py[cod]
->>>>>>> 41d90f5 (Ignore local AGENTS notes and normalize gitignore)
