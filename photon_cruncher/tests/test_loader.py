@@ -381,6 +381,64 @@ class LoaderTests(unittest.TestCase):
         ]
         self.assertIn("Classified trials levers", labels)
 
+    def test_align_preview_epoc_uses_align_picker_not_trial_picker(self) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
+        from PySide6 import QtWidgets
+        from photon_cruncher.gui.main_window import MainWindow
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _ = app
+        window = MainWindow()
+        try:
+            cue_a = Epoc(name="CueA", onset=np.array([1.0]))
+            cue_b = Epoc(name="CueB", onset=np.array([2.0]))
+            window.session = PhotometrySession(
+                streams={},
+                epocs={"CueA": cue_a, "CueB": cue_b},
+                info={},
+                source_path=Path("synthetic.mat"),
+            )
+            window.epoc_combo.addItems(["CueA", "CueB"])
+            window.epoc_combo.setCurrentText("CueA")
+            window.trial_epoc_combo.addItem("CueB", ("epoc", "CueB"))
+            window.trial_epoc_combo.setCurrentIndex(0)
+
+            self.assertIs(window._selected_preview_epoc(), cue_a)
+            trial_epoc, trial_source = window._selected_trial_epoc()
+            self.assertIs(trial_epoc, cue_b)
+            self.assertIsNone(trial_source)
+        finally:
+            window.close()
+
+    def test_align_preview_controls_request_refresh_after_preview_exists(self) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
+        from PySide6 import QtWidgets
+        from photon_cruncher.gui.main_window import MainWindow
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _ = app
+        window = MainWindow()
+        try:
+            window.session = PhotometrySession(
+                streams={},
+                epocs={"CueA": Epoc(name="CueA", onset=np.array([1.0]))},
+                info={},
+                source_path=Path("synthetic.mat"),
+            )
+            window.results_by_channel = {"A_465": object()}
+            calls: list[str] = []
+            window._preview_signals = lambda: calls.append("preview")
+
+            window._request_preview_refresh()
+            window._preview_refresh_timer.stop()
+            window._run_preview_refresh()
+
+            self.assertEqual(calls, ["preview"])
+        finally:
+            window.close()
+
     def _trial_type_counts(self, source) -> dict[str, int]:
         counts: dict[str, int] = {}
         for trial in source.trials:

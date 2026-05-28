@@ -66,6 +66,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.settings = QtCore.QSettings()
 
         self.thread_pool = QtCore.QThreadPool()
+        self._preview_refresh_pending = False
+        self._preview_refresh_timer = QtCore.QTimer(self)
+        self._preview_refresh_timer.setSingleShot(True)
+        self._preview_refresh_timer.setInterval(200)
+        self._preview_refresh_timer.timeout.connect(self._run_preview_refresh)
         self.channel_smooth_overrides: dict[str, int] = {}
         self.channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
         self.trial_channel_smooth_inputs: dict[str, QtWidgets.QSpinBox] = {}
@@ -164,13 +169,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         control_layout.addWidget(QtWidgets.QLabel("Reference epoc"))
         self.epoc_combo = QtWidgets.QComboBox()
-        self.epoc_combo.currentTextChanged.connect(self._update_epoc_display)
+        self.epoc_combo.currentTextChanged.connect(self._on_preview_epoc_changed)
         control_layout.addWidget(self.epoc_combo)
         self.epoc_display = QtWidgets.QLabel("No epoc selected")
         control_layout.addWidget(self.epoc_display)
 
         self.channel_list = QtWidgets.QListWidget()
         self.channel_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.channel_list.itemChanged.connect(
+            lambda _: self._request_preview_refresh()
+        )
         control_layout.addWidget(QtWidgets.QLabel("Channels to analyze"))
         control_layout.addWidget(self.channel_list)
 
@@ -580,6 +588,7 @@ class MainWindow(QtWidgets.QMainWindow):
         channel_names: list[str],
         selected_channels: set[str],
     ) -> None:
+        channel_list.blockSignals(True)
         channel_list.clear()
         for channel in channel_names:
             item = QtWidgets.QListWidgetItem(channel)
@@ -590,6 +599,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 else QtCore.Qt.Unchecked
             )
             channel_list.addItem(item)
+        channel_list.blockSignals(False)
 
     def _clear_form_layout(self, layout: QtWidgets.QFormLayout) -> None:
         for idx in reversed(range(layout.rowCount())):
@@ -672,6 +682,7 @@ class MainWindow(QtWidgets.QMainWindow):
             smooth_input.blockSignals(True)
             smooth_input.setValue(smooth_value)
             smooth_input.blockSignals(False)
+        self._request_preview_refresh()
 
     def _settings_float(self, key: str, default: float) -> float:
         value = self.settings.value(key, default)
@@ -705,6 +716,7 @@ class MainWindow(QtWidgets.QMainWindow):
         target.blockSignals(True)
         target.setValue(value)
         target.blockSignals(False)
+        self._request_preview_refresh()
 
     def _sync_checkbox_setting(
         self,
@@ -716,6 +728,7 @@ class MainWindow(QtWidgets.QMainWindow):
         target.blockSignals(True)
         target.setChecked(checked)
         target.blockSignals(False)
+        self._request_preview_refresh()
 
     def _connect_processing_setting_persistence(self) -> None:
         spin_pairs = [
@@ -772,9 +785,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_epocs(self) -> None:
         if not self.session:
             return
+        current_preview_epoc = self.epoc_combo.currentText()
         current_trial_data = self.trial_epoc_combo.currentData()
+        self.epoc_combo.blockSignals(True)
         self.epoc_combo.clear()
         self.epoc_combo.addItems(sorted(self.session.epocs.keys()))
+        if current_preview_epoc:
+            selected_preview_idx = self.epoc_combo.findText(current_preview_epoc)
+            if selected_preview_idx >= 0:
+                self.epoc_combo.setCurrentIndex(selected_preview_idx)
+        self.epoc_combo.blockSignals(False)
 
         self.trial_sources_by_key = {
             source.key: source for source in classified_trial_sources(self.session)
@@ -797,6 +817,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trial_epoc_combo.blockSignals(False)
         self._update_epoc_display(self.epoc_combo.currentText())
         self._refresh_batch_epocs()
+
+    def _on_preview_epoc_changed(self, value: str) -> None:
+        self._update_epoc_display(value)
+        self._request_preview_refresh()
 
     def _update_epoc_display(self, value: str) -> None:
         self.epoc_display.setText(value or "No epoc selected")
@@ -910,10 +934,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_bar.showMessage("Running analysis..." if is_running else "Ready")
 
     def _finish_run(self) -> None:
+        was_running = self._active_worker is not None
         self._set_run_state(False)
         self._active_worker = None
+        if was_running and self._preview_refresh_pending:
+            self._preview_refresh_pending = False
+            self._request_preview_refresh()
 
     def _clear_results(self) -> None:
+        self._preview_refresh_pending = False
+        self._preview_refresh_timer.stop()
         self.results_by_channel = {}
         self.display_channel.clear()
         self.results_box.clear()
@@ -947,6 +977,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _selected_trial_channels(self) -> list[str]:
         return self._selected_channels_from(self.trial_channel_list)
+
+    def _request_preview_refresh(self) -> None:
+        if not self.session or not self.results_by_channel:
+            return
+        if self._active_worker is not None:
+            self._preview_refresh_pending = True
+            return
+        self._preview_refresh_timer.start()
+
+    def _run_preview_refresh(self) -> None:
+        if not self.session or not self.results_by_channel:
+            return
+        if self._active_worker is not None:
+            self._preview_refresh_pending = True
+            return
+        self._preview_signals()
 
     def _selected_batch_epocs(
         self,
@@ -1098,7 +1144,7 @@ class MainWindow(QtWidgets.QMainWindow):
         current_display_channel = self.display_channel.currentText()
 
         def task() -> list[AnalysisResult]:
-            epoc, source = self._selected_trial_epoc()
+            epoc = self._selected_preview_epoc()
             channel_map = available_channels(self.session)
             results: list[AnalysisResult] = []
             for channel_key in channel_keys:
@@ -1109,7 +1155,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 processed = process_channel(
                     self.session, iso_stream, signal_stream, epoc, settings
                 )
-                self._annotate_processed_trials(processed, epoc, source)
+                self._annotate_processed_trials(processed, epoc, None)
                 results.append(
                     AnalysisResult(
                         session=self.session,
@@ -1227,6 +1273,12 @@ class MainWindow(QtWidgets.QMainWindow):
         ax_line.legend(loc="upper right")
 
         figure.tight_layout()
+
+    def _selected_preview_epoc(self) -> Epoc:
+        epoc_name = self.epoc_combo.currentText()
+        if epoc_name not in self.session.epocs:
+            raise ValueError(f"Epoc '{epoc_name}' not found.")
+        return self.session.epocs[epoc_name]
 
     def _selected_trial_epoc(self) -> tuple[Epoc, ClassifiedTrialSource | None]:
         selection = self.trial_epoc_combo.currentData()

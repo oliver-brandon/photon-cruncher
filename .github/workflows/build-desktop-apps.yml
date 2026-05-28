@@ -30,8 +30,8 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Photon-Cruncher-v1.1.0-Windows
-          path: dist/Photon-Cruncher-v1.1.0-Windows.zip
+          name: Photon-Cruncher-v1.1.1-Windows
+          path: dist/Photon-Cruncher-v1.1.1-Windows.zip
 
   build-macos:
     name: macOS bundle
@@ -50,13 +50,13 @@ jobs:
         run: scripts/build_macos_app.sh
 
       - name: Zip macOS app
-        run: ditto -c -k --keepParent "dist/Photon Cruncher v1.1.0.app" "dist/Photon-Cruncher-v1.1.0-macOS.zip"
+        run: ditto -c -k --keepParent "dist/Photon Cruncher v1.1.1.app" "dist/Photon-Cruncher-v1.1.1-macOS.zip"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Photon-Cruncher-v1.1.0-macOS
-          path: dist/Photon-Cruncher-v1.1.0-macOS.zip
+          name: Photon-Cruncher-v1.1.1-macOS
+          path: dist/Photon-Cruncher-v1.1.1-macOS.zip
 
   publish-release:
     name: Publish release assets
