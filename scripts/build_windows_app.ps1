@@ -7,8 +7,8 @@ $VenvDir = Join-Path $ProjectRoot ".build-venv-windows"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $SpecFile = Join-Path $ProjectRoot "packaging\windows\PhotonCruncher.spec"
 $DistDir = Join-Path $ProjectRoot "dist"
-$AppDir = Join-Path $DistDir "Photon Cruncher Dev v1.1.0"
-$ZipPath = Join-Path $DistDir "Photon-Cruncher-Dev-v1.1.0-Windows.zip"
+$AppDir = Join-Path $DistDir "Photon Cruncher Dev v1.1.1"
+$ZipPath = Join-Path $DistDir "Photon-Cruncher-Dev-v1.1.1-Windows.zip"
 
 $RunningOnWindows = ($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT")
 if (-not $RunningOnWindows) {
@@ -41,4 +41,4 @@ Write-Host ""
 Write-Host "Built zip for GitHub/download sharing:"
 Write-Host "  $ZipPath"
 Write-Host ""
-Write-Host "You can unzip Photon-Cruncher-Dev-v1.1.0-Windows.zip anywhere and double-click Photon Cruncher Dev v1.1.0.exe."
+Write-Host "You can unzip Photon-Cruncher-Dev-v1.1.1-Windows.zip anywhere and double-click Photon Cruncher Dev v1.1.1.exe."
