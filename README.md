@@ -16,12 +16,12 @@ need Python, Conda, Terminal, Automator, or the project source folder.
 2. Click **Releases** on the right side of the page.
 3. Open the newest release.
 4. Download the newest Windows zip, such as
-   `Photon-Cruncher-Dev-v1.1.1-Windows.zip`.
+   `Photon-Cruncher-Dev-v1.1.2-Windows.zip`.
 5. Right-click the zip file and choose **Extract All...**.
-6. Open the extracted `Photon Cruncher Dev v1.1.1` folder.
-7. Double-click `Photon Cruncher Dev v1.1.1.exe`.
+6. Open the extracted `Photon Cruncher Dev v1.1.2` folder.
+7. Double-click `Photon Cruncher Dev v1.1.2.exe`.
 
-Keep the extracted `Photon Cruncher Dev v1.1.1` folder together. The `.exe`
+Keep the extracted `Photon Cruncher Dev v1.1.2` folder together. The `.exe`
 depends on the files beside it in that folder, but the whole folder can be
 moved anywhere on the computer, including the Desktop, Downloads, Documents, or
 a lab software folder.
@@ -37,10 +37,10 @@ certificate.
 2. Click **Releases** on the right side of the page.
 3. Open the newest release.
 4. Download the newest macOS zip, such as
-   `Photon-Cruncher-Dev-v1.1.1-macOS.zip`.
+   `Photon-Cruncher-Dev-v1.1.2-macOS.zip`.
 5. Double-click the zip file to expand it.
-6. Drag `Photon Cruncher Dev v1.1.1.app` to **Applications** or any other folder.
-7. Double-click `Photon Cruncher Dev v1.1.1.app`.
+6. Drag `Photon Cruncher Dev v1.1.2.app` to **Applications** or any other folder.
+7. Double-click `Photon Cruncher Dev v1.1.2.app`.
 
 The macOS app bundle contains its own Python runtime, dependencies, and icons,
 so it can be moved without depending on the original project folder path.
@@ -48,13 +48,13 @@ so it can be moved without depending on the original project folder path.
 If macOS says the app cannot be opened because Apple cannot verify it, this is
 expected for an unsigned lab build. Open it once using this path:
 
-1. Control-click or right-click `Photon Cruncher Dev v1.1.1.app`.
+1. Control-click or right-click `Photon Cruncher Dev v1.1.2.app`.
 2. Choose **Open**.
 3. In the warning dialog, choose **Open** again.
 
 If macOS blocks the app without showing an **Open** button, go to **System
 Settings** > **Privacy & Security**, scroll to the security message about
-`Photon Cruncher Dev v1.1.1.app`, and choose **Open Anyway**. Only do this for
+`Photon Cruncher Dev v1.1.2.app`, and choose **Open Anyway**. Only do this for
 app files downloaded from the lab's GitHub release page.
 
 ## Update the App
@@ -71,20 +71,20 @@ delete your recordings or exports.
 3. Click **Releases** on the right side of the page.
 4. Open the newest release.
 5. Download the newest Windows zip, such as
-   `Photon-Cruncher-Dev-v1.1.1-Windows.zip`.
+   `Photon-Cruncher-Dev-v1.1.2-Windows.zip`.
 6. Right-click the zip file and choose **Extract All...**.
 7. Open the extracted folder.
 8. You should see a folder with the version in its name, such as
-   `Photon Cruncher Dev v1.1.1`.
+   `Photon Cruncher Dev v1.1.2`.
 9. Go to the place where your old `Photon Cruncher` folder lives.
 10. Rename the old folder to `Photon Cruncher old`.
-11. Move the new versioned `Photon Cruncher Dev v1.1.1` folder into that same
+11. Move the new versioned `Photon Cruncher Dev v1.1.2` folder into that same
     place.
-12. Double-click `Photon Cruncher Dev v1.1.1.exe` inside the new folder.
+12. Double-click `Photon Cruncher Dev v1.1.2.exe` inside the new folder.
 13. After the new version opens correctly, delete `Photon Cruncher old`.
 
 Keep the whole `Photon Cruncher` folder together. Do not move only
-`Photon Cruncher Dev v1.1.1.exe` by itself, because the `.exe` needs the files
+`Photon Cruncher Dev v1.1.2.exe` by itself, because the `.exe` needs the files
 beside it.
 
 If Windows says files with the same name already exist, choose **Replace** only
@@ -99,14 +99,14 @@ copy available until you confirm the new one opens.
 3. Click **Releases** on the right side of the page.
 4. Open the newest release.
 5. Download the newest macOS zip, such as
-   `Photon-Cruncher-Dev-v1.1.1-macOS.zip`.
+   `Photon-Cruncher-Dev-v1.1.2-macOS.zip`.
 6. Double-click the zip file to expand it.
-7. You should see a versioned app, such as `Photon Cruncher Dev v1.1.1.app`.
+7. You should see a versioned app, such as `Photon Cruncher Dev v1.1.2.app`.
 8. Go to the place where your old `Photon Cruncher.app` lives, usually
    **Applications**.
 9. Rename the old app to `Photon Cruncher old.app`.
-10. Drag the new `Photon Cruncher Dev v1.1.1.app` into that same place.
-11. Double-click the new `Photon Cruncher Dev v1.1.1.app`.
+10. Drag the new `Photon Cruncher Dev v1.1.2.app` into that same place.
+11. Double-click the new `Photon Cruncher Dev v1.1.2.app`.
 12. After the new version opens correctly, delete `Photon Cruncher old.app`.
 
 If macOS asks whether to replace the existing app, you can choose **Replace**,

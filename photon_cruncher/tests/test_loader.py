@@ -325,6 +325,57 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(rows[2][0], "TRIAL_007_correct_rewarded")
 
+    def test_batch_custom_can_process_without_csv_export(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = PhotometrySession(
+            streams={
+                "x405A": Stream(
+                    name="x405A",
+                    fs=10.0,
+                    data=np.linspace(1.0, 20.0, 200),
+                ),
+                "x465A": Stream(
+                    name="x465A",
+                    fs=10.0,
+                    data=np.linspace(2.0, 40.0, 200) ** 1.01,
+                ),
+            },
+            epocs={"Cue": Epoc(name="Cue", onset=np.array([10.0]))},
+            info={},
+            source_path=Path("synthetic.mat"),
+        )
+        export_calls = []
+        original_load_session = runner.load_session
+        original_export_channel = runner.export_channel
+        runner.load_session = lambda _: session
+        runner.export_channel = lambda **kwargs: export_calls.append(kwargs)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                settings = ProcessingSettings(
+                    trange=(-1.0, 1.0),
+                    baseline_per=(-1.0, 0.0),
+                    set_baseline=False,
+                    downsample_factor=1,
+                    smooth_factor=1,
+                )
+                exported = runner.run_batch_custom(
+                    input_paths=[Path("synthetic.mat")],
+                    epoc_selections=[("Cue", ("Cue",))],
+                    output_dir=Path(tmp),
+                    channel_keys=["A_465"],
+                    settings_factory=lambda _: settings,
+                    per_session_subdir=True,
+                    export_csv=False,
+                )
+        finally:
+            runner.load_session = original_load_session
+            runner.export_channel = original_export_channel
+
+        self.assertEqual(export_calls, [])
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].result.channel_key, "A_465")
+
     def test_rev_fixture_explicit_outcomes_partition_levers(self) -> None:
         session = self._load_local_mat_fixture("2143_Rev1_JZL18.mat")
 
@@ -436,6 +487,33 @@ class LoaderTests(unittest.TestCase):
             window._run_preview_refresh()
 
             self.assertEqual(calls, ["preview"])
+        finally:
+            window.close()
+
+    def test_batch_export_checkboxes_default_to_csv_only(self) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
+        from PySide6 import QtWidgets
+        from photon_cruncher.gui.main_window import MainWindow
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _ = app
+        window = MainWindow()
+        try:
+            self.assertTrue(window.batch_export_csv.isChecked())
+            self.assertFalse(window.batch_export_figures.isChecked())
+            self.assertFalse(window.batch_figure_format.isEnabled())
+            self.assertEqual(
+                [
+                    window.batch_figure_format.itemData(idx)
+                    for idx in range(window.batch_figure_format.count())
+                ],
+                ["png", "pdf", "tiff"],
+            )
+
+            window.batch_export_figures.setChecked(True)
+
+            self.assertTrue(window.batch_figure_format.isEnabled())
         finally:
             window.close()
 

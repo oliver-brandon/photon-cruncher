@@ -71,6 +71,12 @@ class AnalysisResult:
     stream_store: tuple[str, str]
 
 
+@dataclass
+class BatchExportedResult:
+    output_dir: Path
+    result: AnalysisResult
+
+
 def run_session(
     session: PhotometrySession,
     epoc_name: str,
@@ -182,8 +188,10 @@ def run_batch_custom(
     settings_factory: Callable[[str], ProcessingSettings],
     export_summary: bool = False,
     per_session_subdir: bool = False,
-) -> None:
+    export_csv: bool = True,
+) -> list[BatchExportedResult]:
     summary_rows: list[dict[str, Any]] = []
+    exported_results: list[BatchExportedResult] = []
     for path in input_paths:
         session = load_session(path)
         session_output = output_dir / session.source_path.stem if per_session_subdir else output_dir
@@ -201,21 +209,25 @@ def run_batch_custom(
                 except ValueError:
                     continue
                 for result in results:
-                    export_channel(
-                        output_dir=session_output,
-                        session_name=session.source_path.stem,
-                        epoc_name=epoc_name,
-                        channel_key=result.channel_key,
-                        processed=result.processed,
-                        settings=result.settings,
-                        dropped_trials=[],
-                        stream_store=result.stream_store,
-                        metadata={
-                            "source_path": str(session.source_path),
-                            **session.info,
-                        },
-                        export_smoothed=result.settings.plot_smooth,
+                    exported_results.append(
+                        BatchExportedResult(output_dir=session_output, result=result)
                     )
+                    if export_csv:
+                        export_channel(
+                            output_dir=session_output,
+                            session_name=session.source_path.stem,
+                            epoc_name=epoc_name,
+                            channel_key=result.channel_key,
+                            processed=result.processed,
+                            settings=result.settings,
+                            dropped_trials=[],
+                            stream_store=result.stream_store,
+                            metadata={
+                                "source_path": str(session.source_path),
+                                **session.info,
+                            },
+                            export_smoothed=result.settings.plot_smooth,
+                        )
                     if export_summary:
                         summary_rows.append(
                             {
@@ -228,3 +240,4 @@ def run_batch_custom(
                         )
     if export_summary:
         export_batch_summary(output_dir, summary_rows)
+    return exported_results

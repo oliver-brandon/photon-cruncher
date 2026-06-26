@@ -487,6 +487,25 @@ class MainWindow(QtWidgets.QMainWindow):
         output_path_row.addWidget(self.output_dir_button)
         output_layout.addLayout(output_path_row)
 
+        export_type_row = QtWidgets.QHBoxLayout()
+        export_type_row.addWidget(QtWidgets.QLabel("Export"))
+        self.batch_export_csv = QtWidgets.QCheckBox("CSV files")
+        self.batch_export_csv.setChecked(True)
+        export_type_row.addWidget(self.batch_export_csv)
+        self.batch_export_figures = QtWidgets.QCheckBox("Figures")
+        self.batch_export_figures.setChecked(False)
+        export_type_row.addWidget(self.batch_export_figures)
+        export_type_row.addWidget(QtWidgets.QLabel("Figure format"))
+        self.batch_figure_format = QtWidgets.QComboBox()
+        self.batch_figure_format.addItem("PNG", "png")
+        self.batch_figure_format.addItem("PDF", "pdf")
+        self.batch_figure_format.addItem("TIFF", "tiff")
+        self.batch_figure_format.setEnabled(False)
+        self.batch_export_figures.toggled.connect(self.batch_figure_format.setEnabled)
+        export_type_row.addWidget(self.batch_figure_format)
+        export_type_row.addStretch()
+        output_layout.addLayout(export_type_row)
+
         layout.addWidget(output_group)
 
         batch_group = QtWidgets.QGroupBox("Batch Processing")
@@ -1711,6 +1730,7 @@ class MainWindow(QtWidgets.QMainWindow):
         output_dir: Path,
         result: AnalysisResult,
         filename_suffix: str = "",
+        figure_format: str = "png",
     ) -> None:
         fig = Figure(figsize=(10, 4.5))
         self._populate_result_figure(fig, result)
@@ -1718,7 +1738,11 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{result.session.source_path.stem}_{result.epoc.name}_"
             f"{result.channel_key}{filename_suffix}"
         )
-        fig.savefig(output_dir / f"{prefix}_summary.png", dpi=300)
+        fig.savefig(
+            output_dir / f"{prefix}_summary.{figure_format}",
+            dpi=300,
+            format=figure_format,
+        )
 
     def _add_batch_files(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -1809,6 +1833,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trial_channel_list.clear()
         self._clear_results()
 
+    def _batch_export_done_message(
+        self,
+        input_paths: list[Path],
+        export_csv: bool,
+        export_figures: bool,
+    ) -> str:
+        if export_csv and export_figures:
+            export_label = "CSV and figure export"
+        elif export_figures:
+            export_label = "Figure export"
+        else:
+            export_label = "CSV export"
+        return f"{export_label} complete ({len(input_paths)} files)."
+
     def _run_batch(self) -> None:
         if self.batch_file_list.count() == 0:
             self._show_error("Add batch files before running.")
@@ -1822,12 +1860,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if not epoc_selections:
             self._show_error("Select at least one epoc for batch processing.")
             return
+        export_csv = self.batch_export_csv.isChecked()
+        export_figures = self.batch_export_figures.isChecked()
+        figure_format = self.batch_figure_format.currentData() or "png"
+        if not export_csv and not export_figures:
+            self._show_error("Choose CSV files, figures, or both for batch export.")
+            return
 
         def task() -> str:
             output_dir = Path(self.output_dir_input.text()).expanduser()
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            run_batch_custom(
+            exported_results = run_batch_custom(
                 input_paths=input_paths,
                 epoc_selections=epoc_selections,
                 output_dir=output_dir,
@@ -1835,7 +1879,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 settings_factory=self._build_settings_for_channel,
                 export_summary=False,
                 per_session_subdir=True,
+                export_csv=export_csv,
             )
+            if export_figures:
+                for exported in exported_results:
+                    exported.output_dir.mkdir(parents=True, exist_ok=True)
+                    self._save_figures(
+                        exported.output_dir,
+                        exported.result,
+                        figure_format=figure_format,
+                    )
             skipped: dict[str, list[str]] = {}
             for path in input_paths:
                 session = load_session(path)
@@ -1860,10 +1913,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     for path, epocs in skipped.items()
                 )
                 return (
-                    f"Batch export complete ({len(input_paths)} files). "
+                    f"{self._batch_export_done_message(input_paths, export_csv, export_figures)} "
                     f"Skipped epocs: {skipped_details}"
                 )
-            return f"Batch export complete ({len(input_paths)} files)."
+            return self._batch_export_done_message(
+                input_paths, export_csv, export_figures
+            )
 
         channel_keys = self._selected_channels()
         if not channel_keys:
