@@ -1254,6 +1254,31 @@ class MainWindow(QtWidgets.QMainWindow):
         file_name = result.session.source_path.name or "Untitled session"
         return f"{file_name} | Epoc: {result.epoc.name}"
 
+    def _heatmap_trial_ticks(
+        self,
+        processed,
+        num_rows: int,
+        max_ticks: int = 12,
+    ) -> tuple[list[int], list[str]]:
+        if num_rows <= 0:
+            return [], []
+        trial_numbers = (
+            processed.trial_numbers
+            if len(processed.trial_numbers) == num_rows
+            else list(range(1, num_rows + 1))
+        )
+        if num_rows <= max_ticks:
+            tick_positions = list(range(1, num_rows + 1))
+        else:
+            tick_positions = sorted(
+                {
+                    1 + round(idx * (num_rows - 1) / (max_ticks - 1))
+                    for idx in range(max_ticks)
+                }
+            )
+        tick_labels = [str(int(trial_numbers[position - 1])) for position in tick_positions]
+        return tick_positions, tick_labels
+
     def _populate_result_figure(self, figure: Figure, result: AnalysisResult) -> None:
         grid = figure.add_gridspec(1, 2, width_ratios=[2, 1])
         ax_line = figure.add_subplot(grid[0, 0])
@@ -1280,9 +1305,11 @@ class MainWindow(QtWidgets.QMainWindow):
         ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
         ax_heatmap.set_xlabel("Time (s)")
         ax_heatmap.set_ylabel("Trial")
-        if processed.trial_numbers and z_data.shape[0] <= 20:
-            ax_heatmap.set_yticks(range(1, z_data.shape[0] + 1))
-            ax_heatmap.set_yticklabels([str(number) for number in processed.trial_numbers])
+        trial_tick_positions, trial_tick_labels = self._heatmap_trial_ticks(
+            processed, z_data.shape[0]
+        )
+        ax_heatmap.set_yticks(trial_tick_positions)
+        ax_heatmap.set_yticklabels(trial_tick_labels)
         figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
 
         ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")

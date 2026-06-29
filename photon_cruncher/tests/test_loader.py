@@ -565,6 +565,39 @@ class LoaderTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_heatmap_trial_ticks_are_integer_trial_labels(self) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
+        from PySide6 import QtWidgets
+        from photon_cruncher.gui.main_window import MainWindow
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _ = app
+        window = MainWindow()
+        try:
+            processed = ProcessedSignal(
+                ts=np.array([0.0, 1.0]),
+                zall=np.zeros((40, 2)),
+                zall_smooth=np.zeros((40, 2)),
+                mean_z=np.array([0.0, 0.0]),
+                sem_z=np.array([0.0, 0.0]),
+                mean_z_smooth=np.array([0.0, 0.0]),
+                sem_z_smooth=np.array([0.0, 0.0]),
+                num_artifacts=0,
+                trial_numbers=list(range(101, 141)),
+            )
+
+            positions, labels = window._heatmap_trial_ticks(processed, 40)
+
+            self.assertLessEqual(len(positions), 12)
+            self.assertTrue(all(isinstance(position, int) for position in positions))
+            self.assertTrue(all(float(position).is_integer() for position in positions))
+            self.assertTrue(all(label.isdigit() for label in labels))
+            self.assertEqual(labels[0], "101")
+            self.assertEqual(labels[-1], "140")
+        finally:
+            window.close()
+
     def _trial_type_counts(self, source) -> dict[str, int]:
         counts: dict[str, int] = {}
         for trial in source.trials:
