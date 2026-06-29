@@ -517,6 +517,54 @@ class LoaderTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_result_figure_title_includes_file_and_epoc(self) -> None:
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
+        from matplotlib.figure import Figure
+        from PySide6 import QtWidgets
+        from photon_cruncher.analysis.runner import AnalysisResult
+        from photon_cruncher.gui.main_window import MainWindow
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        _ = app
+        window = MainWindow()
+        try:
+            processed = ProcessedSignal(
+                ts=np.array([0.0, 1.0]),
+                zall=np.array([[1.0, 2.0]]),
+                zall_smooth=np.array([[1.0, 2.0]]),
+                mean_z=np.array([1.0, 2.0]),
+                sem_z=np.array([0.0, 0.0]),
+                mean_z_smooth=np.array([1.0, 2.0]),
+                sem_z_smooth=np.array([0.0, 0.0]),
+                num_artifacts=0,
+            )
+            session = PhotometrySession(
+                streams={},
+                epocs={},
+                info={},
+                source_path=Path("example_recording.mat"),
+            )
+            result = AnalysisResult(
+                session=session,
+                epoc=Epoc(name="CueA", onset=np.array([1.0])),
+                channel_key="A_465",
+                processed=processed,
+                settings=ProcessingSettings(plot_smooth=False),
+                stream_store=("x405A", "x465A"),
+            )
+            figure = Figure()
+
+            window._populate_result_figure(figure, result)
+
+            self.assertIsNotNone(figure._suptitle)
+            self.assertEqual(
+                figure._suptitle.get_text(),
+                "example_recording.mat | Epoc: CueA",
+            )
+        finally:
+            window.close()
+
     def _trial_type_counts(self, source) -> dict[str, int]:
         counts: dict[str, int] = {}
         for trial in source.trials:

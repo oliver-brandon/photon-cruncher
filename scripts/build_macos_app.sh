@@ -27,6 +27,6 @@ fi
 
 echo
 echo "Built app:"
-echo "  ${project_root}/dist/Photon Cruncher Dev v1.1.2.app"
+echo "  ${project_root}/dist/Photon Cruncher Dev v1.1.3.app"
 echo
-echo "You can move 'Photon Cruncher Dev v1.1.2.app' anywhere on this Mac, including /Applications."
+echo "You can move 'Photon Cruncher Dev v1.1.3.app' anywhere on this Mac, including /Applications."

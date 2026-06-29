@@ -1,6 +1,6 @@
 """Photometry analysis application."""
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 __app_name__ = "Photon Cruncher Dev"
 
 

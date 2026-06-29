@@ -1250,6 +1250,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_result_figure(self.trial_figure, result)
         self.trial_canvas.draw_idle()
 
+    def _result_figure_title(self, result: AnalysisResult) -> str:
+        file_name = result.session.source_path.name or "Untitled session"
+        return f"{file_name} | Epoc: {result.epoc.name}"
+
     def _populate_result_figure(self, figure: Figure, result: AnalysisResult) -> None:
         grid = figure.add_gridspec(1, 2, width_ratios=[2, 1])
         ax_line = figure.add_subplot(grid[0, 0])
@@ -1291,7 +1295,8 @@ class MainWindow(QtWidgets.QMainWindow):
         ax_line.set_title("Mean ± SEM")
         ax_line.legend(loc="upper right")
 
-        figure.tight_layout()
+        figure.suptitle(self._result_figure_title(result), fontsize=12, fontweight="bold")
+        figure.tight_layout(rect=(0, 0, 1, 0.94))
 
     def _selected_preview_epoc(self) -> Epoc:
         epoc_name = self.epoc_combo.currentText()
