@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import csv
+import io
+import json
 import os
 import sys
 import tempfile
@@ -41,6 +44,34 @@ class Struct:
 
 
 class LoaderTests(unittest.TestCase):
+    def _invoke_cli(self, args: list[str]):
+        from photon_cruncher import cli
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = cli.main(args)
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    def _synthetic_cli_session(self) -> PhotometrySession:
+        return PhotometrySession(
+            streams={
+                "x405A": Stream(
+                    name="x405A",
+                    fs=10.0,
+                    data=np.linspace(1.0, 40.0, 400),
+                ),
+                "x465A": Stream(
+                    name="x465A",
+                    fs=10.0,
+                    data=np.linspace(2.0, 80.0, 400) ** 1.01,
+                ),
+            },
+            epocs={"Cue": Epoc(name="Cue", onset=np.array([10.0, 20.0]))},
+            info={"subject": "synthetic"},
+            source_path=Path("synthetic.mat"),
+        )
+
     def _load_local_mat_fixture(self, filename: str):
         path = Path("local-test-data") / "mat" / filename
         if not path.exists():
@@ -393,6 +424,210 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(export_calls, [])
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0].result.channel_key, "A_465")
+
+    def test_cli_validate_config_accepts_minimal_analyze_config(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "exports": {"csv": True, "figures": False},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["config"]["processing"]["baseline_adjust"], -2.0)
+
+    def test_cli_validate_config_rejects_bad_trange(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "processing": {"trange_start": 5.0, "trange_end": -2.0},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["valid"])
+        self.assertIn("trange_start", payload["errors"][0]["message"])
+
+    def test_cli_inspect_outputs_session_json(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(["inspect", "synthetic.mat"])
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sessions"][0]["channels"], ["A_465"])
+        self.assertEqual(payload["sessions"][0]["epocs"]["Cue"]["events"], 2)
+        self.assertEqual(payload["sessions"][0]["streams"]["x405A"]["samples"], 400)
+
+    def test_cli_analyze_exports_csv_and_figure_summary(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                exit_code, stdout, stderr = self._invoke_cli(
+                    [
+                        "analyze",
+                        "synthetic.mat",
+                        "--output-dir",
+                        tmp,
+                        "--epoc",
+                        "Cue",
+                        "--channel",
+                        "A_465",
+                        "--trange-start",
+                        "-1",
+                        "--trange-end",
+                        "1",
+                        "--baseline-start",
+                        "-1",
+                        "--baseline-end",
+                        "0",
+                        "--downsample-factor",
+                        "1",
+                        "--smooth-factor",
+                        "1",
+                        "--no-baseline-correction",
+                        "--export",
+                        "both",
+                        "--figure-format",
+                        "png",
+                    ]
+                )
+                payload = json.loads(stdout)
+                csv_path = Path(payload["results"][0]["exported_csv"])
+                figure_path = Path(payload["results"][0]["exported_figure"])
+                self.assertTrue(csv_path.exists())
+                self.assertTrue(figure_path.exists())
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["results"][0]["num_trials"], 2)
+        self.assertEqual(payload["results"][0]["settings"]["baseline_adjust"], -2.0)
+
+    def test_cli_analyze_classified_source_filters_trial_type(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        session.epocs = {
+            "cRew": Epoc(name="cRew", onset=np.array([10.0])),
+            "iNoRew": Epoc(name="iNoRew", onset=np.array([20.0])),
+        }
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                exit_code, stdout, stderr = self._invoke_cli(
+                    [
+                        "analyze",
+                        "synthetic.mat",
+                        "--output-dir",
+                        tmp,
+                        "--epoc",
+                        "Classified trials",
+                        "--channel",
+                        "A_465",
+                        "--trial-type",
+                        CORRECT_REWARDED,
+                        "--trange-start",
+                        "-1",
+                        "--trange-end",
+                        "1",
+                        "--baseline-start",
+                        "-1",
+                        "--baseline-end",
+                        "0",
+                        "--downsample-factor",
+                        "1",
+                        "--smooth-factor",
+                        "1",
+                        "--no-baseline-correction",
+                        "--export",
+                        "csv",
+                    ]
+                )
+                payload = json.loads(stdout)
+                csv_path = Path(payload["results"][0]["exported_csv"])
+                with csv_path.open(newline="") as handle:
+                    rows = list(csv.reader(handle))
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["results"][0]["trial_labels"], [CORRECT_REWARDED])
+        self.assertEqual(rows[2][0], "TRIAL_001_correct_rewarded")
+
+    def test_cli_analyze_no_matching_trials_returns_exit_one(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                exit_code, stdout, stderr = self._invoke_cli(
+                    [
+                        "analyze",
+                        "synthetic.mat",
+                        "--output-dir",
+                        tmp,
+                        "--epoc",
+                        "Missing",
+                        "--export",
+                        "csv",
+                    ]
+                )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["results"], [])
 
     def test_rev_fixture_explicit_outcomes_partition_levers(self) -> None:
         session = self._load_local_mat_fixture("2143_Rev1_JZL18.mat")

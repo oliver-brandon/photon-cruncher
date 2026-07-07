@@ -17,7 +17,13 @@ from photon_cruncher.analysis.trial_classifier import (
     ClassifiedTrialSource,
     classified_trial_sources,
 )
-from photon_cruncher.export.exporter import export_channel
+from photon_cruncher.export.exporter import (
+    export_channel,
+    heatmap_trial_ticks,
+    populate_result_figure,
+    result_figure_title,
+    save_result_figure,
+)
 from photon_cruncher.io.loader import discover_tdt_block_paths, load_session
 from photon_cruncher.model import Epoc
 from photon_cruncher.processing.pipeline import (
@@ -1251,8 +1257,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trial_canvas.draw_idle()
 
     def _result_figure_title(self, result: AnalysisResult) -> str:
-        file_name = result.session.source_path.name or "Untitled session"
-        return f"{file_name} | Epoc: {result.epoc.name}"
+        return result_figure_title(result)
 
     def _heatmap_trial_ticks(
         self,
@@ -1260,70 +1265,10 @@ class MainWindow(QtWidgets.QMainWindow):
         num_rows: int,
         max_ticks: int = 12,
     ) -> tuple[list[int], list[str]]:
-        if num_rows <= 0:
-            return [], []
-        trial_numbers = (
-            processed.trial_numbers
-            if len(processed.trial_numbers) == num_rows
-            else list(range(1, num_rows + 1))
-        )
-        if num_rows <= max_ticks:
-            tick_positions = list(range(1, num_rows + 1))
-        else:
-            tick_positions = sorted(
-                {
-                    1 + round(idx * (num_rows - 1) / (max_ticks - 1))
-                    for idx in range(max_ticks)
-                }
-            )
-        tick_labels = [str(int(trial_numbers[position - 1])) for position in tick_positions]
-        return tick_positions, tick_labels
+        return heatmap_trial_ticks(processed, num_rows, max_ticks)
 
     def _populate_result_figure(self, figure: Figure, result: AnalysisResult) -> None:
-        grid = figure.add_gridspec(1, 2, width_ratios=[2, 1])
-        ax_line = figure.add_subplot(grid[0, 0])
-        ax_heatmap = figure.add_subplot(grid[0, 1])
-        processed = result.processed
-        ts = processed.ts
-        if result.settings.plot_smooth:
-            z_data = processed.zall_smooth
-            mean = processed.mean_z_smooth
-            sem = processed.sem_z_smooth
-        else:
-            z_data = processed.zall
-            mean = processed.mean_z
-            sem = processed.sem_z
-
-        heatmap = ax_heatmap.imshow(
-            z_data,
-            aspect="auto",
-            origin="lower",
-            extent=[ts[0], ts[-1], 0.5, z_data.shape[0] + 0.5],
-            cmap="viridis",
-            interpolation="nearest",
-        )
-        ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
-        ax_heatmap.set_xlabel("Time (s)")
-        ax_heatmap.set_ylabel("Trial")
-        trial_tick_positions, trial_tick_labels = self._heatmap_trial_ticks(
-            processed, z_data.shape[0]
-        )
-        ax_heatmap.set_yticks(trial_tick_positions)
-        ax_heatmap.set_yticklabels(trial_tick_labels)
-        figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
-
-        ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
-        ax_line.fill_between(
-            ts, mean - sem, mean + sem, color="#1f77b4", alpha=0.2, label="SEM"
-        )
-        ax_line.axvline(0, color="#222222", linestyle="--", linewidth=1)
-        ax_line.set_xlabel("Time (s)")
-        ax_line.set_ylabel("Z-score")
-        ax_line.set_title("Mean ± SEM")
-        ax_line.legend(loc="upper right")
-
-        figure.suptitle(self._result_figure_title(result), fontsize=12, fontweight="bold")
-        figure.tight_layout(rect=(0, 0, 1, 0.94))
+        populate_result_figure(figure, result)
 
     def _selected_preview_epoc(self) -> Epoc:
         epoc_name = self.epoc_combo.currentText()
@@ -1764,17 +1709,7 @@ class MainWindow(QtWidgets.QMainWindow):
         filename_suffix: str = "",
         figure_format: str = "png",
     ) -> None:
-        fig = Figure(figsize=(10, 4.5))
-        self._populate_result_figure(fig, result)
-        prefix = (
-            f"{result.session.source_path.stem}_{result.epoc.name}_"
-            f"{result.channel_key}{filename_suffix}"
-        )
-        fig.savefig(
-            output_dir / f"{prefix}_summary.{figure_format}",
-            dpi=300,
-            format=figure_format,
-        )
+        save_result_figure(output_dir, result, filename_suffix, figure_format)
 
     def _add_batch_files(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(

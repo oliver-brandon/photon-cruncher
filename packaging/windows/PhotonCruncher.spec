@@ -46,6 +46,45 @@ exe = EXE(
     entitlements_file=None,
     icon=str(icon_path),
 )
+
+cli_a = Analysis(
+    [str(package_root / "cli.py")],
+    pathex=[str(project_root)],
+    binaries=[],
+    datas=[
+        (str(package_root / "assets"), "photon_cruncher/assets"),
+    ],
+    hiddenimports=["tdt"],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        "AppKit",
+        "Foundation",
+        "objc",
+    ],
+    noarchive=False,
+    optimize=0,
+)
+cli_pyz = PYZ(cli_a.pure)
+cli_exe = EXE(
+    cli_pyz,
+    cli_a.scripts,
+    cli_a.binaries,
+    cli_a.datas,
+    [],
+    name="photon-cruncher-cli",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=True,
+    disable_windowed_traceback=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=str(icon_path),
+)
 coll = COLLECT(
     exe,
     a.binaries,

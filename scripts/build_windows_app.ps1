@@ -8,6 +8,8 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $SpecFile = Join-Path $ProjectRoot "packaging\windows\PhotonCruncher.spec"
 $DistDir = Join-Path $ProjectRoot "dist"
 $AppDir = Join-Path $DistDir "Photon Cruncher Dev v1.1.4"
+$CliExe = Join-Path $DistDir "photon-cruncher-cli.exe"
+$CliTarget = Join-Path $AppDir "photon-cruncher-cli.exe"
 $ZipPath = Join-Path $DistDir "Photon-Cruncher-Dev-v1.1.4-Windows.zip"
 
 $RunningOnWindows = ($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT")
@@ -32,11 +34,18 @@ if (Test-Path $ZipPath) {
     Remove-Item $ZipPath -Force
 }
 
+if (Test-Path $CliExe) {
+    Copy-Item $CliExe $CliTarget -Force
+}
+
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath -Force
 
 Write-Host ""
 Write-Host "Built app:"
 Write-Host "  $AppDir"
+Write-Host ""
+Write-Host "Built command-line access point:"
+Write-Host "  $CliTarget"
 Write-Host ""
 Write-Host "Built zip for GitHub/download sharing:"
 Write-Host "  $ZipPath"

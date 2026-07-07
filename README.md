@@ -5,17 +5,13 @@ pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
 processing, reads MATLAB exports or raw TDT block folders, lets users inspect
 and export selected trials, and exports plotted data as CSV.
 
-## Development Updates Since Stable v1.1.1
+## Development Updates Since Stable v1.1.4
 
 The `dev` branch currently includes these updates beyond the latest tagged
 release on `main`:
 
-* Batch Export can now export CSV files, figures, or both.
-* Batch figure export supports PNG, PDF, and TIFF output.
-* Displayed and saved figures include the source file name and epoc.
-* Z-score heatmap trial labels now stay aligned to whole-number trial rows.
-* Smoothing now handles trace endpoints like MATLAB `smoothdata(..., 'movmean')`
-  instead of padding edges with zeros.
+* A command-line agentic access point can inspect sessions and run headless
+  analyses with JSON summaries.
 * Dev app bundles are versioned as `Photon Cruncher Dev v1.1.4`.
 
 ## Download for Lab Users
@@ -144,6 +140,38 @@ collection or the equivalent MATLAB export schema.
 For batch processing, use **Add Files** for `.mat` files, **Add TDT Tank** for a
 TDT tank folder containing one or more block folders, or **Add Folder** for a
 mixed folder containing `.mat` files and TDT blocks.
+
+## Command-Line Access Point for Automated Workflows
+
+Photon Cruncher also includes `photon-cruncher-cli` for scripted analysis and
+agentic workflows. The desktop GUI remains the normal lab workflow, but the CLI
+can inspect files, validate reusable JSON configs, and run headless exports.
+
+From a source checkout or installed Python environment:
+
+```bash
+photon-cruncher-cli inspect local-test-data --json
+```
+
+```bash
+photon-cruncher-cli analyze local-test-data \
+  --output-dir exports/agentic-run \
+  --epoc aRw_ \
+  --channel A_465 \
+  --export both \
+  --figure-format png
+```
+
+```bash
+photon-cruncher-cli validate-config analysis-config.json
+photon-cruncher-cli analyze --config analysis-config.json
+```
+
+Packaged Windows downloads include `photon-cruncher-cli.exe` beside the desktop
+app executable. Packaged macOS downloads include a separate
+`photon-cruncher-cli` binary beside the `.app` bundle. CLI output is JSON so
+automated tools can read exported paths, trial counts, dropped edge trials,
+artifact removals, warnings, and the app version.
 
 ## Trial Explorer
 

@@ -1,2 +1,3 @@
 [console_scripts]
 photon-cruncher = photon_cruncher.main:main
+photon-cruncher-cli = photon_cruncher.cli:main

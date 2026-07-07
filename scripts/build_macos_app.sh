@@ -29,4 +29,7 @@ echo
 echo "Built app:"
 echo "  ${project_root}/dist/Photon Cruncher Dev v1.1.4.app"
 echo
+echo "Built command-line access point:"
+echo "  ${project_root}/dist/photon-cruncher-cli"
+echo
 echo "You can move 'Photon Cruncher Dev v1.1.4.app' anywhere on this Mac, including /Applications."

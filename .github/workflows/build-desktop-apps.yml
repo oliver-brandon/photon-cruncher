@@ -50,7 +50,11 @@ jobs:
         run: scripts/build_macos_app.sh
 
       - name: Zip macOS app
-        run: ditto -c -k --keepParent "dist/Photon Cruncher Dev v1.1.4.app" "dist/Photon-Cruncher-Dev-v1.1.4-macOS.zip"
+        run: |
+          mkdir -p "dist/Photon-Cruncher-Dev-v1.1.4-macOS"
+          cp -R "dist/Photon Cruncher Dev v1.1.4.app" "dist/Photon-Cruncher-Dev-v1.1.4-macOS/"
+          cp "dist/photon-cruncher-cli" "dist/Photon-Cruncher-Dev-v1.1.4-macOS/"
+          ditto -c -k --keepParent "dist/Photon-Cruncher-Dev-v1.1.4-macOS" "dist/Photon-Cruncher-Dev-v1.1.4-macOS.zip"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
