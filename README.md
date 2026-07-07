@@ -5,6 +5,19 @@ pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
 processing, reads MATLAB exports or raw TDT block folders, lets users inspect
 and export selected trials, and exports plotted data as CSV.
 
+## Development Updates Since Stable v1.1.1
+
+The `dev` branch currently includes these updates beyond the latest tagged
+release on `main`:
+
+* Batch Export can now export CSV files, figures, or both.
+* Batch figure export supports PNG, PDF, and TIFF output.
+* Displayed and saved figures include the source file name and epoc.
+* Z-score heatmap trial labels now stay aligned to whole-number trial rows.
+* Smoothing now handles trace endpoints like MATLAB `smoothdata(..., 'movmean')`
+  instead of padding edges with zeros.
+* Dev app bundles are versioned as `Photon Cruncher Dev v1.1.4`.
+
 ## Download for Lab Users
 
 Most students should use the prebuilt app downloads from GitHub. They do not

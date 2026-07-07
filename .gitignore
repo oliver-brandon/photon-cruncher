@@ -9,3 +9,4 @@ dist/
 *.spec.bak
 local-test-data/
 *.py[cod]
+scripts/analyze_photometry.py
