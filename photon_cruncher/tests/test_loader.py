@@ -28,6 +28,7 @@ from photon_cruncher.processing.pipeline import (
     ProcessedSignal,
     ProcessingSettings,
     _extract_trials,
+    _moving_mean,
     default_settings_for_channel,
     process_channel,
     subset_processed_signal,
@@ -50,6 +51,23 @@ class LoaderTests(unittest.TestCase):
         settings = default_settings_for_channel("A_465")
 
         self.assertEqual(settings.trange, (-2.0, 5.0))
+
+    def test_moving_mean_does_not_zero_pad_edges(self) -> None:
+        trace = np.ones(20, dtype=float)
+
+        smoothed = _moving_mean(trace, 10)
+
+        np.testing.assert_allclose(smoothed, np.ones_like(trace))
+
+    def test_moving_mean_shrinks_endpoint_windows(self) -> None:
+        trace = np.arange(1, 6, dtype=float)
+
+        smoothed = _moving_mean(trace, 3)
+
+        np.testing.assert_allclose(
+            smoothed,
+            np.array([1.5, 2.0, 3.0, 4.0, 4.5]),
+        )
 
     def test_tdt_block_detection_requires_known_block_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

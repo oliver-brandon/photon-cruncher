@@ -51,8 +51,10 @@ class ExtractedTrials:
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
     if window <= 1:
         return trace.copy()
-    kernel = np.ones(window, dtype=float) / window
-    return np.convolve(trace, kernel, mode="same")
+    kernel = np.ones(window, dtype=float)
+    summed = np.convolve(trace, kernel, mode="same")
+    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="same")
+    return summed / counts
 
 
 def _extract_trials(
