@@ -173,6 +173,28 @@ app executable. Packaged macOS downloads include a separate
 automated tools can read exported paths, trial counts, dropped edge trials,
 artifact removals, warnings, and the app version.
 
+## Experimental GUI v2 Visual Prototype
+
+Developers can run an isolated PySide6/PyQtGraph design study without changing
+the normal desktop app or opening lab data. The prototype contains deterministic
+synthetic sessions and mock interactions only:
+
+```bash
+.build-venv/bin/python -m pip install -e 'photon_cruncher[prototype]'
+.build-venv/bin/python -m photon_cruncher.gui_prototype
+```
+
+Capture the five review screens without opening a window:
+
+```bash
+.build-venv/bin/python -m photon_cruncher.gui_prototype \
+  --capture-all build/gui-v2-prototype/screenshots
+```
+
+Use `--page data|align|trials|batch` and `--state empty|demo` to open a
+specific concept. PyQtGraph remains an optional prototype dependency and is not
+included in production Photon Cruncher builds.
+
 ## Trial Explorer
 
 Use the **Trial Explorer** tab when you want to inspect or export only certain

@@ -16,6 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 macos = ["pyobjc"]
 build = ["pyinstaller>=6.0"]
+prototype = ["pyqtgraph==0.14.0"]
 
 [project.scripts]
 photon-cruncher = "photon_cruncher.main:main"
@@ -32,10 +33,15 @@ packages = [
     "photon_cruncher.analysis",
     "photon_cruncher.export",
     "photon_cruncher.gui",
+    "photon_cruncher.gui_prototype",
+    "photon_cruncher.gui_prototype.pages",
     "photon_cruncher.io",
     "photon_cruncher.processing",
     "photon_cruncher.tests",
 ]
+
+[tool.setuptools.package-data]
+"photon_cruncher.gui_prototype" = ["assets/*.svg"]
 
 [tool.black]
 line-length = 88

@@ -14,3 +14,5 @@ Provides-Extra: macos
 Requires-Dist: pyobjc; extra == "macos"
 Provides-Extra: build
 Requires-Dist: pyinstaller>=6.0; extra == "build"
+Provides-Extra: prototype
+Requires-Dist: pyqtgraph==0.14.0; extra == "prototype"
