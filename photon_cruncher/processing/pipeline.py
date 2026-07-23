@@ -57,6 +57,17 @@ def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
     return summed / counts
 
 
+def _moving_mean_rows(data: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1:
+        return data.copy()
+    if data.size == 0:
+        return data.copy()
+    smoothed = np.empty_like(data, dtype=float)
+    for row_idx in range(data.shape[0]):
+        smoothed[row_idx, :] = _moving_mean(data[row_idx, :], window)
+    return smoothed
+
+
 def _extract_trials(
     stream: np.ndarray,
     fs: float,
@@ -77,12 +88,13 @@ def _extract_trials_with_edge_drops(
     trials: list[np.ndarray] = []
     trial_numbers: list[int] = []
     dropped_edge_trials: list[int] = []
+    stream_size = int(stream.size)
     for trial_idx, onset in enumerate(onsets, start=1):
         start_time = onset + trange[0]
         end_time = onset + trange[1]
         start_idx = int(np.rint((start_time - t0) * fs + SAMPLE_INDEX_EPSILON))
         end_idx = int(np.rint((end_time - t0) * fs + SAMPLE_INDEX_EPSILON)) + 1
-        if start_idx < 0 or end_idx > stream.size:
+        if start_idx < 0 or end_idx > stream_size:
             dropped_edge_trials.append(trial_idx)
             continue
         if end_idx > start_idx:
@@ -95,13 +107,25 @@ def _extract_trials_with_edge_drops(
     )
 
 
+def _artifact_mask(trials: list[np.ndarray], artifact: float) -> np.ndarray:
+    if not trials:
+        return np.array([], dtype=bool)
+    if np.isinf(artifact):
+        return np.ones(len(trials), dtype=bool)
+
+    lengths = {trial.size for trial in trials}
+    if len(lengths) == 1:
+        arr = np.vstack(trials)
+        return (arr.max(axis=1) <= artifact) & (arr.min(axis=1) >= -artifact)
+
+    good_mask = np.empty(len(trials), dtype=bool)
+    for idx, trial in enumerate(trials):
+        good_mask[idx] = not (np.any(trial > artifact) or np.any(trial < -artifact))
+    return good_mask
+
+
 def _remove_artifacts(trials: list[np.ndarray], artifact: float) -> tuple[list[np.ndarray], np.ndarray]:
-    good_mask = []
-    for trial in trials:
-        has_pos = np.any(trial > artifact)
-        has_neg = np.any(trial < -artifact)
-        good_mask.append(not (has_pos or has_neg))
-    good_mask_array = np.array(good_mask, dtype=bool)
+    good_mask_array = _artifact_mask(trials, artifact)
     filtered = [trial for trial, keep in zip(trials, good_mask_array) if keep]
     return filtered, good_mask_array
 
@@ -111,8 +135,20 @@ def _trim_trials(trials: list[np.ndarray], min_length: int) -> list[np.ndarray]:
 
 
 def _downsample_trials(trials: list[np.ndarray], factor: int) -> np.ndarray:
+    if not trials:
+        return np.empty((0, 0), dtype=float)
     if factor <= 1:
-        return np.vstack([trial for trial in trials])
+        return np.vstack(trials)
+
+    lengths = {trial.size for trial in trials}
+    if len(lengths) == 1:
+        arr = np.vstack(trials)
+        bins = arr.shape[1] // factor
+        if bins == 0:
+            return np.empty((arr.shape[0], 0), dtype=float)
+        trimmed = arr[:, : bins * factor]
+        return trimmed.reshape(arr.shape[0], bins, factor).mean(axis=2)
+
     downsampled = []
     for trial in trials:
         bins = trial.size // factor
@@ -135,16 +171,18 @@ def _baseline_correct(z_data: np.ndarray, ts: np.ndarray, base_adjust: float) ->
     idx_candidates = np.where(ts > base_adjust)[0]
     if idx_candidates.size == 0:
         return z_data
-    idx = idx_candidates[0]
-    corrected = z_data.copy()
-    for row in range(corrected.shape[0]):
-        val = corrected[row, idx]
-        diff = 0 - val
-        if val < 0:
-            corrected[row, :] = corrected[row, :] + abs(diff)
-        elif val > 0:
-            corrected[row, :] = corrected[row, :] - abs(diff)
-    return corrected
+    idx = int(idx_candidates[0])
+    vals = z_data[:, idx]
+    return z_data - vals[:, None]
+
+
+def _zscore_trials(y_df_all: np.ndarray, baseline_mask: np.ndarray) -> np.ndarray:
+    if y_df_all.size == 0:
+        return y_df_all.copy()
+    base = y_df_all[:, baseline_mask]
+    zb = base.mean(axis=1, keepdims=True)
+    zsd = base.std(axis=1, ddof=1, keepdims=True)
+    return (y_df_all - zb) / zsd
 
 
 def process_channel(
@@ -185,8 +223,8 @@ def process_channel(
     if not trials_405 or not trials_465:
         raise ValueError("No complete trials remain after dropping edge trials.")
 
-    _, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
-    _, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
+    good_405 = _artifact_mask(trials_405, settings.artifact_405)
+    good_465 = _artifact_mask(trials_465, settings.artifact_465)
     num_artifacts = int((~good_405).sum() + (~good_465).sum())
     good_trials = good_405 & good_465
     trials_405 = [
@@ -213,48 +251,27 @@ def process_channel(
     f405 = f405[:, :common_length]
     f465 = f465[:, :common_length]
 
-    min_length1 = f405.shape[1]
     min_length2 = f465.shape[1]
+    ts2 = settings.trange[0] + (
+        np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor
+    )
 
-    mean_signal1 = f405.mean(axis=0)
-    std_signal1 = f405.std(axis=0, ddof=1) / np.sqrt(f405.shape[0])
-    dc_signal1 = mean_signal1.mean()
-
-    mean_signal2 = f465.mean(axis=0)
-    std_signal2 = f465.std(axis=0, ddof=1) / np.sqrt(f465.shape[0])
-    dc_signal2 = mean_signal2.mean()
-
-    _ = std_signal1
-    _ = std_signal2
-
-    ts1 = settings.trange[0] + (np.arange(1, min_length1 + 1) / stream_405.fs * settings.downsample_factor)
-    ts2 = settings.trange[0] + (np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor)
-
-    mean_signal1 = mean_signal1 - dc_signal1
-    mean_signal2 = mean_signal2 - dc_signal2
-
+    # MATLAB-faithful control->signal regression on Fortran-order flattened trials.
     bls = np.polyfit(f465.flatten(order="F"), f405.flatten(order="F"), 1)
     y_fit_all = bls[0] * f405 + bls[1]
     y_df_all = f465 - y_fit_all
 
-    zall = np.zeros_like(y_df_all)
     baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
-    for i in range(y_df_all.shape[0]):
-        zb = y_df_all[i, baseline_mask].mean()
-        zsd = y_df_all[i, baseline_mask].std(ddof=1)
-        zall[i, :] = (y_df_all[i, :] - zb) / zsd
-
-    zall_smooth = np.zeros_like(zall)
-    for k in range(zall.shape[0]):
-        zall_smooth[k, :] = _moving_mean(zall[k, :], settings.smooth_factor)
+    zall = _zscore_trials(y_df_all, baseline_mask)
+    zall_smooth = _moving_mean_rows(zall, settings.smooth_factor)
 
     if settings.set_baseline:
-        zall_smooth = _baseline_correct(zall_smooth, ts1, settings.base_adjust)
+        zall_smooth = _baseline_correct(zall_smooth, ts2, settings.base_adjust)
 
     mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
 
     if settings.set_baseline:
-        zall = _baseline_correct(zall, ts1, settings.base_adjust)
+        zall = _baseline_correct(zall, ts2, settings.base_adjust)
 
     mean_z, sem_z = _mean_and_sem(zall)
 

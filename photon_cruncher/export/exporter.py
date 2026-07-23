@@ -25,6 +25,7 @@ def export_channel(
     export_smoothed: bool = True,
     filename_suffix: str = "",
 ) -> Path:
+    _ = (dropped_trials, stream_store, metadata, settings)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{session_name}_{epoc_name}_{channel_key}{filename_suffix}"
 
@@ -36,26 +37,9 @@ def export_channel(
     else:
         mean_trace = np.full_like(processed.ts, np.nan, dtype=float)
 
-    rows: list[list[object]] = []
-    rows.append(["TIME", *processed.ts.tolist()])
-    rows.append(["MEAN", *mean_trace.tolist()])
-    trial_numbers = (
-        processed.trial_numbers
-        if len(processed.trial_numbers) == z_data.shape[0]
-        else list(range(1, z_data.shape[0] + 1))
-    )
-    trial_labels = (
-        processed.trial_labels
-        if len(processed.trial_labels) == z_data.shape[0]
-        else [""] * z_data.shape[0]
-    )
-    for trial_number, trial_label, trial in zip(trial_numbers, trial_labels, z_data):
-        row_label = f"TRIAL_{trial_number:03d}"
-        if trial_label:
-            row_label += f"_{_label_slug(trial_label)}"
-        rows.append([row_label, *trial.tolist()])
-
-    pd.DataFrame(rows).to_csv(heatmap_path, index=False, header=False)
+    labels = _heatmap_row_labels(processed, z_data.shape[0])
+    matrix = np.vstack([processed.ts, mean_trace, z_data])
+    _write_labeled_numeric_csv(heatmap_path, labels, matrix)
     return heatmap_path
 
 
@@ -152,14 +136,58 @@ def save_result_figure(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     figure = Figure(figsize=(10, 4.5))
-    populate_result_figure(figure, result)
-    prefix = (
-        f"{result.session.source_path.stem}_{result.epoc.name}_"
-        f"{result.channel_key}{filename_suffix}"
-    )
-    figure_path = output_dir / f"{prefix}_summary.{figure_format}"
-    figure.savefig(figure_path, dpi=300, format=figure_format)
+    try:
+        populate_result_figure(figure, result)
+        prefix = (
+            f"{result.session.source_path.stem}_{result.epoc.name}_"
+            f"{result.channel_key}{filename_suffix}"
+        )
+        figure_path = output_dir / f"{prefix}_summary.{figure_format}"
+        figure.savefig(figure_path, dpi=300, format=figure_format)
+    finally:
+        figure.clear()
+        del figure
     return figure_path
+
+
+def _heatmap_row_labels(processed: ProcessedSignal, num_trials: int) -> list[str]:
+    trial_numbers = (
+        processed.trial_numbers
+        if len(processed.trial_numbers) == num_trials
+        else list(range(1, num_trials + 1))
+    )
+    trial_labels = (
+        processed.trial_labels
+        if len(processed.trial_labels) == num_trials
+        else [""] * num_trials
+    )
+    labels = ["TIME", "MEAN"]
+    for trial_number, trial_label in zip(trial_numbers, trial_labels):
+        row_label = f"TRIAL_{trial_number:03d}"
+        if trial_label:
+            row_label += f"_{_label_slug(trial_label)}"
+        labels.append(row_label)
+    return labels
+
+
+def _write_labeled_numeric_csv(
+    path: Path,
+    labels: list[str],
+    matrix: np.ndarray,
+) -> None:
+    if len(labels) != matrix.shape[0]:
+        raise ValueError("CSV label count must match matrix rows.")
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        for label, row in zip(labels, matrix):
+            handle.write(label)
+            handle.write(",")
+            np.savetxt(
+                handle,
+                np.asarray(row, dtype=float).reshape(1, -1),
+                delimiter=",",
+                fmt="%.10g",
+                newline="\n",
+            )
 
 
 def _label_slug(label: str) -> str:
