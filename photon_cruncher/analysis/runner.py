@@ -6,14 +6,21 @@ from typing import Any, Callable
 
 from photon_cruncher.export.exporter import export_batch_summary, export_channel
 from photon_cruncher.io.loader import load_session
-from photon_cruncher.model import Epoc, PhotometrySession
-from photon_cruncher.processing.pipeline import (
-    ProcessedSignal,
-    ProcessingSettings,
-    available_channels,
-    default_settings_for_channel,
-    process_channel,
-)
+from photon_cruncher.model import PhotometrySession
+from photon_cruncher.processing.pipeline import ProcessingSettings
+from photon_cruncher.service import AnalysisResult, analyze as service_analyze
+
+# Re-export for existing imports (gui, cli, tests).
+__all__ = [
+    "AnalysisResult",
+    "BatchEpocSelection",
+    "BatchExportedResult",
+    "epoc_names_for_selection",
+    "run_batch",
+    "run_batch_custom",
+    "run_session",
+    "run_session_with_settings",
+]
 
 
 BatchEpocSelection = tuple[str, tuple[str, ...]] | tuple[str, tuple[str, ...], str]
@@ -62,16 +69,6 @@ def epoc_names_for_selection(
 
 
 @dataclass
-class AnalysisResult:
-    session: PhotometrySession
-    epoc: Epoc
-    channel_key: str
-    processed: ProcessedSignal
-    settings: ProcessingSettings
-    stream_store: tuple[str, str]
-
-
-@dataclass
 class BatchExportedResult:
     output_dir: Path
     result: AnalysisResult
@@ -82,32 +79,12 @@ def run_session(
     epoc_name: str,
     channel_keys: list[str] | None = None,
 ) -> list[AnalysisResult]:
-    if epoc_name not in session.epocs:
-        raise ValueError(f"Epoc '{epoc_name}' not found.")
-    epoc = session.epocs[epoc_name]
-    channel_map = available_channels(session)
-    if channel_keys is None:
-        channel_keys = list(channel_map.keys())
-
-    results: list[AnalysisResult] = []
-    for channel_key in channel_keys:
-        if channel_key not in channel_map:
-            continue
-        iso_stream, signal_stream, smooth_factor = channel_map[channel_key]
-        settings = default_settings_for_channel(channel_key)
-        settings.smooth_factor = smooth_factor
-        processed = process_channel(session, iso_stream, signal_stream, epoc, settings)
-        results.append(
-            AnalysisResult(
-                session=session,
-                epoc=epoc,
-                channel_key=channel_key,
-                processed=processed,
-                settings=settings,
-                stream_store=(iso_stream, signal_stream),
-            )
-        )
-    return results
+    return service_analyze(
+        session,
+        epoc_name,
+        channel_keys=channel_keys,
+        settings_factory=None,
+    )
 
 
 def run_session_with_settings(
@@ -116,31 +93,12 @@ def run_session_with_settings(
     channel_keys: list[str] | None,
     settings_factory: Callable[[str], ProcessingSettings],
 ) -> list[AnalysisResult]:
-    if epoc_name not in session.epocs:
-        raise ValueError(f"Epoc '{epoc_name}' not found.")
-    epoc = session.epocs[epoc_name]
-    channel_map = available_channels(session)
-    if channel_keys is None:
-        channel_keys = list(channel_map.keys())
-
-    results: list[AnalysisResult] = []
-    for channel_key in channel_keys:
-        if channel_key not in channel_map:
-            continue
-        iso_stream, signal_stream, _ = channel_map[channel_key]
-        settings = settings_factory(channel_key)
-        processed = process_channel(session, iso_stream, signal_stream, epoc, settings)
-        results.append(
-            AnalysisResult(
-                session=session,
-                epoc=epoc,
-                channel_key=channel_key,
-                processed=processed,
-                settings=settings,
-                stream_store=(iso_stream, signal_stream),
-            )
-        )
-    return results
+    return service_analyze(
+        session,
+        epoc_name,
+        channel_keys=channel_keys,
+        settings_factory=settings_factory,
+    )
 
 
 def run_batch(
@@ -194,7 +152,9 @@ def run_batch_custom(
     exported_results: list[BatchExportedResult] = []
     for path in input_paths:
         session = load_session(path)
-        session_output = output_dir / session.source_path.stem if per_session_subdir else output_dir
+        session_output = (
+            output_dir / session.source_path.stem if per_session_subdir else output_dir
+        )
         for selection in epoc_selections:
             for epoc_name in epoc_names_for_selection(session, selection):
                 if session.epocs[epoc_name].onset.size == 0:

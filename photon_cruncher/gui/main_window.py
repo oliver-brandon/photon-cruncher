@@ -8,6 +8,7 @@ from matplotlib.figure import Figure
 from PySide6 import QtCore, QtWidgets
 
 from photon_cruncher import app_title
+from photon_cruncher import service
 from photon_cruncher.analysis.runner import (
     AnalysisResult,
     epoc_names_for_selection,
@@ -30,7 +31,6 @@ from photon_cruncher.processing.pipeline import (
     ProcessingSettings,
     available_channels,
     default_settings_for_channel,
-    process_channel,
     subset_processed_signal,
 )
 
@@ -1170,28 +1170,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def task() -> list[AnalysisResult]:
             epoc = self._selected_preview_epoc()
-            channel_map = available_channels(self.session)
-            results: list[AnalysisResult] = []
-            for channel_key in channel_keys:
-                if channel_key not in channel_map:
-                    continue
-                iso_stream, signal_stream, _ = channel_map[channel_key]
-                settings = self._build_settings_for_channel(channel_key)
-                processed = process_channel(
-                    self.session, iso_stream, signal_stream, epoc, settings
-                )
-                self._annotate_processed_trials(processed, epoc, None)
-                results.append(
-                    AnalysisResult(
-                        session=self.session,
-                        epoc=epoc,
-                        channel_key=channel_key,
-                        processed=processed,
-                        settings=settings,
-                        stream_store=(iso_stream, signal_stream),
-                    )
-                )
-            return results
+            return service.analyze(
+                self.session,
+                epoc,
+                channel_keys=channel_keys,
+                settings_factory=self._build_settings_for_channel,
+            )
 
         def handle_results(results: list[AnalysisResult]) -> None:
             self.results_by_channel = {result.channel_key: result for result in results}
@@ -1345,28 +1329,15 @@ class MainWindow(QtWidgets.QMainWindow):
         current_display_channel = self.trial_display_channel.currentText()
 
         def task() -> list[AnalysisResult]:
-            channel_map = available_channels(self.session)
-            results: list[AnalysisResult] = []
-            for channel_key in channel_keys:
-                if channel_key not in channel_map:
-                    continue
-                iso_stream, signal_stream, _ = channel_map[channel_key]
-                settings = self._build_settings_for_channel(channel_key, source="trial")
-                processed = process_channel(
-                    self.session, iso_stream, signal_stream, trial_epoc, settings
-                )
-                self._annotate_processed_trials(processed, trial_epoc, trial_source)
-                results.append(
-                    AnalysisResult(
-                        session=self.session,
-                        epoc=trial_epoc,
-                        channel_key=channel_key,
-                        processed=processed,
-                        settings=settings,
-                        stream_store=(iso_stream, signal_stream),
-                    )
-                )
-            return results
+            return service.analyze(
+                self.session,
+                trial_epoc,
+                channel_keys=channel_keys,
+                settings_factory=lambda key: self._build_settings_for_channel(
+                    key, source="trial"
+                ),
+                source=trial_source,
+            )
 
         def handle_results(results: list[AnalysisResult]) -> None:
             self.active_trial_source = trial_source

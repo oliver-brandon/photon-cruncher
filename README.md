@@ -13,6 +13,11 @@ release on `main`:
 * A command-line agentic access point can inspect sessions and run headless
   analyses with JSON summaries.
 * Dev app bundles are versioned as `Photon Cruncher Dev v1.1.4`.
+* Shared analysis facade (`photon_cruncher.service`) used by the lab GUI, CLI,
+  and Aurora developer surface so backend fixes stay in one place.
+* **Aurora** developer desktop GUI launches separately and does not replace
+  the lab-facing PySide app. It is live-only (MAT/TDT open → analyze → export
+  through `photon_cruncher.service`).
 
 ## Download for Lab Users
 
@@ -173,29 +178,44 @@ app executable. Packaged macOS downloads include a separate
 automated tools can read exported paths, trial counts, dropped edge trials,
 artifact removals, warnings, and the app version.
 
-## Experimental GUI v2 Visual Prototype
+## Aurora GUI (developer v2 surface)
 
-Developers can run an isolated PySide6/PyQtGraph design study without changing
-the normal desktop app or opening lab data. The prototype contains deterministic
-synthetic sessions and mock interactions only:
+Codename **Aurora**. Separate from the lab PySide GUI. Live analysis only via
+`photon_cruncher.service` (no synthetic demo feed).
 
-```bash
-.build-venv/bin/python -m pip install -e 'photon_cruncher[prototype]'
-.build-venv/bin/python -m photon_cruncher.gui_prototype
-```
+### Native shell (default)
 
-Capture the five review screens without opening a window:
+Opens a real desktop window (PySide6 + Qt WebEngine) wrapping the Aurora web UI:
 
 ```bash
-.build-venv/bin/python -m photon_cruncher.gui_prototype \
-  --capture-all build/gui-v2-prototype/screenshots
+.build-venv/bin/python -m photon_cruncher.aurora_main
+# or: photon-cruncher-aurora
 ```
 
-Use `--page data|align|trials|batch` and `--state empty|demo` to open a
-specific concept. PyQtGraph remains an optional prototype dependency and is not
-included in production Photon Cruncher builds.
+In the shell:
+- **File → Open MAT / TDT** uses native dialogs
+- Analysis runs through the local API → `photon_cruncher.service`
+- Align / Trials / Export are wired to real results
+
+### Browser mode (optional)
+
+```bash
+.build-venv/bin/python -m photon_cruncher.aurora_main --browser
+```
+
+Default URL: `http://127.0.0.1:8766/`
+
+API (same backend as lab/CLI):
+- `GET /api/health`
+- `POST /api/open` or `/api/inspect` with `{"path": "..."}`
+- `POST /api/analyze` with `{"path": "...", "epoc": "Cue", "channels": ["A_465"]}`
+- `POST /api/export` with path, epoc, output_dir, and export flags
+
+Architecture: `docs/architecture-aurora.md`.
 
 ## Trial Explorer
+
+
 
 Use the **Trial Explorer** tab when you want to inspect or export only certain
 trials from one file. Choose a file, choose an epoc or classified trial source,

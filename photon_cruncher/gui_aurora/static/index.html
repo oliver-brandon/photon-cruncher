@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Photon Cruncher Aurora</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/aurora.css" />
+  </head>
+  <body>
+    <div class="bloom bloom-a" aria-hidden="true"></div>
+    <div class="bloom bloom-b" aria-hidden="true"></div>
+
+    <div class="app" id="app">
+      <aside class="rail" aria-label="Primary">
+        <div class="rail-brand">
+          <div class="mark mark-logo" id="brandMark" aria-hidden="true">
+            <img src="img/aurora-mark.png" alt="" width="38" height="38" />
+          </div>
+          <div>
+            <div class="brand-name">Photon Cruncher</div>
+            <div class="brand-sub" id="brandSub">Aurora v2.0</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Workspace">
+          <div class="nav-label">Workspace</div>
+          <button class="nav-item active" data-page="data" type="button">
+            <span class="nav-ico" aria-hidden="true">☰</span>
+            <span>Data</span>
+            <kbd>1</kbd>
+          </button>
+          <button class="nav-item" data-page="align" type="button">
+            <span class="nav-ico" aria-hidden="true">∿</span>
+            <span>Align</span>
+            <kbd>2</kbd>
+          </button>
+          <button class="nav-item" data-page="trials" type="button">
+            <span class="nav-ico" aria-hidden="true">▦</span>
+            <span>Trials</span>
+            <kbd>3</kbd>
+          </button>
+          <button class="nav-item" data-page="batch" type="button">
+            <span class="nav-ico" aria-hidden="true">⧉</span>
+            <span>Batch</span>
+            <kbd>4</kbd>
+          </button>
+        </nav>
+
+        <div class="rail-footer">
+          <div class="safety">
+            <div class="safety-title">Shared backend</div>
+            <div class="safety-body">
+              Lab GUI stays separate. Aurora uses <code>photon_cruncher.service</code> for open / analyze / export.
+            </div>
+          </div>
+          <div class="rail-meta" id="railMeta">developer surface · live</div>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="session-chip">
+            <div class="session-dot" id="sessionDot"></div>
+            <div>
+              <div class="session-name" id="hudSession">No session</div>
+              <div class="session-detail" id="orbitMeta">Open a MAT file or TDT block</div>
+            </div>
+          </div>
+          <div class="topbar-right">
+            <div class="mode-pill"><span id="hudMode">DATA</span></div>
+            <div class="toast" id="toast">open a MAT file or TDT block</div>
+            <span class="badge" id="stateBadge">IDLE</span>
+          </div>
+        </header>
+
+        <main class="content">
+          <!-- DATA -->
+          <section class="page" id="page-data" data-page="data">
+            <div class="page-head">
+              <div>
+                <p class="eyebrow">01 · DATA</p>
+                <h1>Session intake</h1>
+                <p class="lede" id="dataLede">
+                  Open a MATLAB export or TDT block, then analyze with the shared backend.
+                </p>
+              </div>
+              <div class="page-actions">
+                <button class="btn" type="button" id="closeSessionBtn" disabled>Close session</button>
+                <button class="btn" type="button" id="openTdtBtn">Open TDT block</button>
+                <button class="btn btn-primary" type="button" id="openSessionBtn">Open MAT / TDT</button>
+              </div>
+            </div>
+
+            <div class="stat-grid" id="statRail">
+              <div class="card stat"><span>Duration</span><strong id="statDuration">—</strong></div>
+              <div class="card stat"><span>Channels</span><strong id="statChannels">—</strong></div>
+              <div class="card stat"><span>Epocs</span><strong id="statEpocs">—</strong></div>
+              <div class="card stat"><span>Trials</span><strong id="hudTrials">—</strong></div>
+            </div>
+
+            <div class="split equal">
+              <div class="card">
+                <div class="card-title">Session</div>
+                <div class="session-hero">
+                  <div class="orbit-name" id="orbitName">No session open</div>
+                  <p class="quiet" id="sessionPath">No file loaded</p>
+                </div>
+                <div class="chip-cloud" id="channelChips"><span class="quiet">—</span></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Epocs & classified sources</div>
+                <div class="chip-cloud" id="epocChips"><span class="quiet">—</span></div>
+                <p class="quiet" style="margin-top: 14px" id="dataHint">
+                  Use Open MAT / TDT (or File menu in the native shell) to load real photometry data.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ALIGN -->
+          <section class="page hidden" id="page-align" data-page="align">
+            <div class="page-head">
+              <div>
+                <p class="eyebrow">02 · ALIGN</p>
+                <h1>Align + visualize</h1>
+                <p class="lede">Tune the event window and inspect linked mean±SEM + trial heatmap.</p>
+              </div>
+              <div class="page-actions">
+                <button class="btn" type="button" id="alignExport">Export</button>
+                <button class="btn btn-primary" type="button" id="alignPulse">Analyze</button>
+              </div>
+            </div>
+
+            <div class="callout callout-warn" id="alignCallout">
+              <span class="callout-mark">!</span>
+              <span id="alignCalloutText">Incomplete edge trials are dropped, not clipped (MATLAB-faithful).</span>
+            </div>
+
+            <div class="split">
+              <aside class="panel-stack">
+                <div class="card">
+                  <div class="card-title">Analysis source</div>
+                  <label class="field">
+                    <span>Reference epoc</span>
+                    <select id="alignEpoc"></select>
+                  </label>
+                  <label class="field">
+                    <span>Display channel</span>
+                    <select id="alignChannel"></select>
+                  </label>
+                </div>
+                <div class="card">
+                  <div class="card-title">Processing window</div>
+                  <div class="field-grid">
+                    <label class="field"><span>TRANGE start</span><input id="tr0" type="number" step="0.1" value="-2" /></label>
+                    <label class="field"><span>TRANGE end</span><input id="tr1" type="number" step="0.1" value="5" /></label>
+                    <label class="field"><span>Baseline start</span><input id="b0" type="number" step="0.1" value="-2" /></label>
+                    <label class="field"><span>Baseline end</span><input id="b1" type="number" step="0.1" value="-0.5" /></label>
+                    <label class="field"><span>Baseline adjust</span><input id="baseAdjust" type="number" step="0.1" value="-2" /></label>
+                    <label class="field"><span>Downsample</span><input id="downsample" type="number" step="1" value="10" /></label>
+                  </div>
+                  <label class="check"><input type="checkbox" id="plotSmooth" checked /><span>Plot smoothed traces</span></label>
+                  <label class="check"><input type="checkbox" id="applyBaseline" checked /><span>Apply baseline correction</span></label>
+                </div>
+                <div class="inline-actions">
+                  <button class="btn" type="button" id="alignDefaults">Defaults</button>
+                  <button class="btn btn-primary" type="button" id="alignApply">Apply + analyze</button>
+                </div>
+              </aside>
+
+              <div class="plot-card card">
+                <div class="plot-head">
+                  <div>
+                    <div class="card-title">Event-aligned response</div>
+                    <div class="quiet" id="alignSummary">Open a session to analyze</div>
+                  </div>
+                  <div class="metric-pills">
+                    <div class="pill"><span>peak</span><b id="rPeak">—</b></div>
+                    <div class="pill"><span>latency</span><b id="rLat">—</b></div>
+                    <div class="pill"><span>n</span><b id="rN">—</b></div>
+                    <div class="pill"><span>epoc</span><b id="alignTag">—</b></div>
+                  </div>
+                </div>
+                <div class="plot-grid">
+                  <canvas id="alignTrace" width="900" height="340"></canvas>
+                  <canvas id="alignHeat" width="360" height="340"></canvas>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- TRIALS -->
+          <section class="page hidden" id="page-trials" data-page="trials">
+            <div class="page-head">
+              <div>
+                <p class="eyebrow">03 · TRIALS</p>
+                <h1>Trial explorer</h1>
+                <p class="lede">Filter trial labels and inspect how selected trials shape the response.</p>
+              </div>
+              <div class="page-actions">
+                <button class="btn" type="button" id="trialExportCsv">Export CSV</button>
+                <button class="btn btn-primary" type="button" id="trialExportFig">Export figure</button>
+              </div>
+            </div>
+            <div class="split">
+              <aside class="card trial-panel">
+                <div class="field-label-row">
+                  <div>
+                    <div class="card-title">Trial selection</div>
+                    <div class="quiet" id="trialSub">analyze a session first</div>
+                  </div>
+                  <span class="chip chip-accent" id="selLabel">0 selected</span>
+                </div>
+                <input class="search" id="trialSearch" type="search" placeholder="Search trial or label…" />
+                <div class="filter-grid" id="outcomeChips"></div>
+                <div class="inline-actions tight">
+                  <button class="btn btn-sm" type="button" id="selAll">All visible</button>
+                  <button class="btn btn-sm" type="button" id="selNone">None</button>
+                  <button class="btn btn-sm" type="button" id="selInvert">Invert</button>
+                </div>
+                <div class="trial-list" id="trialStream" role="list"></div>
+              </aside>
+              <div class="plot-stack">
+                <div class="callout">
+                  <span class="callout-mark">i</span>
+                  <span>Selections re-filter the displayed mean / heatmap using the shared service.</span>
+                </div>
+                <div class="plot-card card grow">
+                  <div class="plot-head">
+                    <div>
+                      <div class="card-title">Selected-trial response</div>
+                      <div class="quiet" id="trialSummary">—</div>
+                    </div>
+                    <div class="plot-tools">
+                      <select id="trialChannel"></select>
+                      <select id="trialMode">
+                        <option value="mean">Mean ± SEM</option>
+                        <option value="individual">Individual overlay</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="plot-grid">
+                    <canvas id="trialTrace" width="900" height="320"></canvas>
+                    <canvas id="trialHeat" width="360" height="320"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- BATCH -->
+          <section class="page hidden" id="page-batch" data-page="batch">
+            <div class="page-head">
+              <div>
+                <p class="eyebrow">04 · BATCH</p>
+                <h1>Export</h1>
+                <p class="lede">Export the current analysis as CSV and/or figures.</p>
+              </div>
+              <div class="page-actions">
+                <button class="btn" type="button" id="abortBatch" disabled>Cancel</button>
+                <button class="btn btn-primary" type="button" id="launchBatch" disabled>Export results</button>
+              </div>
+            </div>
+            <div class="batch-grid">
+              <div class="stack">
+                <div class="card">
+                  <div class="card-title">Current session</div>
+                  <p class="quiet" id="batchSessionDetail">Open and analyze a session, then export CSV/figures here.</p>
+                  <div class="table-wrap">
+                    <table class="table">
+                      <thead>
+                        <tr><th>Item</th><th>Value</th></tr>
+                      </thead>
+                      <tbody id="batchList"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Outputs</div>
+                  <div class="check-row">
+                    <label class="check"><input type="checkbox" id="expCsv" checked /><span>CSV files</span></label>
+                    <label class="check"><input type="checkbox" id="expFig" checked /><span>Figures</span></label>
+                    <select class="compact-select" id="figFormat">
+                      <option>png</option>
+                      <option>pdf</option>
+                      <option>tiff</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="stack">
+                <div class="card metrics-card">
+                  <div class="card-title">Summary</div>
+                  <div class="metric-grid">
+                    <div><div class="metric-value" id="mChannels">—</div><div class="metric-label">channels</div></div>
+                    <div><div class="metric-value" id="mTrials">—</div><div class="metric-label">trials</div></div>
+                    <div><div class="metric-value" id="mEpoc">—</div><div class="metric-label">epoc</div></div>
+                    <div><div class="metric-value" id="mMode">idle</div><div class="metric-label">status</div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Progress</div>
+                  <div class="field-label-row">
+                    <span class="chip" id="batchStatus">Ready</span>
+                    <span class="quiet" id="batchDetail">idle</span>
+                    <strong id="batchPct">0%</strong>
+                  </div>
+                  <div class="progress"><div class="progress-bar" id="batchBar" style="width:0%"></div></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="js/plots.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

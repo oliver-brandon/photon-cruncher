@@ -478,31 +478,33 @@ def analyze_session_epoc(
     source: ClassifiedTrialSource | None,
     config: dict[str, Any],
 ) -> list[AnalysisResult]:
+    from photon_cruncher import service
+
     channel_map = available_channels(session)
     channel_keys = config["channels"] or sorted(channel_map)
-    results: list[AnalysisResult] = []
-    for channel_key in channel_keys:
-        if channel_key not in channel_map:
-            continue
-        iso_stream, signal_stream, _ = channel_map[channel_key]
-        settings = build_settings(config, channel_key)
+
+    def settings_factory(channel_key: str) -> ProcessingSettings:
+        return build_settings(config, channel_key)
+
+    try:
+        results = service.analyze(
+            session,
+            epoc,
+            channel_keys=channel_keys,
+            settings_factory=settings_factory,
+            source=source,
+        )
+    except ValueError:
+        return []
+
+    filtered: list[AnalysisResult] = []
+    for result in results:
         try:
-            processed = process_channel(session, iso_stream, signal_stream, epoc, settings)
-            annotate_processed_trials(processed, epoc, source)
-            processed = filter_processed_trials(processed, config)
+            result.processed = filter_processed_trials(result.processed, config)
         except ValueError:
             continue
-        results.append(
-            AnalysisResult(
-                session=session,
-                epoc=epoc,
-                channel_key=channel_key,
-                processed=processed,
-                settings=settings,
-                stream_store=(iso_stream, signal_stream),
-            )
-        )
-    return results
+        filtered.append(result)
+    return filtered
 
 
 def build_settings(config: dict[str, Any], channel_key: str) -> ProcessingSettings:

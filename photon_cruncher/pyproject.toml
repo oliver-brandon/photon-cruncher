@@ -16,11 +16,11 @@ dependencies = [
 [project.optional-dependencies]
 macos = ["pyobjc"]
 build = ["pyinstaller>=6.0"]
-prototype = ["pyqtgraph==0.14.0"]
 
 [project.scripts]
 photon-cruncher = "photon_cruncher.main:main"
 photon-cruncher-cli = "photon_cruncher.cli:main"
+photon-cruncher-aurora = "photon_cruncher.aurora_main:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -33,15 +33,24 @@ packages = [
     "photon_cruncher.analysis",
     "photon_cruncher.export",
     "photon_cruncher.gui",
-    "photon_cruncher.gui_prototype",
-    "photon_cruncher.gui_prototype.pages",
+    "photon_cruncher.gui_aurora",
     "photon_cruncher.io",
     "photon_cruncher.processing",
     "photon_cruncher.tests",
 ]
 
 [tool.setuptools.package-data]
-"photon_cruncher.gui_prototype" = ["assets/*.svg"]
+"photon_cruncher.gui_aurora" = [
+    "static/*",
+    "static/css/*",
+    "static/js/*",
+    "static/img/*",
+]
+"photon_cruncher" = [
+    "assets/icons/*",
+    "assets/icons/png/*",
+    "assets/icons/aurora-options/*",
+]
 
 [tool.black]
 line-length = 88
