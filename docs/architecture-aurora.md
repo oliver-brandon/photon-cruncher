@@ -1,77 +1,66 @@
-# Dual-GUI Architecture: Lab + Aurora
+# Aurora Architecture (dev branch)
 
-**Codename:** Aurora is the developer / v2 GUI surface.
-**Lab app:** current PySide GUI remains the familiar day-to-day tool.
+**Photon Cruncher Aurora** is the only desktop GUI on the `dev` branch.
 
 ## Principle
 
 ```text
-                 ┌──────── shared backend ────────┐
-                 │  service.py                    │
-                 │  io / processing / analysis /  │
-                 │  export / model / cli           │
-                 └───────┬────────────┬───────────┘
-                         │            │
-              ┌──────────▼───┐   ┌────▼────────────┐
-              │ Lab GUI      │   │ Aurora (dev)    │
-              │ main.py      │   │ aurora_main.py  │
-              │ gui/         │   │ gui_aurora/     │
-              └──────────────┘   └─────────────────┘
+        ┌──────── shared backend ────────┐
+        │  service.py                    │
+        │  io / processing / analysis /  │
+        │  export / model / cli           │
+        └───────────────┬────────────────┘
+                        │
+              ┌─────────▼──────────┐
+              │ Aurora desktop     │
+              │ aurora_main.py     │
+              │ gui_aurora/shell   │
+              └────────────────────┘
 ```
 
-- **One science core.** Fixes to loader/pipeline/export/classifier land in shared modules and benefit both surfaces.
-- **Two faces.** Lab UX stays stable. Aurora can move fast visually.
-- **No analysis math in GUI code.** GUIs call `photon_cruncher.service` (or thin wrappers like `analysis.runner` / CLI helpers that themselves call the service).
+- **One science core.** Fixes to loader/pipeline/export/classifier land in shared modules.
+- **No analysis math in GUI code.** The UI calls `photon_cruncher.service` (or CLI helpers that call the service).
+- **Live sessions only.** Open MAT/TDT → analyze → export. No synthetic demo feed.
 
-## Surfaces
+## Surfaces (dev)
 
-| Surface | Entry | Branding | Audience |
-| --- | --- | --- | --- |
-| Lab desktop | `python -m photon_cruncher.main` / `photon-cruncher` | `Photon Cruncher` / Dev title on `dev` branch | Lab users |
-| Aurora | `python -m photon_cruncher.aurora_main` / `photon-cruncher-aurora` | `Photon Cruncher Aurora` | Developer / v2 |
-| CLI | `photon-cruncher-cli` | version only | Automation / Hermes |
+| Surface | Entry | Branding |
+| --- | --- | --- |
+| Desktop | `python -m photon_cruncher.aurora_main` / `photon-cruncher` | Window: `Photon Cruncher Aurora` · UI rail: `Aurora v2.0` |
+| CLI | `photon-cruncher-cli` | package version `2.0.0` |
 
 ## Shared service API
 
 Module: `photon_cruncher/service.py`
 
-Primary calls:
 - `open_session(path)`
 - `list_channels(session)`
 - `resolve_epoc(session, name)`
-- `analyze(session, epoc, *, channel_keys, settings_factory, settings_overrides, source)`
+- `analyze(session, epoc, …)`
 - `annotate_trials` / `filter_trials`
 - `export_result`
-- `session_summary` / `result_plot_payload` (JSON-friendly for Aurora)
+- `session_summary` / `result_plot_payload`
 
-`analysis.runner.run_session*` delegates to `service.analyze`.
-Lab GUI preview / trial explorer call `service.analyze`.
-CLI analyze path uses `service.analyze`.
-Aurora local API (`/api/inspect`, `/api/analyze`) uses the same service.
-
-## Branch / release rules
-
-- `main` — lab-facing stable packaging; lab GUI default.
-- `dev` — developer builds; Aurora is the experimental UI default for exploration, lab GUI still present.
-- Backend PRs should avoid mixing large Aurora-only UI churn when the goal is a lab hotfix.
-- Prefer PR labels: `backend`, `gui-lab`, `gui-aurora`.
+Aurora local API: `/api/open`, `/api/analyze`, `/api/export`, `/api/health`.
 
 ## Packaging
 
-- Lab build scripts continue to launch `photon_cruncher.main`.
-- Aurora default entry is the **native shell** (`gui_aurora/shell.py` via
-  `aurora_main`): PySide6 + Qt WebEngine window hosting the web UI, plus a
-  localhost service backend.
-- `--browser` still available for pure web debugging.
-- Future packaging can ship Aurora as `Photon Cruncher Aurora` without changing
-  the lab default app.
+```bash
+scripts/build_macos_app.sh
+scripts/build_windows_app.ps1
+```
 
-## What must stay identical
+Artifacts:
+- `dist/Photon Cruncher Aurora v2.0.app`
+- `dist/Photon-Cruncher-Aurora-v2.0-macOS.zip`
+- `dist/Photon Cruncher Aurora v2.0/` (+ zip on Windows)
 
-- Pipeline math and defaults (`processing/pipeline.py`)
-- Edge-trial drop policy and control/signal alignment
-- Export CSV schema (TIME / MEAN / TRIAL_### rows)
-- Loader contracts for MAT + TDT
+GitHub Actions workflow builds those same Aurora bundles on `v*` tags / manual dispatch.
+
+## Branch notes
+
+- `dev` — Aurora desktop + shared backend + CLI.
+- `main` — lab-facing stable history; this branch no longer carries the old PySide lab GUI.
 
 ## Verification
 
@@ -80,13 +69,7 @@ env -u PYTHONPATH -u PYTHONHOME .build-venv/bin/python -m unittest \
   photon_cruncher.tests.test_loader \
   photon_cruncher.tests.test_service \
   photon_cruncher.tests.test_pipeline_equivalence \
-  photon_cruncher.tests.test_gui_aurora
+  photon_cruncher.tests.test_gui_aurora \
+  photon_cruncher.tests.test_aurora_shell \
+  photon_cruncher.tests.test_aurora_app
 ```
-
-## Building Aurora (macOS)
-
-```bash
-scripts/build_macos_aurora_app.sh
-```
-
-Produces `dist/Photon Cruncher Aurora v1.1.4.app`. Lab packaging scripts are unchanged.

@@ -1,8 +1,4 @@
-"""Aurora — developer GUI surface for Photon Cruncher.
-
-Codename for the v2 visual redesign. Uses the shared analysis service and does
-not replace the lab-facing PySide app (`photon_cruncher.main`).
-"""
+"""Aurora developer GUI surface for Photon Cruncher (dev branch desktop UI)."""
 
 from __future__ import annotations
 

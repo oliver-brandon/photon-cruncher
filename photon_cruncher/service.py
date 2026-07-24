@@ -1,4 +1,4 @@
-"""Shared analysis service used by lab GUI, Aurora, and CLI.
+"""Shared analysis service used by Aurora desktop GUI and CLI.
 
 GUI layers must call this module (or thin wrappers around it) instead of
 re-implementing load/process/export loops. Backend fixes land here once.

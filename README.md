@@ -1,135 +1,73 @@
 # Photon Cruncher
 
-Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. The
-pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
-processing, reads MATLAB exports or raw TDT block folders, lets users inspect
-and export selected trials, and exports plotted data as CSV.
+Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. On the
+`dev` branch the desktop surface is **Photon Cruncher Aurora** (hybrid
+Qt WebEngine UI + shared analysis service). The pipeline mirrors lab MATLAB
+preprocessing, supports MAT exports and raw TDT blocks, and exports CSV/figures.
 
-## Development Updates Since Stable v1.1.4
+## Dev branch (Aurora v2.0)
 
-The `dev` branch currently includes these updates beyond the latest tagged
-release on `main`:
+* Desktop GUI: **Aurora only** (`photon-cruncher` / `python -m photon_cruncher.aurora_main`)
+* UI rail label: `Aurora v2.0` (window title has no version suffix)
+* Package / CLI version: `2.0.0`
+* Shared analysis facade: `photon_cruncher.service`
+* Live sessions only (MAT/TDT open → analyze → export)
 
-* A command-line agentic access point can inspect sessions and run headless
-  analyses with JSON summaries.
-* Dev app bundles are versioned as `Photon Cruncher Dev v1.1.4`.
-* Shared analysis facade (`photon_cruncher.service`) used by the lab GUI, CLI,
-  and Aurora developer surface so backend fixes stay in one place.
-* **Aurora** developer desktop GUI launches separately and does not replace
-  the lab-facing PySide app. It is live-only (MAT/TDT open → analyze → export
-  through `photon_cruncher.service`).
+```bash
+.build-venv/bin/python -m photon_cruncher.aurora_main
+# or
+photon-cruncher
+```
 
-## Download for Lab Users
+## Download (prebuilt)
 
-Most students should use the prebuilt app downloads from GitHub. They do not
-need Python, Conda, Terminal, Automator, or the project source folder.
+Most users should use GitHub Releases. No Python install required.
 
 ### Windows
 
-1. Open the GitHub repository page.
-2. Click **Releases** on the right side of the page.
-3. Open the newest release.
-4. Download the newest Windows zip, such as
-   `Photon-Cruncher-Dev-v1.1.4-Windows.zip`.
-5. Right-click the zip file and choose **Extract All...**.
-6. Open the extracted `Photon Cruncher Dev v1.1.4` folder.
-7. Double-click `Photon Cruncher Dev v1.1.4.exe`.
+1. Open **Releases** on the GitHub repo.
+2. Download `Photon-Cruncher-Aurora-v2.0-Windows.zip`.
+3. Extract the zip.
+4. Open the `Photon Cruncher Aurora v2.0` folder.
+5. Double-click `Photon Cruncher Aurora v2.0.exe`.
 
-Keep the extracted `Photon Cruncher Dev v1.1.4` folder together. The `.exe`
-depends on the files beside it in that folder, but the whole folder can be
-moved anywhere on the computer, including the Desktop, Downloads, Documents, or
-a lab software folder.
+Keep the whole extracted folder together.
 
-If Windows SmartScreen warns that the app is from an unknown publisher, choose
-**More info** and then **Run anyway** if you trust the downloaded file. This can
-happen because the app is not currently signed with a Windows code-signing
-certificate.
+If Windows SmartScreen warns about an unknown publisher, choose **More info** →
+**Run anyway** for builds you trust from the lab GitHub release page.
 
 ### macOS
 
-1. Open the GitHub repository page.
-2. Click **Releases** on the right side of the page.
-3. Open the newest release.
-4. Download the newest macOS zip, such as
-   `Photon-Cruncher-Dev-v1.1.4-macOS.zip`.
-5. Double-click the zip file to expand it.
-6. Drag `Photon Cruncher Dev v1.1.4.app` to **Applications** or any other folder.
-7. Double-click `Photon Cruncher Dev v1.1.4.app`.
+1. Open **Releases** on the GitHub repo.
+2. Download `Photon-Cruncher-Aurora-v2.0-macOS.zip`.
+3. Expand the zip.
+4. Drag `Photon Cruncher Aurora v2.0.app` to **Applications** (or anywhere).
+5. Double-click the app.
 
-The macOS app bundle contains its own Python runtime, dependencies, and icons,
-so it can be moved without depending on the original project folder path.
+If macOS blocks an unsigned build: Control-click → **Open** → **Open**, or use
+**System Settings → Privacy & Security → Open Anyway**.
 
-If macOS says the app cannot be opened because Apple cannot verify it, this is
-expected for an unsigned lab build. Open it once using this path:
+## Build from source
 
-1. Control-click or right-click `Photon Cruncher Dev v1.1.4.app`.
-2. Choose **Open**.
-3. In the warning dialog, choose **Open** again.
+```bash
+# macOS
+scripts/build_macos_app.sh
+# → dist/Photon Cruncher Aurora v2.0.app
+# → dist/Photon-Cruncher-Aurora-v2.0-macOS.zip
 
-If macOS blocks the app without showing an **Open** button, go to **System
-Settings** > **Privacy & Security**, scroll to the security message about
-`Photon Cruncher Dev v1.1.4.app`, and choose **Open Anyway**. Only do this for
-app files downloaded from the lab's GitHub release page.
+# Windows (PowerShell)
+.\scripts\build_windows_app.ps1
+# → dist/Photon Cruncher Aurora v2.0/
+# → dist/Photon-Cruncher-Aurora-v2.0-Windows.zip
+```
+
+GitHub Actions (`.github/workflows/build-desktop-apps.yml`) builds the same Aurora
+bundles on `v*` tags or manual workflow dispatch.
 
 ## Update the App
 
-The app does not update itself automatically. When a new version is posted on
-GitHub, download the new zip and replace the old app copy. Your data files and
-exported results are not stored inside the app, so replacing the app should not
-delete your recordings or exports.
-
-### Update on Windows
-
-1. Quit `Photon Cruncher` if it is open.
-2. Open the GitHub repository page.
-3. Click **Releases** on the right side of the page.
-4. Open the newest release.
-5. Download the newest Windows zip, such as
-   `Photon-Cruncher-Dev-v1.1.4-Windows.zip`.
-6. Right-click the zip file and choose **Extract All...**.
-7. Open the extracted folder.
-8. You should see a folder with the version in its name, such as
-   `Photon Cruncher Dev v1.1.4`.
-9. Go to the place where your old `Photon Cruncher` folder lives.
-10. Rename the old folder to `Photon Cruncher old`.
-11. Move the new versioned `Photon Cruncher Dev v1.1.4` folder into that same
-    place.
-12. Double-click `Photon Cruncher Dev v1.1.4.exe` inside the new folder.
-13. After the new version opens correctly, delete `Photon Cruncher old`.
-
-Keep the whole `Photon Cruncher` folder together. Do not move only
-`Photon Cruncher Dev v1.1.4.exe` by itself, because the `.exe` needs the files
-beside it.
-
-If Windows says files with the same name already exist, choose **Replace** only
-if you are replacing the entire old `Photon Cruncher` folder with the newly
-extracted one. The rename-first method above is safer because it keeps the old
-copy available until you confirm the new one opens.
-
-### Update on macOS
-
-1. Quit `Photon Cruncher` if it is open.
-2. Open the GitHub repository page.
-3. Click **Releases** on the right side of the page.
-4. Open the newest release.
-5. Download the newest macOS zip, such as
-   `Photon-Cruncher-Dev-v1.1.4-macOS.zip`.
-6. Double-click the zip file to expand it.
-7. You should see a versioned app, such as `Photon Cruncher Dev v1.1.4.app`.
-8. Go to the place where your old `Photon Cruncher.app` lives, usually
-   **Applications**.
-9. Rename the old app to `Photon Cruncher old.app`.
-10. Drag the new `Photon Cruncher Dev v1.1.4.app` into that same place.
-11. Double-click the new `Photon Cruncher Dev v1.1.4.app`.
-12. After the new version opens correctly, delete `Photon Cruncher old.app`.
-
-If macOS asks whether to replace the existing app, you can choose **Replace**,
-but the rename-first method above is safer because it keeps the old copy
-available until you confirm the new one opens.
-
-If macOS shows the Apple verification warning again after an update, repeat the
-same first-open steps: Control-click or right-click the new versioned app,
-choose **Open**, then choose **Open** again.
+Download the newest release zip and replace the previous Aurora app/folder.
+Data files and exports live outside the app bundle.
 
 ## Data Expectations
 
@@ -142,17 +80,9 @@ Streams should include the expected photometry stores such as `x405A`, `x465A`,
 `x560A`, `x405C`, `x465C`, or `x560C`. Epocs are read from the TDT `epocs`
 collection or the equivalent MATLAB export schema.
 
-For batch processing, use **Add Files** for `.mat` files, **Add TDT Tank** for a
-TDT tank folder containing one or more block folders, or **Add Folder** for a
-mixed folder containing `.mat` files and TDT blocks.
+## Command-Line Access Point
 
-## Command-Line Access Point for Automated Workflows
-
-Photon Cruncher also includes `photon-cruncher-cli` for scripted analysis and
-agentic workflows. The desktop GUI remains the normal lab workflow, but the CLI
-can inspect files, validate reusable JSON configs, and run headless exports.
-
-From a source checkout or installed Python environment:
+`photon-cruncher-cli` supports scripted analysis and agentic workflows.
 
 ```bash
 photon-cruncher-cli inspect local-test-data --json
@@ -172,11 +102,7 @@ photon-cruncher-cli validate-config analysis-config.json
 photon-cruncher-cli analyze --config analysis-config.json
 ```
 
-Packaged Windows downloads include `photon-cruncher-cli.exe` beside the desktop
-app executable. Packaged macOS downloads include a separate
-`photon-cruncher-cli` binary beside the `.app` bundle. CLI output is JSON so
-automated tools can read exported paths, trial counts, dropped edge trials,
-artifact removals, warnings, and the app version.
+Packaged downloads include the CLI beside the desktop app. CLI output is JSON.
 
 ## Aurora GUI (developer v2 surface)
 

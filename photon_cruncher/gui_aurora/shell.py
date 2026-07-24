@@ -1,7 +1,7 @@
 """Native desktop shell for Aurora (PySide6 + Qt WebEngine).
 
-Real developer app window: embeds Aurora UI, native file dialogs, shared service.
-Does not replace the lab PySide widget GUI. Live sessions only.
+Desktop window for the Aurora web UI with native file dialogs and the shared
+analysis service. Live sessions only.
 """
 
 from __future__ import annotations
@@ -347,10 +347,8 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             "Aurora",
             (
                 f"{aurora_app_title()}\n\n"
-                "Developer desktop app: Qt WebEngine shell + Aurora UI.\n"
-                "Analysis backend: photon_cruncher.service "
-                "(shared with the lab GUI and CLI).\n\n"
-                "Lab app remains: python -m photon_cruncher.main"
+                "Desktop app: Qt WebEngine shell + Aurora UI.\n"
+                "Analysis backend: photon_cruncher.service (shared with CLI).\n"
             ),
         )
 
@@ -363,42 +361,6 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
 
 
-def _set_aurora_app_icon(app: QtWidgets.QApplication) -> None:
-    """Prefer Aurora monogram assets; fall back to lab icon helper."""
-    from photon_cruncher.main import _assets_dir
-
-    icons_dir = _assets_dir() / "icons"
-    icns_path = icons_dir / "photon-cruncher-aurora.icns"
-    ico_path = icons_dir / "photon-cruncher-aurora.ico"
-    png_dir = icons_dir / "png"
-
-    icon = QtGui.QIcon()
-    if sys.platform == "darwin" and icns_path.exists():
-        icon.addFile(str(icns_path))
-        try:
-            from AppKit import NSApplication, NSImage  # type: ignore
-
-            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(icns_path))
-            NSApplication.sharedApplication().setApplicationIconImage_(ns_icon)
-        except Exception:
-            pass
-    elif sys.platform.startswith("win") and ico_path.exists():
-        icon.addFile(str(ico_path))
-    elif png_dir.exists():
-        for path in sorted(png_dir.glob("photon-cruncher-aurora-*.png")):
-            icon.addFile(str(path))
-    if not icon.isNull():
-        app.setWindowIcon(icon)
-        return
-
-    try:
-        from photon_cruncher.main import _set_app_icon
-
-        _set_app_icon(app)
-    except Exception:
-        pass
-
-
 def run_shell(*, host: str = "127.0.0.1", port: int | None = None) -> int:
     QtCore.QCoreApplication.setAttribute(
         QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts
@@ -407,7 +369,9 @@ def run_shell(*, host: str = "127.0.0.1", port: int | None = None) -> int:
     app.setApplicationName("Photon Cruncher Aurora")
     app.setOrganizationName("PhotonCruncher")
     try:
-        _set_aurora_app_icon(app)
+        from photon_cruncher.product import set_app_icon
+
+        set_app_icon(app)
     except Exception:
         pass
 

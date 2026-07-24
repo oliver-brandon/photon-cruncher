@@ -227,8 +227,7 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                         "brand": aurora_brand_label(),
                         "title": aurora_app_title(),
                         "surfaces": {
-                            "lab_gui": "photon_cruncher.main",
-                            "aurora_gui": "photon_cruncher.aurora_main",
+                            "desktop_gui": "photon_cruncher.aurora_main",
                             "cli": "photon_cruncher.cli",
                             "service": "photon_cruncher.service",
                         },
@@ -300,7 +299,6 @@ def run_server(
     with _ReusableTCPServer((host, port), handler) as httpd:
         url = f"http://{host}:{port}/"
         print(f"{aurora_app_title()} → {url}")
-        print("Lab GUI remains: python -m photon_cruncher.main")
         print("Shared backend: photon_cruncher.service")
         print("Ctrl+C to stop.")
         if open_browser:

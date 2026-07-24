@@ -1,8 +1,9 @@
-"""Photometry analysis application."""
+"""Photometry analysis application (Aurora / dev)."""
 
-__version__ = "1.1.4"
-__app_name__ = "Photon Cruncher Dev"
+__version__ = "2.0.0"
+__app_name__ = "Photon Cruncher Aurora"
 
 
 def app_title() -> str:
-    return f"{__app_name__} v{__version__}"
+    # Version is displayed in the Aurora UI rail, not the window title.
+    return __app_name__

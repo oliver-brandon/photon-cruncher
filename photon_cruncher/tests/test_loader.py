@@ -665,191 +665,67 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(len(source.trials), 456)
         self.assertGreater(source.trials[0].onset, 0.0)
 
-    def test_trial_explorer_lists_classified_sources_for_local_fixture(self) -> None:
-        path = Path("local-test-data") / "mat" / "2143_Rev1_JZL18.mat"
-        if not path.exists():
-            self.skipTest(f"Local fixture not available: {path}")
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        window._add_batch_paths([path], clear_existing=True)
 
-        labels = [
-            window.trial_epoc_combo.itemText(idx)
-            for idx in range(window.trial_epoc_combo.count())
-        ]
-        self.assertIn("Classified trials levers", labels)
 
-    def test_align_preview_epoc_uses_align_picker_not_trial_picker(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            cue_a = Epoc(name="CueA", onset=np.array([1.0]))
-            cue_b = Epoc(name="CueB", onset=np.array([2.0]))
-            window.session = PhotometrySession(
-                streams={},
-                epocs={"CueA": cue_a, "CueB": cue_b},
-                info={},
-                source_path=Path("synthetic.mat"),
-            )
-            window.epoc_combo.addItems(["CueA", "CueB"])
-            window.epoc_combo.setCurrentText("CueA")
-            window.trial_epoc_combo.addItem("CueB", ("epoc", "CueB"))
-            window.trial_epoc_combo.setCurrentIndex(0)
 
-            self.assertIs(window._selected_preview_epoc(), cue_a)
-            trial_epoc, trial_source = window._selected_trial_epoc()
-            self.assertIs(trial_epoc, cue_b)
-            self.assertIsNone(trial_source)
-        finally:
-            window.close()
 
-    def test_align_preview_controls_request_refresh_after_preview_exists(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
-
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            window.session = PhotometrySession(
-                streams={},
-                epocs={"CueA": Epoc(name="CueA", onset=np.array([1.0]))},
-                info={},
-                source_path=Path("synthetic.mat"),
-            )
-            window.results_by_channel = {"A_465": object()}
-            calls: list[str] = []
-            window._preview_signals = lambda: calls.append("preview")
-
-            window._request_preview_refresh()
-            window._preview_refresh_timer.stop()
-            window._run_preview_refresh()
-
-            self.assertEqual(calls, ["preview"])
-        finally:
-            window.close()
-
-    def test_batch_export_checkboxes_default_to_csv_only(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
-
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            self.assertTrue(window.batch_export_csv.isChecked())
-            self.assertFalse(window.batch_export_figures.isChecked())
-            self.assertFalse(window.batch_figure_format.isEnabled())
-            self.assertEqual(
-                [
-                    window.batch_figure_format.itemData(idx)
-                    for idx in range(window.batch_figure_format.count())
-                ],
-                ["png", "pdf", "tiff"],
-            )
-
-            window.batch_export_figures.setChecked(True)
-
-            self.assertTrue(window.batch_figure_format.isEnabled())
-        finally:
-            window.close()
 
     def test_result_figure_title_includes_file_and_epoc(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from matplotlib.figure import Figure
-        from PySide6 import QtWidgets
-        from photon_cruncher.analysis.runner import AnalysisResult
-        from photon_cruncher.gui.main_window import MainWindow
+        from photon_cruncher.export.exporter import result_figure_title
+        from photon_cruncher.service import AnalysisResult
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            processed = ProcessedSignal(
-                ts=np.array([0.0, 1.0]),
-                zall=np.array([[1.0, 2.0]]),
-                zall_smooth=np.array([[1.0, 2.0]]),
-                mean_z=np.array([1.0, 2.0]),
-                sem_z=np.array([0.0, 0.0]),
-                mean_z_smooth=np.array([1.0, 2.0]),
-                sem_z_smooth=np.array([0.0, 0.0]),
-                num_artifacts=0,
-            )
-            session = PhotometrySession(
-                streams={},
-                epocs={},
-                info={},
-                source_path=Path("example_recording.mat"),
-            )
-            result = AnalysisResult(
-                session=session,
-                epoc=Epoc(name="CueA", onset=np.array([1.0])),
-                channel_key="A_465",
-                processed=processed,
-                settings=ProcessingSettings(plot_smooth=False),
-                stream_store=("x405A", "x465A"),
-            )
-            figure = Figure()
-
-            window._populate_result_figure(figure, result)
-
-            self.assertIsNotNone(figure._suptitle)
-            self.assertEqual(
-                figure._suptitle.get_text(),
-                "example_recording.mat | Epoc: CueA",
-            )
-        finally:
-            window.close()
+        processed = ProcessedSignal(
+            ts=np.array([0.0, 1.0]),
+            zall=np.array([[1.0, 2.0]]),
+            zall_smooth=np.array([[1.0, 2.0]]),
+            mean_z=np.array([1.0, 2.0]),
+            sem_z=np.array([0.0, 0.0]),
+            mean_z_smooth=np.array([1.0, 2.0]),
+            sem_z_smooth=np.array([0.0, 0.0]),
+            num_artifacts=0,
+        )
+        session = PhotometrySession(
+            streams={},
+            epocs={},
+            info={},
+            source_path=Path("example_recording.mat"),
+        )
+        result = AnalysisResult(
+            session=session,
+            epoc=Epoc(name="CueA", onset=np.array([1.0])),
+            channel_key="A_465",
+            processed=processed,
+            settings=ProcessingSettings(plot_smooth=False),
+            stream_store=("x405A", "x465A"),
+        )
+        self.assertEqual(
+            result_figure_title(result),
+            "example_recording.mat | Epoc: CueA",
+        )
 
     def test_heatmap_trial_ticks_are_integer_trial_labels(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
+        from photon_cruncher.export.exporter import heatmap_trial_ticks
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            processed = ProcessedSignal(
-                ts=np.array([0.0, 1.0]),
-                zall=np.zeros((40, 2)),
-                zall_smooth=np.zeros((40, 2)),
-                mean_z=np.array([0.0, 0.0]),
-                sem_z=np.array([0.0, 0.0]),
-                mean_z_smooth=np.array([0.0, 0.0]),
-                sem_z_smooth=np.array([0.0, 0.0]),
-                num_artifacts=0,
-                trial_numbers=list(range(101, 141)),
-            )
-
-            positions, labels = window._heatmap_trial_ticks(processed, 40)
-
-            self.assertLessEqual(len(positions), 12)
-            self.assertTrue(all(isinstance(position, int) for position in positions))
-            self.assertTrue(all(float(position).is_integer() for position in positions))
-            self.assertTrue(all(label.isdigit() for label in labels))
-            self.assertEqual(labels[0], "101")
-            self.assertEqual(labels[-1], "140")
-        finally:
-            window.close()
+        processed = ProcessedSignal(
+            ts=np.array([0.0, 1.0]),
+            zall=np.zeros((40, 2)),
+            zall_smooth=np.zeros((40, 2)),
+            mean_z=np.array([0.0, 0.0]),
+            sem_z=np.array([0.0, 0.0]),
+            mean_z_smooth=np.array([0.0, 0.0]),
+            sem_z_smooth=np.array([0.0, 0.0]),
+            num_artifacts=0,
+            trial_numbers=list(range(101, 141)),
+        )
+        positions, labels = heatmap_trial_ticks(processed, 40)
+        self.assertLessEqual(len(positions), 12)
+        self.assertTrue(all(isinstance(position, int) for position in positions))
+        self.assertTrue(all(float(position).is_integer() for position in positions))
+        self.assertTrue(all(label.isdigit() for label in labels))
+        self.assertEqual(labels[0], "101")
+        self.assertEqual(labels[-1], "140")
 
     def _trial_type_counts(self, source) -> dict[str, int]:
         counts: dict[str, int] = {}

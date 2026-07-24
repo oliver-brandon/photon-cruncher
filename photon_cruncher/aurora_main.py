@@ -1,24 +1,22 @@
-"""Photon Cruncher Aurora — developer GUI entry point.
+"""Photon Cruncher Aurora — developer desktop GUI entry point.
 
-Default: native desktop shell (Qt WebEngine) wrapping the Aurora web UI.
-Optional: --browser serves UI in a normal browser tab.
-
-Does not replace the lab-facing PySide app (photon_cruncher.main).
+Default desktop surface on the dev branch. Native shell (Qt WebEngine) by default;
+optional --browser mode. Analysis goes through photon_cruncher.service.
 """
 
 from __future__ import annotations
 
 import argparse
 
-from photon_cruncher.product import aurora_app_title
+from photon_cruncher.product import aurora_app_title, aurora_brand_label
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="photon-cruncher-aurora",
+        prog="photon-cruncher",
         description=(
-            f"{aurora_app_title()} — developer GUI surface. "
-            "Native shell by default; live analysis via photon_cruncher.service."
+            f"{aurora_app_title()} ({aurora_brand_label()}) — "
+            "desktop GUI. Live analysis via photon_cruncher.service."
         ),
     )
     parser.add_argument("--host", default="127.0.0.1")
@@ -47,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    print(aurora_app_title())
+    print(f"{aurora_app_title()} · {aurora_brand_label()}")
 
     if args.browser:
         from photon_cruncher.gui_aurora.server import run_server

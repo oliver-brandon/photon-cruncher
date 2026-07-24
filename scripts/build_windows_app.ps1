@@ -7,10 +7,11 @@ $VenvDir = Join-Path $ProjectRoot ".build-venv-windows"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $SpecFile = Join-Path $ProjectRoot "packaging\windows\PhotonCruncher.spec"
 $DistDir = Join-Path $ProjectRoot "dist"
-$AppDir = Join-Path $DistDir "Photon Cruncher Dev v1.1.4"
+$AppName = "Photon Cruncher Aurora v2.0"
+$AppDir = Join-Path $DistDir $AppName
 $CliExe = Join-Path $DistDir "photon-cruncher-cli.exe"
 $CliTarget = Join-Path $AppDir "photon-cruncher-cli.exe"
-$ZipPath = Join-Path $DistDir "Photon-Cruncher-Dev-v1.1.4-Windows.zip"
+$ZipPath = Join-Path $DistDir "Photon-Cruncher-Aurora-v2.0-Windows.zip"
 
 $RunningOnWindows = ($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT")
 if (-not $RunningOnWindows) {
@@ -23,6 +24,7 @@ if (-not (Test-Path $VenvPython)) {
 
 & $VenvPython -m pip install --upgrade pip setuptools wheel
 & $VenvPython -m pip install -e "$ProjectRoot\photon_cruncher[build]"
+& $VenvPython -m pip install "PySide6-WebEngine>=6.6"
 & $VenvPython -m PyInstaller `
     --clean `
     --noconfirm `
@@ -41,7 +43,7 @@ if (Test-Path $CliExe) {
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath -Force
 
 Write-Host ""
-Write-Host "Built app:"
+Write-Host "Built Aurora app:"
 Write-Host "  $AppDir"
 Write-Host ""
 Write-Host "Built command-line access point:"
@@ -50,4 +52,4 @@ Write-Host ""
 Write-Host "Built zip for GitHub/download sharing:"
 Write-Host "  $ZipPath"
 Write-Host ""
-Write-Host "You can unzip Photon-Cruncher-Dev-v1.1.4-Windows.zip anywhere and double-click Photon Cruncher Dev v1.1.4.exe."
+Write-Host "Unzip Photon-Cruncher-Aurora-v2.0-Windows.zip and double-click 'Photon Cruncher Aurora v2.0.exe'."
