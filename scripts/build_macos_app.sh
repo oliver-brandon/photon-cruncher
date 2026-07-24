@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "${script_dir}/.." && pwd)"
-python_bin="${PYTHON_BIN:-python3}"
+python_bin="${PYTHON_BIN:-}"
 venv_dir="${project_root}/.build-venv"
 spec_file="${project_root}/packaging/macos/PhotonCruncher.spec"
 app_name="Photon Cruncher Aurora v2.0"
@@ -14,14 +14,38 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+# Prefer an isolated Python 3.11 build env (WebEngine wheels / Addons are reliable there).
+if [[ -z "${python_bin}" ]]; then
+  if command -v python3.11 >/dev/null 2>&1; then
+    python_bin="$(command -v python3.11)"
+  elif [[ -x /Users/brandon/miniconda/bin/conda ]]; then
+    # Ensure conda env exists at .build-venv if missing.
+    if [[ ! -x "${venv_dir}/bin/python" ]]; then
+      /Users/brandon/miniconda/bin/conda create -y -p "${venv_dir}" python=3.11 pip setuptools wheel
+    fi
+    python_bin="${venv_dir}/bin/python"
+  else
+    python_bin="python3"
+  fi
+fi
+
 if [[ ! -x "${venv_dir}/bin/python" ]]; then
   "${python_bin}" -m venv "${venv_dir}"
 fi
 
 "${venv_dir}/bin/python" -m pip install --upgrade pip setuptools wheel
 "${venv_dir}/bin/python" -m pip install -e "${project_root}/photon_cruncher[build]"
-# WebEngine is required for the Aurora shell.
-"${venv_dir}/bin/python" -m pip install "PySide6-WebEngine>=6.6"
+
+# WebEngine lives in PySide6 Addons (bundled with modern PySide6). Verify present.
+if ! "${venv_dir}/bin/python" -c "from PySide6.QtWebEngineWidgets import QWebEngineView" >/dev/null 2>&1; then
+  echo "PySide6 QtWebEngineWidgets is missing. Installing PySide6 + Addons..." >&2
+  "${venv_dir}/bin/python" -m pip install --upgrade "PySide6>=6.6"
+  if ! "${venv_dir}/bin/python" -c "from PySide6.QtWebEngineWidgets import QWebEngineView" >/dev/null 2>&1; then
+    echo "ERROR: Qt WebEngine is required for Aurora and could not be imported." >&2
+    exit 1
+  fi
+fi
+
 "${venv_dir}/bin/python" -m PyInstaller \
   --clean \
   --noconfirm \

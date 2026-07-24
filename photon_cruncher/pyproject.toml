@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 macos = ["pyobjc"]
-build = ["pyinstaller>=6.0", "PySide6-WebEngine>=6.6"]
+build = ["pyinstaller>=6.0"]
 
 [project.scripts]
 photon-cruncher = "photon_cruncher.aurora_main:main"
