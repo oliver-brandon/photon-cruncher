@@ -10,6 +10,3 @@ pyinstaller>=6.0
 
 [macos]
 pyobjc
-
-[prototype]
-pyqtgraph==0.14.0

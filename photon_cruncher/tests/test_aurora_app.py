@@ -4,11 +4,18 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 from urllib.request import Request, urlopen
 
 import numpy as np
 
-from photon_cruncher.gui_aurora.server import serve_in_background
+from photon_cruncher.gui_aurora.server import (
+    _analyze_request,
+    _batch_export_request,
+    _inspect_paths_request,
+    serve_in_background,
+)
 from photon_cruncher.gui_aurora.session_store import STORE
 from photon_cruncher.model import Epoc, PhotometrySession, Stream
 
@@ -104,7 +111,8 @@ class AuroraAppTests(unittest.TestCase):
                     },
                 )
                 self.assertTrue(exported["ok"])
-                self.assertTrue(exported["exports"])
+                self.assertEqual(len(exported["exports"]), 1)
+                self.assertEqual(exported["exports"][0]["channel"], channels[0])
                 csv_path = Path(exported["exports"][0]["csv"])
                 self.assertTrue(csv_path.exists())
                 text = csv_path.read_text(encoding="utf-8").splitlines()
@@ -124,6 +132,140 @@ class AuroraAppTests(unittest.TestCase):
         self.assertTrue(callable(run_shell))
         self.assertTrue(AuroraBridge)
         self.assertTrue(AuroraShellWindow)
+
+    def test_inspect_paths_does_not_replace_current_session(self) -> None:
+        cached = SimpleNamespace(
+            path="/data/session-a.mat",
+            summary={"session_name": "session-a"},
+        )
+        with mock.patch.object(STORE, "open", return_value=cached) as opened:
+            payload = _inspect_paths_request(
+                {"paths": ["/data/session-a.mat", "/data/session-a.mat"]}
+            )
+        opened.assert_any_call("/data/session-a.mat", make_current=False)
+        self.assertEqual(len(payload["sources"]), 1)
+        self.assertEqual(payload["errors"], [])
+
+    def test_batch_export_uses_multi_source_runner_and_policy(self) -> None:
+        epoc = Epoc(name="CueA", onset=np.array([1.0]))
+        session = SimpleNamespace(epocs={"CueA": epoc})
+        result = SimpleNamespace(
+            session=SimpleNamespace(source_path=Path("/data/a.mat")),
+            epoc=epoc,
+            channel_key="A_465",
+        )
+        exported = SimpleNamespace(output_dir=Path("/exports/a"), result=result)
+        with (
+            mock.patch(
+                "photon_cruncher.gui_aurora.server.run_batch_custom",
+                return_value=[exported],
+            ) as runner,
+            mock.patch(
+                "photon_cruncher.gui_aurora.server.service.open_session",
+                return_value=session,
+            ),
+        ):
+            payload = _batch_export_request(
+                {
+                    "paths": ["/data/a.mat", "/data/b.mat"],
+                    "epoc_selections": [
+                        {
+                            "label": "Cue (prefer A/1_)",
+                            "members": ["CueA", "CueC"],
+                            "mode": "prefer_left",
+                        }
+                    ],
+                    "channels": ["A_465"],
+                    "settings": {
+                        "baseline_start": -3,
+                        "baseline_end": -1,
+                    },
+                    "output_dir": "/exports",
+                    "export_csv": True,
+                    "export_figure": False,
+                }
+            )
+
+        kwargs = runner.call_args.kwargs
+        self.assertEqual(len(kwargs["input_paths"]), 2)
+        self.assertEqual(
+            kwargs["epoc_selections"],
+            [("Cue (prefer A/1_)", ("CueA", "CueC"), "prefer_left")],
+        )
+        self.assertTrue(kwargs["per_session_subdir"])
+        settings = kwargs["settings_factory"]("A_465")
+        self.assertEqual(settings.baseline_per, (-3.0, -1.0))
+        self.assertEqual(payload["input_count"], 2)
+        self.assertEqual(payload["exports"][0]["channel"], "A_465")
+
+    def test_filtered_analysis_keeps_full_plot_payloads(self) -> None:
+        full_processed = object()
+        filtered_processed = object()
+        result = SimpleNamespace(
+            session=object(),
+            epoc=object(),
+            channel_key="A_465",
+            processed=full_processed,
+            settings=object(),
+            stream_store=("x405A", "x465A"),
+        )
+        cached = SimpleNamespace(
+            path="/synthetic/session.mat",
+            summary={"channels": ["A_465"]},
+        )
+
+        def plot_payload(item):
+            return {
+                "channel": item.channel_key,
+                "filtered": item.processed is filtered_processed,
+            }
+
+        with (
+            mock.patch.object(STORE, "open", return_value=cached),
+            mock.patch.object(STORE, "get_analysis", return_value=[result]),
+            mock.patch(
+                "photon_cruncher.gui_aurora.server.service.filter_trials",
+                return_value=filtered_processed,
+            ),
+            mock.patch(
+                "photon_cruncher.gui_aurora.server.service.result_plot_payload",
+                side_effect=plot_payload,
+            ),
+        ):
+            payload = _analyze_request(
+                {
+                    "path": cached.path,
+                    "epoc": "Cue",
+                    "trial_numbers": [2],
+                }
+            )
+
+        self.assertEqual(
+            payload["all_results"],
+            [{"channel": "A_465", "filtered": False}],
+        )
+        self.assertEqual(payload["results"], [{"channel": "A_465", "filtered": True}])
+
+    def test_empty_trial_selection_keeps_full_payload_without_fake_filter(self) -> None:
+        result = SimpleNamespace(channel_key="A_465", processed=object())
+        cached = SimpleNamespace(path="/synthetic/session.mat", summary={})
+        with (
+            mock.patch.object(STORE, "open", return_value=cached),
+            mock.patch.object(STORE, "get_analysis", return_value=[result]),
+            mock.patch(
+                "photon_cruncher.gui_aurora.server.service.result_plot_payload",
+                return_value={"channel": "A_465"},
+            ),
+        ):
+            payload = _analyze_request(
+                {
+                    "path": cached.path,
+                    "epoc": "Cue",
+                    "trial_numbers": [],
+                }
+            )
+        self.assertEqual(payload["results"], [])
+        self.assertEqual(payload["all_results"], [{"channel": "A_465"}])
 
 
 if __name__ == "__main__":

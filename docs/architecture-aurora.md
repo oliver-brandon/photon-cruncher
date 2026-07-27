@@ -41,7 +41,12 @@ Module: `photon_cruncher/service.py`
 - `export_result`
 - `session_summary` / `result_plot_payload`
 
-Aurora local API: `/api/open`, `/api/analyze`, `/api/export`, `/api/health`.
+Aurora local API: `/api/open`, `/api/inspect-paths`, `/api/analyze`,
+`/api/export`, `/api/batch-export`, `/api/health`.
+
+Multi-source Batch Export delegates to `analysis.runner.run_batch_custom`.
+Align, Trial Explorer, single-result export, and batch settings all resolve
+through the shared `photon_cruncher.service` processing and export contracts.
 
 ## Packaging
 

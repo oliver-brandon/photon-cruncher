@@ -121,7 +121,10 @@ Opens a real desktop window (PySide6 + Qt WebEngine) wrapping the Aurora web UI:
 In the shell:
 - **File → Open MAT / TDT** uses native dialogs
 - Analysis runs through the local API → `photon_cruncher.service`
-- Align / Trials / Export are wired to real results
+- Align exposes explicit channels-to-analyze controls and separate CSV/figure exports
+- Trial Explorer has its own source, epoc, channel, processing, and smoothing controls
+- Batch Export accepts multiple MAT files, mixed-data folders, and TDT tanks
+- Processing and export-folder settings persist between launches
 
 ### Browser mode (optional)
 
@@ -136,6 +139,8 @@ API (same backend as lab/CLI):
 - `POST /api/open` or `/api/inspect` with `{"path": "..."}`
 - `POST /api/analyze` with `{"path": "...", "epoc": "Cue", "channels": ["A_465"]}`
 - `POST /api/export` with path, epoc, output_dir, and export flags
+- `POST /api/inspect-paths` with a list of batch source paths
+- `POST /api/batch-export` with source paths, epoc selections, channels, and export flags
 
 Architecture: `docs/architecture-aurora.md`.
 
@@ -148,6 +153,14 @@ trials from one file. Choose a file, choose an epoc or classified trial source,
 set the processing window and smoothing, then click **Load Trials**. The trial
 list can be checked or unchecked by hand, and the plot updates to show only the
 selected trials.
+
+## Batch Export
+
+Use **Add files**, **Add folder**, or **Add TDT tank** to build a multi-recording
+batch. Select the epocs and channels to export, then choose exact suffixes or
+prefer the `A / 1_` or `C / 2_` member when paired epocs are available. Each
+recording is written to its own output subfolder. CSV is enabled by default;
+figures can be added in PNG, PDF, or TIFF format.
 
 For recordings with compatible behavior epocs, Photon Cruncher can add
 in-memory classified trial sources in Trial Explorer. These sources do not

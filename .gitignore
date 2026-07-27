@@ -1,5 +1,6 @@
 .DS_Store
 .codex
+.hermes
 AGENTS.md
 __pycache__/
 .build-venv/
@@ -10,3 +11,5 @@ dist/
 local-test-data/
 *.py[cod]
 scripts/analyze_photometry.py
+prototype-assets/
+tmp/

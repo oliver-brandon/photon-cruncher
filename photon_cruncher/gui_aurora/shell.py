@@ -19,7 +19,9 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from photon_cruncher.gui_aurora.server import serve_in_background
+from photon_cruncher.io.loader import discover_tdt_block_paths
 from photon_cruncher.product import aurora_app_title
+from photon_cruncher.service import discover_data_sources
 
 
 class _QuietPage(QWebEnginePage):
@@ -47,6 +49,40 @@ class AuroraBridge(QtCore.QObject):
         return path or ""
 
     @QtCore.Slot(result=str)
+    def selectMatFiles(self) -> str:
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
+            self._window,
+            "Add MATLAB photometry exports",
+            "",
+            "MATLAB (*.mat);;All files (*)",
+        )
+        return json.dumps(paths)
+
+    @QtCore.Slot(result=str)
+    def selectDataFolder(self) -> str:
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self._window,
+            "Add folder containing MAT files or TDT blocks",
+            "",
+        )
+        if not folder:
+            return "[]"
+        return json.dumps([str(path) for path in discover_data_sources(folder)])
+
+    @QtCore.Slot(result=str)
+    def selectTdtTank(self) -> str:
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self._window,
+            "Add TDT tank folder",
+            "",
+        )
+        if not folder:
+            return "[]"
+        return json.dumps(
+            [str(path.resolve()) for path in discover_tdt_block_paths(Path(folder))]
+        )
+
+    @QtCore.Slot(result=str)
     def openTdtDialog(self) -> str:
         path = QtWidgets.QFileDialog.getExistingDirectory(
             self._window,
@@ -56,13 +92,118 @@ class AuroraBridge(QtCore.QObject):
         return path or ""
 
     @QtCore.Slot(result=str)
-    def chooseExportDir(self) -> str:
+    def savedExportDir(self) -> str:
+        settings = QtCore.QSettings()
+        saved = str(
+            settings.value(
+                "export/output_dir",
+                settings.value("output_dir", ""),
+            )
+            or ""
+        )
+        return saved or str(Path.home() / "photometry_exports")
+
+    @QtCore.Slot(str, result=str)
+    def chooseExportDir(self, start_dir: str = "") -> str:
+        initial = start_dir.strip() or self.savedExportDir()
         path = QtWidgets.QFileDialog.getExistingDirectory(
             self._window,
             "Choose export folder",
-            "",
+            initial,
         )
+        if path:
+            settings = QtCore.QSettings()
+            settings.setValue("export/output_dir", path)
+            settings.setValue("output_dir", path)
         return path or ""
+
+    @QtCore.Slot(result=str)
+    def savedProcessingSettings(self) -> str:
+        settings = QtCore.QSettings()
+        defaults: dict[str, Any] = {
+            "trange_start": -2.0,
+            "trange_end": 5.0,
+            "baseline_start": -3.0,
+            "baseline_end": -1.0,
+            "baseline_adjust": -2.0,
+            "downsample_factor": 10,
+            "plot_smoothed": True,
+            "baseline_correction": True,
+            "channel_smoothing": {},
+        }
+        raw = str(settings.value("processing/settings_json", "") or "")
+        if raw:
+            try:
+                saved = json.loads(raw)
+                if isinstance(saved, dict):
+                    defaults.update(saved)
+            except (TypeError, ValueError):
+                pass
+        else:
+            legacy_keys = {
+                "trange_start": "processing/trange_start",
+                "trange_end": "processing/trange_end",
+                "baseline_start": "processing/baseline_start",
+                "baseline_end": "processing/baseline_end",
+                "baseline_adjust": "processing/base_adjust",
+                "downsample_factor": "processing/downsample_factor",
+                "plot_smoothed": "processing/plot_smooth",
+                "baseline_correction": "processing/set_baseline",
+            }
+            for key, legacy_key in legacy_keys.items():
+                value = settings.value(legacy_key)
+                if value is not None:
+                    if key in {"plot_smoothed", "baseline_correction"}:
+                        value = (
+                            value
+                            if isinstance(value, bool)
+                            else str(value).lower() in {"1", "true", "yes", "on"}
+                        )
+                    elif key == "downsample_factor":
+                        value = int(value)
+                    else:
+                        value = float(value)
+                    defaults[key] = value
+            smoothing_prefix = "processing/channel_smooth/"
+            defaults["channel_smoothing"] = {
+                key.removeprefix(smoothing_prefix): int(settings.value(key))
+                for key in settings.allKeys()
+                if key.startswith(smoothing_prefix)
+            }
+        return json.dumps(defaults)
+
+    @QtCore.Slot(str)
+    def saveProcessingSettings(self, settings_json: str) -> None:
+        try:
+            payload = json.loads(settings_json or "{}")
+        except (TypeError, ValueError):
+            return
+        if isinstance(payload, dict):
+            settings = QtCore.QSettings()
+            settings.setValue(
+                "processing/settings_json",
+                json.dumps(payload, sort_keys=True),
+            )
+            legacy_values = {
+                "processing/trange_start": payload.get("trange_start"),
+                "processing/trange_end": payload.get("trange_end"),
+                "processing/baseline_start": payload.get("baseline_start"),
+                "processing/baseline_end": payload.get("baseline_end"),
+                "processing/base_adjust": payload.get("baseline_adjust"),
+                "processing/downsample_factor": payload.get("downsample_factor"),
+                "processing/plot_smooth": payload.get("plot_smoothed"),
+                "processing/set_baseline": payload.get("baseline_correction"),
+            }
+            for key, value in legacy_values.items():
+                if value is not None:
+                    settings.setValue(key, value)
+            smoothing = payload.get("channel_smoothing") or {}
+            if isinstance(smoothing, dict):
+                for channel, value in smoothing.items():
+                    settings.setValue(
+                        f"processing/channel_smooth/{channel}",
+                        value,
+                    )
 
     @QtCore.Slot(str, result=str)
     def openSession(self, path: str) -> str:

@@ -31,7 +31,12 @@ class SessionStore:
             self._by_path.clear()
             self._current_path = None
 
-    def open(self, path: str | Path) -> CachedSession:
+    def open(
+        self,
+        path: str | Path,
+        *,
+        make_current: bool = True,
+    ) -> CachedSession:
         resolved = str(Path(path).expanduser().resolve())
         with self._lock:
             cached = self._by_path.get(resolved)
@@ -43,7 +48,8 @@ class SessionStore:
                     summary=session_summary(session),
                 )
                 self._by_path[resolved] = cached
-            self._current_path = resolved
+            if make_current:
+                self._current_path = resolved
             return cached
 
     def get(self, path: str | Path | None = None) -> CachedSession:

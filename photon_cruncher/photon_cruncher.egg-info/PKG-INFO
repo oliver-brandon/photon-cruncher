@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: photon-cruncher
 Version: 2.0.0
-Summary: Fiber photometry analysis suite with MATLAB-faithful preprocessing.
+Summary: Fiber photometry analysis suite with MATLAB-faithful preprocessing (Aurora desktop).
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: numpy>=1.25
@@ -14,5 +14,3 @@ Provides-Extra: macos
 Requires-Dist: pyobjc; extra == "macos"
 Provides-Extra: build
 Requires-Dist: pyinstaller>=6.0; extra == "build"
-Provides-Extra: prototype
-Requires-Dist: pyqtgraph==0.14.0; extra == "prototype"

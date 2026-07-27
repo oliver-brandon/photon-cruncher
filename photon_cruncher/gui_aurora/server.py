@@ -25,6 +25,11 @@ from photon_cruncher.product import (
     aurora_brand_label,
 )
 from photon_cruncher import service
+from photon_cruncher.analysis.runner import (
+    BatchEpocSelection,
+    epoc_names_for_selection,
+    run_batch_custom,
+)
 
 
 class _ReusableTCPServer(socketserver.TCPServer):
@@ -73,26 +78,45 @@ def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
     cached = STORE.open(path)
     channel_keys = body.get("channels")
     overrides = body.get("settings") or {}
+    channel_settings = body.get("channel_settings") or {}
     force = bool(body.get("force", False))
     channels_key = tuple(channel_keys) if channel_keys else ("__all__",)
-    cache_key = f"{epoc}|{channels_key}|{_settings_fingerprint(overrides)}"
+    settings_key = {
+        "settings": overrides,
+        "channel_settings": channel_settings,
+    }
+    cache_key = f"{epoc}|{channels_key}|{_settings_fingerprint(settings_key)}"
 
     results = None if force else STORE.get_analysis(cached.path, cache_key)
     if results is None:
+
+        def settings_factory(channel_key: str):
+            per_channel = dict(overrides)
+            per_channel.update(channel_settings.get(channel_key) or {})
+            return service.settings_for_channel(channel_key, overrides=per_channel)
+
         results = service.analyze(
             cached.session,
             str(epoc),
             channel_keys=channel_keys,
-            settings_overrides=overrides if overrides else None,
+            settings_factory=settings_factory,
         )
         STORE.put_analysis(cached.path, cache_key, results)
 
     trial_numbers = body.get("trial_numbers")
     trial_types = body.get("trial_types")
+    filter_requested = trial_numbers is not None or trial_types is not None
+    all_payloads = (
+        [service.result_plot_payload(result) for result in results]
+        if filter_requested
+        else None
+    )
     payloads = []
     for result in results:
         processed = result.processed
-        if trial_numbers or trial_types:
+        if filter_requested:
+            if trial_numbers == [] and not trial_types:
+                continue
             processed = service.filter_trials(
                 processed,
                 trial_numbers=trial_numbers,
@@ -117,6 +141,7 @@ def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
         "session": cached.summary,
         "epoc": str(epoc),
         "results": payloads,
+        **({"all_results": all_payloads} if all_payloads is not None else {}),
     }
 
 
@@ -130,19 +155,30 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
     cached = STORE.open(path)
     channel_keys = body.get("channels")
     overrides = body.get("settings") or {}
+    channel_settings = body.get("channel_settings") or {}
+
+    def settings_factory(channel_key: str):
+        per_channel = dict(overrides)
+        per_channel.update(channel_settings.get(channel_key) or {})
+        return service.settings_for_channel(channel_key, overrides=per_channel)
+
     results = service.analyze(
         cached.session,
         str(epoc),
         channel_keys=channel_keys,
-        settings_overrides=overrides if overrides else None,
+        settings_factory=settings_factory,
     )
-    if body.get("trial_numbers") or body.get("trial_types"):
+    trial_numbers = body.get("trial_numbers")
+    trial_types = body.get("trial_types")
+    if trial_numbers is not None or trial_types is not None:
+        if trial_numbers == [] and not trial_types:
+            raise ValueError("Select at least one trial before exporting.")
         filtered = []
         for result in results:
             processed = service.filter_trials(
                 result.processed,
-                trial_numbers=body.get("trial_numbers"),
-                trial_types=body.get("trial_types"),
+                trial_numbers=trial_numbers,
+                trial_types=trial_types,
             )
             filtered.append(
                 service.AnalysisResult(
@@ -159,6 +195,10 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
     export_csv = bool(body.get("export_csv", True))
     export_figure = bool(body.get("export_figure", False))
     figure_format = str(body.get("figure_format", "png"))
+    if not export_csv and not export_figure:
+        raise ValueError("Choose CSV and/or figure export.")
+    if figure_format not in {"png", "pdf", "tiff"}:
+        raise ValueError("figure_format must be png, pdf, or tiff")
     written: list[dict[str, str]] = []
     for result in results:
         paths = service.export_result(
@@ -167,6 +207,9 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
             export_csv=export_csv,
             export_figure=export_figure,
             figure_format=figure_format,
+            filename_suffix=(
+                "_selected_trials" if body.get("selected_trials") else ""
+            ),
         )
         written.append(
             {
@@ -179,6 +222,124 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "output_dir": str(Path(output_dir).expanduser().resolve()),
         "exports": written,
+    }
+
+
+def _inspect_paths_request(body: dict[str, Any]) -> dict[str, Any]:
+    raw_paths = body.get("paths") or []
+    if not isinstance(raw_paths, list):
+        raise ValueError("paths must be a list")
+    sources: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_path in raw_paths:
+        try:
+            cached = STORE.open(str(raw_path), make_current=False)
+        except Exception as exc:  # noqa: BLE001 - collect per-source failures
+            errors.append({"path": str(raw_path), "error": str(exc)})
+            continue
+        if cached.path in seen:
+            continue
+        seen.add(cached.path)
+        sources.append({"path": cached.path, "session": cached.summary})
+    return {"ok": True, "sources": sources, "errors": errors}
+
+
+def _batch_selection(raw: dict[str, Any]) -> BatchEpocSelection:
+    label = str(raw.get("label") or "").strip()
+    members = tuple(str(item) for item in (raw.get("members") or []) if item)
+    mode = str(raw.get("mode") or "all")
+    if not label or not members:
+        raise ValueError("Each batch epoc selection needs a label and members.")
+    if mode not in {"all", "prefer_left", "prefer_right"}:
+        raise ValueError(f"Unsupported epoc policy: {mode}")
+    return (label, members, mode)
+
+
+def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
+    raw_paths = body.get("paths") or []
+    raw_selections = body.get("epoc_selections") or []
+    output_dir = body.get("output_dir")
+    if not raw_paths:
+        raise ValueError("Add at least one MAT file or TDT block.")
+    if not raw_selections:
+        raise ValueError("Select at least one epoc.")
+    if not output_dir:
+        raise ValueError("Choose an output folder.")
+
+    input_paths = [Path(str(path)).expanduser().resolve() for path in raw_paths]
+    epoc_selections = [_batch_selection(item) for item in raw_selections]
+    channel_keys = [str(key) for key in (body.get("channels") or [])]
+    if not channel_keys:
+        raise ValueError("Select at least one channel.")
+
+    export_csv = bool(body.get("export_csv", True))
+    export_figure = bool(body.get("export_figure", False))
+    figure_format = str(body.get("figure_format", "png"))
+    if not export_csv and not export_figure:
+        raise ValueError("Choose CSV and/or figure export.")
+    if figure_format not in {"png", "pdf", "tiff"}:
+        raise ValueError("figure_format must be png, pdf, or tiff")
+
+    overrides = body.get("settings") or {}
+    channel_settings = body.get("channel_settings") or {}
+
+    def settings_factory(channel_key: str):
+        per_channel = dict(overrides)
+        per_channel.update(channel_settings.get(channel_key) or {})
+        return service.settings_for_channel(channel_key, overrides=per_channel)
+
+    destination = Path(str(output_dir)).expanduser().resolve()
+    exported = run_batch_custom(
+        input_paths=input_paths,
+        epoc_selections=epoc_selections,
+        output_dir=destination,
+        channel_keys=channel_keys,
+        settings_factory=settings_factory,
+        export_summary=False,
+        per_session_subdir=True,
+        export_csv=export_csv,
+    )
+    written: list[dict[str, str]] = []
+    for item in exported:
+        figure_path = ""
+        if export_figure:
+            figure_path = service.export_result(
+                item.result,
+                item.output_dir,
+                export_csv=False,
+                export_figure=True,
+                figure_format=figure_format,
+            )["figure"]
+        prefix = (
+            f"{item.result.session.source_path.stem}_{item.result.epoc.name}_"
+            f"{item.result.channel_key}"
+        )
+        csv_path = str(item.output_dir / f"{prefix}_heatmap.csv") if export_csv else ""
+        written.append(
+            {
+                "session": item.result.session.source_path.stem,
+                "epoc": item.result.epoc.name,
+                "channel": item.result.channel_key,
+                "csv": csv_path,
+                "figure": figure_path,
+            }
+        )
+
+    skipped: list[dict[str, str]] = []
+    for path in input_paths:
+        session = service.open_session(path)
+        for selection in epoc_selections:
+            names = epoc_names_for_selection(session, selection)
+            if not names or all(session.epocs[name].onset.size == 0 for name in names):
+                skipped.append({"session": path.name, "epoc": selection[0]})
+
+    return {
+        "ok": True,
+        "output_dir": str(destination),
+        "input_count": len(input_paths),
+        "exports": written,
+        "skipped": skipped,
     }
 
 
@@ -267,6 +428,14 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                 if parsed.path == "/api/export":
                     body = _read_json(self)
                     _json_response(self, _export_request(body))
+                    return
+                if parsed.path == "/api/inspect-paths":
+                    body = _read_json(self)
+                    _json_response(self, _inspect_paths_request(body))
+                    return
+                if parsed.path == "/api/batch-export":
+                    body = _read_json(self)
+                    _json_response(self, _batch_export_request(body))
                     return
                 if parsed.path == "/api/close":
                     STORE.clear()

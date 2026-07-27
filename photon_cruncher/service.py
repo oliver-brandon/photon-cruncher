@@ -18,6 +18,7 @@ from photon_cruncher.analysis.trial_classifier import (
 )
 from photon_cruncher.export.exporter import export_channel, save_result_figure
 from photon_cruncher.io.loader import load_session
+from photon_cruncher.io.loader import discover_tdt_block_paths
 from photon_cruncher.model import Epoc, PhotometrySession
 from photon_cruncher.processing.pipeline import (
     ProcessedSignal,
@@ -53,6 +54,16 @@ class ChannelInfo:
 def open_session(path: str | Path) -> PhotometrySession:
     """Load a MAT file or TDT block into a PhotometrySession."""
     return load_session(Path(path))
+
+
+def discover_data_sources(folder: str | Path) -> list[Path]:
+    """Find top-level MAT exports and nested TDT blocks below ``folder``."""
+    root = Path(folder).expanduser()
+    if not root.is_dir():
+        raise ValueError(f"Data folder not found: {root}")
+    paths = list(sorted(root.glob("*.mat")))
+    paths.extend(discover_tdt_block_paths(root))
+    return list(dict.fromkeys(path.resolve() for path in paths))
 
 
 def list_channels(session: PhotometrySession) -> list[ChannelInfo]:
@@ -291,6 +302,7 @@ def export_result(
 
 def session_summary(session: PhotometrySession) -> dict[str, Any]:
     sources = classified_trial_sources(session)
+    channels = list_channels(session)
     return {
         "source_path": str(session.source_path),
         "session_name": session.source_path.stem,
@@ -315,7 +327,16 @@ def session_summary(session: PhotometrySession) -> dict[str, Any]:
             }
             for name, epoc in sorted(session.epocs.items())
         },
-        "channels": [channel.key for channel in list_channels(session)],
+        "channels": [channel.key for channel in channels],
+        "channel_details": [
+            {
+                "key": channel.key,
+                "iso_stream": channel.iso_stream,
+                "signal_stream": channel.signal_stream,
+                "default_smooth": channel.default_smooth,
+            }
+            for channel in channels
+        ],
         "classified_sources": [
             {
                 "key": source.key,

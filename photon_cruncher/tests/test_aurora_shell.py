@@ -16,6 +16,14 @@ class AuroraShellSpikeTests(unittest.TestCase):
 
         self.assertTrue(callable(shell.run_shell))
         self.assertTrue(callable(shell.AuroraShellWindow))
+        for method in (
+            "selectMatFiles",
+            "selectDataFolder",
+            "selectTdtTank",
+            "savedProcessingSettings",
+            "saveProcessingSettings",
+        ):
+            self.assertTrue(hasattr(shell.AuroraBridge, method))
 
     def test_free_port_and_background_server_tuple(self) -> None:
         port = find_free_port("127.0.0.1")
