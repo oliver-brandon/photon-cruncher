@@ -141,6 +141,12 @@ def settings_for_channel(
     if "artifact_465" in overrides:
         value = overrides["artifact_465"]
         settings.artifact_465 = float("inf") if value is None else float(value)
+    if "use_isosbestic" in overrides:
+        settings.use_isosbestic = bool(overrides["use_isosbestic"])
+    if "polynomial_degree" in overrides:
+        settings.polynomial_degree = int(overrides["polynomial_degree"])
+        if settings.polynomial_degree < 1:
+            raise ValueError("polynomial_degree must be at least 1")
     if "plot_smooth" in overrides:
         settings.plot_smooth = bool(overrides["plot_smooth"])
     if "plot_smoothed" in overrides:
@@ -377,6 +383,8 @@ def result_plot_payload(result: AnalysisResult) -> dict[str, Any]:
             "smooth_factor": int(result.settings.smooth_factor),
             "plot_smooth": bool(result.settings.plot_smooth),
             "set_baseline": bool(result.settings.set_baseline),
+            "use_isosbestic": bool(result.settings.use_isosbestic),
+            "polynomial_degree": int(result.settings.polynomial_degree),
         },
         "times": _json_safe(processed.ts),
         "mean": _json_safe(mean),

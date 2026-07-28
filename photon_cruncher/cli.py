@@ -37,6 +37,7 @@ EXIT_RUNTIME_ERROR = 3
 
 FIGURE_FORMATS = {"png", "pdf", "tiff"}
 EXPORT_MODES = {"csv", "figures", "both", "none"}
+EPOC_POLICIES = {"all", "prefer_left", "prefer_right"}
 
 
 class CliError(Exception):
@@ -95,8 +96,29 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--config", default=None)
     analyze_parser.add_argument("--output-dir", default=None)
     analyze_parser.add_argument("--summary-json", default=None)
-    analyze_parser.add_argument("--epoc", nargs="+", default=None)
+    epoc_group = analyze_parser.add_mutually_exclusive_group()
+    epoc_group.add_argument("--epoc", nargs="+", default=None)
+    epoc_group.add_argument(
+        "--all-epocs",
+        action="store_true",
+        default=None,
+        help="Analyze every epoc available in each session.",
+    )
+    analyze_parser.add_argument(
+        "--epoc-policy",
+        choices=("all", "prefer-left", "prefer-right"),
+        default=None,
+        help="Analyze all selected epocs or prefer the A/1_ or C/2_ member of each pair.",
+    )
     analyze_parser.add_argument("--channel", nargs="+", default=None)
+    analyze_parser.add_argument(
+        "--channel-smooth",
+        nargs="+",
+        action="append",
+        metavar="CHANNEL=FACTOR",
+        default=None,
+        help="Override smoothing for individual channels (for example A_465=10 C_465=20).",
+    )
     analyze_parser.add_argument("--trial-number", nargs="+", type=int, default=None)
     analyze_parser.add_argument("--trial-type", nargs="+", default=None)
     analyze_parser.add_argument("--trange-start", type=float, default=None)
@@ -105,11 +127,89 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--baseline-end", type=float, default=None)
     analyze_parser.add_argument("--baseline-adjust", type=float, default=None)
     analyze_parser.add_argument("--downsample-factor", type=int, default=None)
-    analyze_parser.add_argument("--smooth-factor", type=int, default=None)
-    analyze_parser.add_argument("--artifact-405", type=float, default=None)
-    analyze_parser.add_argument("--artifact-465", type=float, default=None)
-    analyze_parser.add_argument("--plot-raw", action="store_true")
-    analyze_parser.add_argument("--no-baseline-correction", action="store_true")
+    smoothing_group = analyze_parser.add_mutually_exclusive_group()
+    smoothing_group.add_argument(
+        "--smooth-factor",
+        type=int,
+        default=argparse.SUPPRESS,
+        help="Use one smoothing factor for every channel.",
+    )
+    smoothing_group.add_argument(
+        "--default-smoothing",
+        dest="smooth_factor",
+        action="store_const",
+        const=None,
+        default=argparse.SUPPRESS,
+        help="Restore each channel's built-in smoothing default.",
+    )
+    artifact_405_group = analyze_parser.add_mutually_exclusive_group()
+    artifact_405_group.add_argument(
+        "--artifact-405", type=float, default=argparse.SUPPRESS
+    )
+    artifact_405_group.add_argument(
+        "--no-artifact-405",
+        dest="artifact_405",
+        action="store_const",
+        const=None,
+        default=argparse.SUPPRESS,
+        help="Disable the 405 artifact threshold.",
+    )
+    artifact_465_group = analyze_parser.add_mutually_exclusive_group()
+    artifact_465_group.add_argument(
+        "--artifact-465", type=float, default=argparse.SUPPRESS
+    )
+    artifact_465_group.add_argument(
+        "--no-artifact-465",
+        dest="artifact_465",
+        action="store_const",
+        const=None,
+        default=argparse.SUPPRESS,
+        help="Disable the signal-channel artifact threshold.",
+    )
+    isosbestic_group = analyze_parser.add_mutually_exclusive_group()
+    isosbestic_group.add_argument(
+        "--use-isosbestic",
+        dest="use_isosbestic",
+        action="store_true",
+        help="Fit and subtract the paired 405 isosbestic channel (default).",
+    )
+    isosbestic_group.add_argument(
+        "--no-isosbestic",
+        dest="use_isosbestic",
+        action="store_false",
+        help="Skip the 405 fit and process the signal channel directly.",
+    )
+    analyze_parser.set_defaults(use_isosbestic=None)
+    analyze_parser.add_argument(
+        "--polynomial-degree",
+        type=int,
+        default=None,
+        help="Polynomial degree for the 405 fit (default: 1).",
+    )
+    plot_group = analyze_parser.add_mutually_exclusive_group()
+    plot_group.add_argument(
+        "--plot-smoothed",
+        dest="plot_smoothed",
+        action="store_true",
+        default=None,
+    )
+    plot_group.add_argument(
+        "--plot-raw",
+        dest="plot_smoothed",
+        action="store_false",
+    )
+    baseline_group = analyze_parser.add_mutually_exclusive_group()
+    baseline_group.add_argument(
+        "--baseline-correction",
+        dest="baseline_correction",
+        action="store_true",
+        default=None,
+    )
+    baseline_group.add_argument(
+        "--no-baseline-correction",
+        dest="baseline_correction",
+        action="store_false",
+    )
     analyze_parser.add_argument("--export", choices=sorted(EXPORT_MODES), default=None)
     analyze_parser.add_argument("--figure-format", choices=sorted(FIGURE_FORMATS), default=None)
     analyze_parser.add_argument("--per-session-subdir", action="store_true", default=None)
@@ -211,7 +311,7 @@ def analyze_command(args: argparse.Namespace) -> int:
             if config["exports"]["per_session_subdir"]
             else output_dir
         )
-        for epoc_name in config["epocs"]:
+        for epoc_name in epoc_names_for_config(session, config):
             try:
                 epoc, source = resolve_epoc_or_source(session, epoc_name)
             except ValueError as exc:
@@ -348,6 +448,14 @@ def normalize_analyze_config(
     processing = dict(raw_config.get("processing", {}))
     exports = dict(raw_config.get("exports", {}))
     trial_filter = dict(raw_config.get("trial_filter", {}))
+    raw_channel_settings = raw_config.get("channel_settings", {})
+    if not isinstance(raw_channel_settings, dict):
+        raise ConfigError("channel_settings must be an object")
+    channel_settings: dict[str, dict[str, Any]] = {}
+    for channel, settings in raw_channel_settings.items():
+        if not isinstance(settings, dict):
+            raise ConfigError(f"channel_settings.{channel} must be an object")
+        channel_settings[str(channel)] = dict(settings)
 
     config = {
         "inputs": list(raw_config.get("inputs", [])),
@@ -355,6 +463,9 @@ def normalize_analyze_config(
         "summary_json": raw_config.get("summary_json"),
         "channels": list(raw_config.get("channels", [])),
         "epocs": list(raw_config.get("epocs", [])),
+        "all_epocs": bool(raw_config.get("all_epocs", False)),
+        "epoc_policy": str(raw_config.get("epoc_policy", "all")).replace("-", "_"),
+        "channel_settings": channel_settings,
         "trial_filter": {
             "trial_numbers": list(trial_filter.get("trial_numbers", [])),
             "trial_types": list(trial_filter.get("trial_types", [])),
@@ -369,6 +480,8 @@ def normalize_analyze_config(
             "smooth_factor": processing.get("smooth_factor"),
             "artifact_405": processing.get("artifact_405"),
             "artifact_465": processing.get("artifact_465"),
+            "use_isosbestic": processing.get("use_isosbestic", True),
+            "polynomial_degree": processing.get("polynomial_degree", 1),
             "plot_smoothed": processing.get("plot_smoothed", True),
             "baseline_correction": processing.get("baseline_correction", True),
         },
@@ -388,8 +501,20 @@ def normalize_analyze_config(
         config["summary_json"] = args.summary_json
     if getattr(args, "epoc", None) is not None:
         config["epocs"] = list(args.epoc)
+        config["all_epocs"] = False
+    if getattr(args, "all_epocs", None):
+        config["epocs"] = []
+        config["all_epocs"] = True
+    if getattr(args, "epoc_policy", None) is not None:
+        config["epoc_policy"] = args.epoc_policy.replace("-", "_")
     if getattr(args, "channel", None) is not None:
         config["channels"] = list(args.channel)
+    if getattr(args, "channel_smooth", None):
+        for override in _flatten(args.channel_smooth):
+            channel, smooth_factor = parse_channel_smooth_override(override)
+            config["channel_settings"].setdefault(channel, {})[
+                "smooth_factor"
+            ] = smooth_factor
     if getattr(args, "trial_number", None) is not None:
         config["trial_filter"]["trial_numbers"] = list(args.trial_number)
     if getattr(args, "trial_type", None) is not None:
@@ -402,17 +527,20 @@ def normalize_analyze_config(
         ("baseline_end", "baseline_end"),
         ("baseline_adjust", "baseline_adjust"),
         ("downsample_factor", "downsample_factor"),
-        ("smooth_factor", "smooth_factor"),
-        ("artifact_405", "artifact_405"),
-        ("artifact_465", "artifact_465"),
+        ("polynomial_degree", "polynomial_degree"),
     ]:
         value = getattr(args, option, None)
         if value is not None:
             config["processing"][field] = value
-    if getattr(args, "plot_raw", False):
-        config["processing"]["plot_smoothed"] = False
-    if getattr(args, "no_baseline_correction", False):
-        config["processing"]["baseline_correction"] = False
+    for option in ("smooth_factor", "artifact_405", "artifact_465"):
+        if hasattr(args, option):
+            config["processing"][option] = getattr(args, option)
+    if getattr(args, "use_isosbestic", None) is not None:
+        config["processing"]["use_isosbestic"] = bool(args.use_isosbestic)
+    if getattr(args, "plot_smoothed", None) is not None:
+        config["processing"]["plot_smoothed"] = bool(args.plot_smoothed)
+    if getattr(args, "baseline_correction", None) is not None:
+        config["processing"]["baseline_correction"] = bool(args.baseline_correction)
     if getattr(args, "figure_format", None) is not None:
         config["exports"]["figure_format"] = args.figure_format
     if getattr(args, "per_session_subdir", None):
@@ -431,8 +559,12 @@ def validate_analyze_config(config: dict[str, Any]) -> None:
     errors: list[str] = []
     if not config["inputs"]:
         errors.append("inputs must include at least one file or folder")
-    if not config["epocs"]:
-        errors.append("epocs must include at least one epoc or classified source")
+    if not config["epocs"] and not config["all_epocs"]:
+        errors.append("epocs must include at least one epoc or set all_epocs to true")
+    if config["epocs"] and config["all_epocs"]:
+        errors.append("epocs and all_epocs cannot both be set")
+    if config["epoc_policy"] not in EPOC_POLICIES:
+        errors.append("epoc_policy must be one of: all, prefer_left, prefer_right")
     if not config["output_dir"] and (
         config["exports"]["csv"] or config["exports"]["figures"]
     ):
@@ -449,6 +581,33 @@ def validate_analyze_config(config: dict[str, Any]) -> None:
         and int(processing["smooth_factor"]) < 1
     ):
         errors.append("smooth_factor must be at least 1 when provided")
+    for channel, overrides in config["channel_settings"].items():
+        if not isinstance(overrides, dict):
+            errors.append(f"channel_settings.{channel} must be an object")
+            continue
+        unknown = set(overrides) - {"smooth_factor"}
+        if unknown:
+            errors.append(
+                f"channel_settings.{channel} has unsupported fields: "
+                + ", ".join(sorted(unknown))
+            )
+        smooth_factor = overrides.get("smooth_factor")
+        if smooth_factor is None or not _is_positive_integer(smooth_factor):
+            errors.append(
+                f"channel_settings.{channel}.smooth_factor must be an integer of at least 1"
+            )
+    if not isinstance(processing["use_isosbestic"], bool):
+        errors.append("use_isosbestic must be true or false")
+    polynomial_degree = processing["polynomial_degree"]
+    try:
+        polynomial_degree_int = int(polynomial_degree)
+        if float(polynomial_degree) != polynomial_degree_int:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append("polynomial_degree must be an integer")
+    else:
+        if polynomial_degree_int < 1:
+            errors.append("polynomial_degree must be at least 1")
     if config["exports"]["figure_format"] not in FIGURE_FORMATS:
         errors.append("figure_format must be one of: pdf, png, tiff")
     if errors:
@@ -470,6 +629,40 @@ def resolve_epoc_or_source(
         f"epoc or classified source '{requested_name}' not found; "
         f"available: {', '.join(available)}"
     )
+
+
+def epoc_names_for_config(
+    session: PhotometrySession,
+    config: dict[str, Any],
+) -> list[str]:
+    requested = sorted(session.epocs) if config["all_epocs"] else list(config["epocs"])
+    policy = config["epoc_policy"]
+    if policy == "all":
+        return requested
+
+    from photon_cruncher.analysis.runner import epoc_names_for_selection
+
+    groups: dict[tuple[str, str], list[str]] = {}
+    unpaired: list[str] = []
+    for epoc_name in requested:
+        if epoc_name.endswith(("1_", "2_")):
+            key = (epoc_name[:-2], "number_underscore")
+        elif epoc_name.endswith(("A", "C")):
+            key = (epoc_name[:-1], "letter")
+        else:
+            unpaired.append(epoc_name)
+            continue
+        groups.setdefault(key, []).append(epoc_name)
+
+    selected = list(unpaired)
+    for (base, _family), members in groups.items():
+        selected.extend(
+            epoc_names_for_selection(
+                session,
+                (base, tuple(sorted(members)), policy),
+            )
+        )
+    return selected
 
 
 def analyze_session_epoc(
@@ -524,8 +717,15 @@ def build_settings(config: dict[str, Any], channel_key: str) -> ProcessingSettin
     settings.set_baseline = bool(processing["baseline_correction"])
     if processing["smooth_factor"] is not None:
         settings.smooth_factor = int(processing["smooth_factor"])
+    channel_smooth = config["channel_settings"].get(channel_key, {}).get(
+        "smooth_factor"
+    )
+    if channel_smooth is not None:
+        settings.smooth_factor = int(channel_smooth)
     settings.artifact_405 = _threshold_value(processing["artifact_405"])
     settings.artifact_465 = _threshold_value(processing["artifact_465"])
+    settings.use_isosbestic = bool(processing["use_isosbestic"])
+    settings.polynomial_degree = int(processing["polynomial_degree"])
     return settings
 
 
@@ -640,6 +840,8 @@ def settings_summary(settings: ProcessingSettings) -> dict[str, Any]:
         "smooth_factor": settings.smooth_factor,
         "artifact_405": _json_threshold(settings.artifact_405),
         "artifact_465": _json_threshold(settings.artifact_465),
+        "use_isosbestic": settings.use_isosbestic,
+        "polynomial_degree": settings.polynomial_degree,
         "plot_smoothed": settings.plot_smooth,
         "baseline_correction": settings.set_baseline,
     }
@@ -686,6 +888,30 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def parse_channel_smooth_override(value: str) -> tuple[str, int]:
+    channel, separator, raw_factor = value.partition("=")
+    channel = channel.strip()
+    if not separator or not channel or not _is_positive_integer(raw_factor):
+        raise ConfigError(
+            f"invalid --channel-smooth value '{value}'; expected CHANNEL=FACTOR "
+            "with an integer factor of at least 1"
+        )
+    return channel, int(raw_factor)
+
+
+def _is_positive_integer(value: Any) -> bool:
+    try:
+        integer = int(value)
+        return float(value) == integer and integer >= 1
+    except (TypeError, ValueError):
+        return False
+
+
+def _flatten(values: Iterable[Iterable[str]]) -> Iterable[str]:
+    for group in values:
+        yield from group
 
 
 def _json_safe(value: Any) -> Any:

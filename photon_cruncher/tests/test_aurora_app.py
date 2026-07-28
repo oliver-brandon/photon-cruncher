@@ -179,6 +179,8 @@ class AuroraAppTests(unittest.TestCase):
                     "settings": {
                         "baseline_start": -3,
                         "baseline_end": -1,
+                        "use_isosbestic": False,
+                        "polynomial_degree": 3,
                     },
                     "output_dir": "/exports",
                     "export_csv": True,
@@ -195,6 +197,8 @@ class AuroraAppTests(unittest.TestCase):
         self.assertTrue(kwargs["per_session_subdir"])
         settings = kwargs["settings_factory"]("A_465")
         self.assertEqual(settings.baseline_per, (-3.0, -1.0))
+        self.assertFalse(settings.use_isosbestic)
+        self.assertEqual(settings.polynomial_degree, 3)
         self.assertEqual(payload["input_count"], 2)
         self.assertEqual(payload["exports"][0]["channel"], "A_465")
 

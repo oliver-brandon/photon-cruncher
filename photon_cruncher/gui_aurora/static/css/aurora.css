@@ -671,6 +671,12 @@ h1 {
 .processing-details .field-grid {
   margin-top: 12px;
 }
+.field.is-disabled {
+  opacity: 0.5;
+}
+.field.is-disabled input {
+  cursor: not-allowed;
+}
 .selector-option {
   display: flex;
   align-items: center;

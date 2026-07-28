@@ -91,11 +91,28 @@ photon-cruncher-cli inspect local-test-data --json
 ```bash
 photon-cruncher-cli analyze local-test-data \
   --output-dir exports/agentic-run \
-  --epoc aRw_ \
+  --all-epocs \
+  --epoc-policy prefer-left \
   --channel A_465 \
+  --channel-smooth A_465=10 \
+  --use-isosbestic \
+  --polynomial-degree 1 \
   --export both \
   --figure-format png
 ```
+
+The CLI uses the paired 405 isosbestic fit by default with polynomial degree
+`1`. Use `--polynomial-degree N` to change the fit degree, or
+`--no-isosbestic` to skip the 405 fit and process the selected signal channel
+directly. Reusable JSON configs accept the corresponding processing fields:
+`"use_isosbestic": true` and `"polynomial_degree": 1`.
+
+Use `--channel-smooth CHANNEL=FACTOR` for channel-specific smoothing. Use
+`--all-epocs` to analyze every available epoc, optionally with
+`--epoc-policy prefer-left` (A/1_) or `--epoc-policy prefer-right` (C/2_).
+The symmetric `--plot-smoothed` / `--plot-raw`,
+`--baseline-correction` / `--no-baseline-correction`, artifact reset, and
+`--default-smoothing` flags can override either state from a JSON config.
 
 ```bash
 photon-cruncher-cli validate-config analysis-config.json

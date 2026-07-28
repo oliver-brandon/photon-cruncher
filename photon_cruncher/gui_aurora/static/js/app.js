@@ -36,6 +36,8 @@
       downsample_factor: 10,
       plot_smoothed: true,
       baseline_correction: true,
+      use_isosbestic: true,
+      polynomial_degree: 1,
     },
     trialSettings: {
       trange_start: -2,
@@ -46,6 +48,8 @@
       downsample_factor: 10,
       plot_smoothed: true,
       baseline_correction: true,
+      use_isosbestic: true,
+      polynomial_degree: 1,
     },
     ready: false,
     apiBase: "",
@@ -205,12 +209,14 @@
       b1: state.settings.baseline_end,
       baseAdjust: state.settings.baseline_adjust,
       downsample: state.settings.downsample_factor,
+      polynomialDegree: state.settings.polynomial_degree,
       trialTr0: state.trialSettings.trange_start,
       trialTr1: state.trialSettings.trange_end,
       trialB0: state.trialSettings.baseline_start,
       trialB1: state.trialSettings.baseline_end,
       trialBaseAdjust: state.trialSettings.baseline_adjust,
       trialDownsample: state.trialSettings.downsample_factor,
+      trialPolynomialDegree: state.trialSettings.polynomial_degree,
     };
     Object.entries(values).forEach(([id, value]) => {
       if ($(id) && value != null) $(id).value = value;
@@ -218,10 +224,16 @@
     if ($("plotSmooth")) $("plotSmooth").checked = !!state.settings.plot_smoothed;
     if ($("applyBaseline"))
       $("applyBaseline").checked = !!state.settings.baseline_correction;
+    if ($("useIsosbestic"))
+      $("useIsosbestic").checked = !!state.settings.use_isosbestic;
     if ($("trialPlotSmooth"))
       $("trialPlotSmooth").checked = !!state.trialSettings.plot_smoothed;
     if ($("trialApplyBaseline"))
       $("trialApplyBaseline").checked = !!state.trialSettings.baseline_correction;
+    if ($("trialUseIsosbestic"))
+      $("trialUseIsosbestic").checked = !!state.trialSettings.use_isosbestic;
+    syncIsosbesticControls(false);
+    syncIsosbesticControls(true);
   }
 
   async function restoreProcessingSettings() {
@@ -279,6 +291,10 @@
     state.settings.baseline_end = Number($("b1")?.value ?? -1);
     state.settings.baseline_adjust = Number($("baseAdjust")?.value ?? -2);
     state.settings.downsample_factor = Number($("downsample")?.value ?? 10);
+    state.settings.polynomial_degree = Math.max(
+      1,
+      Math.round(Number($("polynomialDegree")?.value ?? 1))
+    );
     if (state.activeChannel) {
       state.smoothByChannel[state.activeChannel] = Math.max(
         1,
@@ -287,6 +303,8 @@
     }
     state.settings.plot_smoothed = !!$("plotSmooth")?.checked;
     state.settings.baseline_correction = !!$("applyBaseline")?.checked;
+    state.settings.use_isosbestic = !!$("useIsosbestic")?.checked;
+    syncIsosbesticControls(false);
     persistProcessingSettings();
   }
 
@@ -301,6 +319,10 @@
     state.trialSettings.downsample_factor = Number(
       $("trialDownsample")?.value ?? 10
     );
+    state.trialSettings.polynomial_degree = Math.max(
+      1,
+      Math.round(Number($("trialPolynomialDegree")?.value ?? 1))
+    );
     if (state.trialChannel) {
       state.trialSmoothByChannel[state.trialChannel] = Math.max(
         1,
@@ -309,7 +331,18 @@
     }
     state.trialSettings.plot_smoothed = !!$("trialPlotSmooth")?.checked;
     state.trialSettings.baseline_correction = !!$("trialApplyBaseline")?.checked;
+    state.trialSettings.use_isosbestic = !!$("trialUseIsosbestic")?.checked;
+    syncIsosbesticControls(true);
     persistProcessingSettings();
+  }
+
+  function syncIsosbesticControls(trial) {
+    const toggle = $(trial ? "trialUseIsosbestic" : "useIsosbestic");
+    const input = $(trial ? "trialPolynomialDegree" : "polynomialDegree");
+    const field = $(trial ? "trialPolynomialDegreeField" : "polynomialDegreeField");
+    const enabled = !!toggle?.checked;
+    if (input) input.disabled = !enabled;
+    field?.classList.toggle("is-disabled", !enabled);
   }
 
   function trialSettingsPayload() {
@@ -323,6 +356,8 @@
       downsample_factor: state.trialSettings.downsample_factor,
       plot_smoothed: state.trialSettings.plot_smoothed,
       baseline_correction: state.trialSettings.baseline_correction,
+      use_isosbestic: state.trialSettings.use_isosbestic,
+      polynomial_degree: state.trialSettings.polynomial_degree,
     };
   }
 
@@ -347,6 +382,8 @@
       downsample_factor: state.settings.downsample_factor,
       plot_smoothed: state.settings.plot_smoothed,
       baseline_correction: state.settings.baseline_correction,
+      use_isosbestic: state.settings.use_isosbestic,
+      polynomial_degree: state.settings.polynomial_degree,
     };
   }
 
@@ -724,6 +761,8 @@
       "baseAdjust",
       "downsample",
       "smoothFactor",
+      "polynomialDegree",
+      "useIsosbestic",
       "plotSmooth",
       "applyBaseline",
     ].forEach((id) => $(id)?.addEventListener("change", readSettingsFromForm));
@@ -789,6 +828,8 @@
       $("b1").value = -1;
       $("baseAdjust").value = -2;
       $("downsample").value = 10;
+      $("polynomialDegree").value = 1;
+      $("useIsosbestic").checked = true;
       if (state.activeChannel) {
         const defaultSmooth = defaultSmoothForChannel(state.activeChannel);
         state.smoothByChannel[state.activeChannel] = defaultSmooth;
@@ -882,6 +923,11 @@
     setBadge();
   }
 
+  function correctionSummary(result) {
+    if (result.settings?.use_isosbestic === false) return "signal only";
+    return `405 fit · degree ${result.settings?.polynomial_degree ?? 1}`;
+  }
+
   function renderAlign() {
     if (!hasResults()) {
       clearCanvas($("alignTrace"));
@@ -917,7 +963,8 @@
       $("rN").textContent = String(result.num_trials || z.length);
     }
     $("alignTag").textContent = result.epoc || "epoc";
-    $("alignSummary").textContent = `${result.num_trials || 0} trials · ${result.channel}`;
+    $("alignSummary").textContent =
+      `${result.num_trials || 0} trials · ${result.channel} · ${correctionSummary(result)}`;
     $("hudTrials").textContent = String(result.num_trials || 0);
     const notices = [];
     const dropped = result.dropped_edge_trials || [];
@@ -951,6 +998,8 @@
       "trialBaseAdjust",
       "trialDownsample",
       "trialSmoothFactor",
+      "trialPolynomialDegree",
+      "trialUseIsosbestic",
       "trialPlotSmooth",
       "trialApplyBaseline",
     ].forEach((id) => $(id)?.addEventListener("change", readTrialSettingsFromForm));
@@ -1250,7 +1299,8 @@
       color: "#00f5d4",
     });
     window.AuroraPlots.drawHeat($("trialHeat"), { times, matrix: z });
-    $("trialSummary").textContent = `${result.num_trials || z.length} trials · ${key}`;
+    $("trialSummary").textContent =
+      `${result.num_trials || z.length} trials · ${key} · ${correctionSummary(result)}`;
   }
 
   function sessionEpocChoices() {

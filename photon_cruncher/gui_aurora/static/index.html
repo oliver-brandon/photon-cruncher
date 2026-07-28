@@ -187,7 +187,9 @@
                     <label class="field"><span>Baseline adjust</span><input id="baseAdjust" type="number" min="-120" max="0" step="0.1" value="-2" /></label>
                     <label class="field"><span>Downsample</span><input id="downsample" type="number" min="1" max="200" step="1" value="10" /></label>
                     <label class="field"><span>Smoothing window</span><input id="smoothFactor" type="number" min="1" step="1" value="10" /></label>
+                    <label class="field" id="polynomialDegreeField"><span>Polynomial fit degree</span><input id="polynomialDegree" type="number" min="1" step="1" value="1" /></label>
                   </div>
+                  <label class="check"><input type="checkbox" id="useIsosbestic" checked /><span>Use 405 isosbestic fit (off = signal only)</span></label>
                   <label class="check"><input type="checkbox" id="plotSmooth" checked /><span>Plot smoothed traces</span></label>
                   <label class="check"><input type="checkbox" id="applyBaseline" checked /><span>Apply baseline correction</span></label>
                 </div>
@@ -268,7 +270,9 @@
                     <label class="field"><span>Baseline adjust</span><input id="trialBaseAdjust" type="number" min="-120" max="0" step="0.1" value="-2" /></label>
                     <label class="field"><span>Downsample</span><input id="trialDownsample" type="number" min="1" max="200" step="1" value="10" /></label>
                     <label class="field"><span>Smoothing window</span><input id="trialSmoothFactor" type="number" min="1" step="1" value="10" /></label>
+                    <label class="field" id="trialPolynomialDegreeField"><span>Polynomial fit degree</span><input id="trialPolynomialDegree" type="number" min="1" step="1" value="1" /></label>
                   </div>
+                  <label class="check"><input type="checkbox" id="trialUseIsosbestic" checked /><span>Use 405 isosbestic fit (off = signal only)</span></label>
                   <label class="check"><input type="checkbox" id="trialPlotSmooth" checked /><span>Plot smoothed traces</span></label>
                   <label class="check"><input type="checkbox" id="trialApplyBaseline" checked /><span>Apply baseline correction</span></label>
                 </details>

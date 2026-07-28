@@ -22,6 +22,8 @@ class ProcessingSettings:
     smooth_factor: int = 10
     artifact_405: float = np.inf
     artifact_465: float = np.inf
+    use_isosbestic: bool = True
+    polynomial_degree: int = 1
 
 
 @dataclass
@@ -192,16 +194,8 @@ def process_channel(
     epoc: Epoc,
     settings: ProcessingSettings,
 ) -> ProcessedSignal:
-    stream_405 = session.streams[iso_stream]
     stream_465 = session.streams[signal_stream]
 
-    extracted_405 = _extract_trials_with_edge_drops(
-        stream_405.data,
-        stream_405.fs,
-        epoc.onset,
-        settings.trange,
-        stream_405.t0,
-    )
     extracted_465 = _extract_trials_with_edge_drops(
         stream_465.data,
         stream_465.fs,
@@ -209,57 +203,111 @@ def process_channel(
         settings.trange,
         stream_465.t0,
     )
-    trials_by_number_405 = dict(zip(extracted_405.trial_numbers, extracted_405.trials))
     trials_by_number_465 = dict(zip(extracted_465.trial_numbers, extracted_465.trials))
-    kept_trial_numbers = sorted(
-        set(trials_by_number_405).intersection(trials_by_number_465)
-    )
-    trials_405 = [trials_by_number_405[number] for number in kept_trial_numbers]
-    trials_465 = [trials_by_number_465[number] for number in kept_trial_numbers]
-    dropped_edge_trials = sorted(
-        set(extracted_405.dropped_edge_trials) | set(extracted_465.dropped_edge_trials)
-    )
+    if settings.use_isosbestic:
+        if settings.polynomial_degree < 1:
+            raise ValueError("Polynomial fit degree must be at least 1.")
+        stream_405 = session.streams[iso_stream]
+        extracted_405 = _extract_trials_with_edge_drops(
+            stream_405.data,
+            stream_405.fs,
+            epoc.onset,
+            settings.trange,
+            stream_405.t0,
+        )
+        trials_by_number_405 = dict(
+            zip(extracted_405.trial_numbers, extracted_405.trials)
+        )
+        kept_trial_numbers = sorted(
+            set(trials_by_number_405).intersection(trials_by_number_465)
+        )
+        trials_405 = [
+            trials_by_number_405[number] for number in kept_trial_numbers
+        ]
+        trials_465 = [
+            trials_by_number_465[number] for number in kept_trial_numbers
+        ]
+        dropped_edge_trials = sorted(
+            set(extracted_405.dropped_edge_trials)
+            | set(extracted_465.dropped_edge_trials)
+        )
 
-    if not trials_405 or not trials_465:
-        raise ValueError("No complete trials remain after dropping edge trials.")
+        if not trials_405 or not trials_465:
+            raise ValueError("No complete trials remain after dropping edge trials.")
 
-    good_405 = _artifact_mask(trials_405, settings.artifact_405)
-    good_465 = _artifact_mask(trials_465, settings.artifact_465)
-    num_artifacts = int((~good_405).sum() + (~good_465).sum())
-    good_trials = good_405 & good_465
-    trials_405 = [
-        trial for trial, keep in zip(trials_405, good_trials) if keep
-    ]
-    trials_465 = [
-        trial for trial, keep in zip(trials_465, good_trials) if keep
-    ]
-    kept_trial_numbers = [
-        number for number, keep in zip(kept_trial_numbers, good_trials) if keep
-    ]
+        good_405 = _artifact_mask(trials_405, settings.artifact_405)
+        good_465 = _artifact_mask(trials_465, settings.artifact_465)
+        num_artifacts = int((~good_405).sum() + (~good_465).sum())
+        good_trials = good_405 & good_465
+        trials_405 = [
+            trial for trial, keep in zip(trials_405, good_trials) if keep
+        ]
+        trials_465 = [
+            trial for trial, keep in zip(trials_465, good_trials) if keep
+        ]
+        kept_trial_numbers = [
+            number
+            for number, keep in zip(kept_trial_numbers, good_trials)
+            if keep
+        ]
 
-    if not trials_405 or not trials_465:
-        raise ValueError("No trials remain after artifact removal.")
+        if not trials_405 or not trials_465:
+            raise ValueError("No trials remain after artifact removal.")
 
-    min_len_405 = min(trial.size for trial in trials_405)
-    min_len_465 = min(trial.size for trial in trials_465)
-    trials_405 = _trim_trials(trials_405, min_len_405)
-    trials_465 = _trim_trials(trials_465, min_len_465)
+        min_len_405 = min(trial.size for trial in trials_405)
+        min_len_465 = min(trial.size for trial in trials_465)
+        trials_405 = _trim_trials(trials_405, min_len_405)
+        trials_465 = _trim_trials(trials_465, min_len_465)
 
-    f405 = _downsample_trials(trials_405, settings.downsample_factor)
-    f465 = _downsample_trials(trials_465, settings.downsample_factor)
-    common_length = min(f405.shape[1], f465.shape[1])
-    f405 = f405[:, :common_length]
-    f465 = f465[:, :common_length]
+        f405 = _downsample_trials(trials_405, settings.downsample_factor)
+        f465 = _downsample_trials(trials_465, settings.downsample_factor)
+        common_length = min(f405.shape[1], f465.shape[1])
+        f405 = f405[:, :common_length]
+        f465 = f465[:, :common_length]
+    else:
+        kept_trial_numbers = list(extracted_465.trial_numbers)
+        dropped_edge_trials = list(extracted_465.dropped_edge_trials)
+        trials_465 = list(extracted_465.trials)
+        if not trials_465:
+            raise ValueError("No complete trials remain after dropping edge trials.")
+
+        good_465 = _artifact_mask(trials_465, settings.artifact_465)
+        num_artifacts = int((~good_465).sum())
+        trials_465 = [
+            trial for trial, keep in zip(trials_465, good_465) if keep
+        ]
+        kept_trial_numbers = [
+            number
+            for number, keep in zip(kept_trial_numbers, good_465)
+            if keep
+        ]
+        if not trials_465:
+            raise ValueError("No trials remain after artifact removal.")
+
+        min_len_465 = min(trial.size for trial in trials_465)
+        trials_465 = _trim_trials(trials_465, min_len_465)
+        f465 = _downsample_trials(trials_465, settings.downsample_factor)
 
     min_length2 = f465.shape[1]
     ts2 = settings.trange[0] + (
         np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor
     )
 
-    # MATLAB-faithful control->signal regression on Fortran-order flattened trials.
-    bls = np.polyfit(f465.flatten(order="F"), f405.flatten(order="F"), 1)
-    y_fit_all = bls[0] * f405 + bls[1]
-    y_df_all = f465 - y_fit_all
+    if settings.use_isosbestic:
+        if settings.polynomial_degree >= f405.size:
+            raise ValueError(
+                "Polynomial fit degree must be smaller than the number of fitted samples."
+            )
+        # MATLAB-faithful control->signal regression on Fortran-order flattened trials.
+        bls = np.polyfit(
+            f465.flatten(order="F"),
+            f405.flatten(order="F"),
+            settings.polynomial_degree,
+        )
+        y_fit_all = np.polyval(bls, f405)
+        y_df_all = f465 - y_fit_all
+    else:
+        y_df_all = f465
 
     baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
     zall = _zscore_trials(y_df_all, baseline_mask)

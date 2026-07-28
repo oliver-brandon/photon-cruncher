@@ -129,6 +129,8 @@ class AuroraBridge(QtCore.QObject):
             "downsample_factor": 10,
             "plot_smoothed": True,
             "baseline_correction": True,
+            "use_isosbestic": True,
+            "polynomial_degree": 1,
             "channel_smoothing": {},
         }
         raw = str(settings.value("processing/settings_json", "") or "")
@@ -149,17 +151,23 @@ class AuroraBridge(QtCore.QObject):
                 "downsample_factor": "processing/downsample_factor",
                 "plot_smoothed": "processing/plot_smooth",
                 "baseline_correction": "processing/set_baseline",
+                "use_isosbestic": "processing/use_isosbestic",
+                "polynomial_degree": "processing/polynomial_degree",
             }
             for key, legacy_key in legacy_keys.items():
                 value = settings.value(legacy_key)
                 if value is not None:
-                    if key in {"plot_smoothed", "baseline_correction"}:
+                    if key in {
+                        "plot_smoothed",
+                        "baseline_correction",
+                        "use_isosbestic",
+                    }:
                         value = (
                             value
                             if isinstance(value, bool)
                             else str(value).lower() in {"1", "true", "yes", "on"}
                         )
-                    elif key == "downsample_factor":
+                    elif key in {"downsample_factor", "polynomial_degree"}:
                         value = int(value)
                     else:
                         value = float(value)
@@ -193,6 +201,8 @@ class AuroraBridge(QtCore.QObject):
                 "processing/downsample_factor": payload.get("downsample_factor"),
                 "processing/plot_smooth": payload.get("plot_smoothed"),
                 "processing/set_baseline": payload.get("baseline_correction"),
+                "processing/use_isosbestic": payload.get("use_isosbestic"),
+                "processing/polynomial_degree": payload.get("polynomial_degree"),
             }
             for key, value in legacy_values.items():
                 if value is not None:

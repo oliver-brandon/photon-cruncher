@@ -445,6 +445,52 @@ class LoaderTests(unittest.TestCase):
         payload = json.loads(stdout)
         self.assertTrue(payload["valid"])
         self.assertEqual(payload["config"]["processing"]["baseline_adjust"], -2.0)
+        self.assertTrue(payload["config"]["processing"]["use_isosbestic"])
+        self.assertEqual(payload["config"]["processing"]["polynomial_degree"], 1)
+
+    def test_cli_validate_config_preserves_isosbestic_settings(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "processing": {
+                "use_isosbestic": False,
+                "polynomial_degree": 3,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        processing = json.loads(stdout)["config"]["processing"]
+        self.assertFalse(processing["use_isosbestic"])
+        self.assertEqual(processing["polynomial_degree"], 3)
+
+    def test_cli_validate_config_rejects_bad_polynomial_degree(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "processing": {"polynomial_degree": 0},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(stdout)
+        self.assertIn("polynomial_degree", payload["errors"][0]["message"])
 
     def test_cli_validate_config_rejects_bad_trange(self) -> None:
         config = {
@@ -540,6 +586,229 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["results"][0]["num_trials"], 2)
         self.assertEqual(payload["results"][0]["settings"]["baseline_adjust"], -2.0)
+
+    def test_cli_analyze_accepts_signal_only_and_polynomial_flags(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(
+                [
+                    "analyze",
+                    "synthetic.mat",
+                    "--epoc",
+                    "Cue",
+                    "--channel",
+                    "A_465",
+                    "--no-isosbestic",
+                    "--polynomial-degree",
+                    "3",
+                    "--artifact-405",
+                    "0",
+                    "--baseline-start",
+                    "-2",
+                    "--baseline-end",
+                    "-0.5",
+                    "--downsample-factor",
+                    "1",
+                    "--export",
+                    "none",
+                ]
+            )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        settings = json.loads(stdout)["results"][0]["settings"]
+        self.assertFalse(settings["use_isosbestic"])
+        self.assertEqual(settings["polynomial_degree"], 3)
+
+    def test_cli_analyze_applies_polynomial_degree_with_isosbestic(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(
+                [
+                    "analyze",
+                    "synthetic.mat",
+                    "--epoc",
+                    "Cue",
+                    "--channel",
+                    "A_465",
+                    "--use-isosbestic",
+                    "--polynomial-degree",
+                    "2",
+                    "--baseline-start",
+                    "-2",
+                    "--baseline-end",
+                    "-0.5",
+                    "--downsample-factor",
+                    "1",
+                    "--export",
+                    "none",
+                ]
+            )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        settings = json.loads(stdout)["results"][0]["settings"]
+        self.assertTrue(settings["use_isosbestic"])
+        self.assertEqual(settings["polynomial_degree"], 2)
+
+    def test_cli_use_isosbestic_flag_overrides_config(self) -> None:
+        from photon_cruncher import cli
+
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--epoc",
+                "Cue",
+                "--use-isosbestic",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(
+            args,
+            {"processing": {"use_isosbestic": False}},
+        )
+
+        self.assertTrue(config["processing"]["use_isosbestic"])
+
+    def test_cli_symmetric_flags_and_resets_override_config(self) -> None:
+        from photon_cruncher import cli
+
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--epoc",
+                "Cue",
+                "--plot-smoothed",
+                "--baseline-correction",
+                "--default-smoothing",
+                "--no-artifact-405",
+                "--no-artifact-465",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(
+            args,
+            {
+                "processing": {
+                    "plot_smoothed": False,
+                    "baseline_correction": False,
+                    "smooth_factor": 25,
+                    "artifact_405": 2.0,
+                    "artifact_465": 3.0,
+                }
+            },
+        )
+
+        self.assertTrue(config["processing"]["plot_smoothed"])
+        self.assertTrue(config["processing"]["baseline_correction"])
+        self.assertIsNone(config["processing"]["smooth_factor"])
+        self.assertIsNone(config["processing"]["artifact_405"])
+        self.assertIsNone(config["processing"]["artifact_465"])
+
+    def test_cli_channel_smoothing_overrides_global_smoothing(self) -> None:
+        from photon_cruncher import cli
+
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--epoc",
+                "Cue",
+                "--smooth-factor",
+                "5",
+                "--channel-smooth",
+                "A_465=17",
+                "C_465=23",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(args, {})
+        cli.validate_analyze_config(config)
+
+        self.assertEqual(cli.build_settings(config, "A_465").smooth_factor, 17)
+        self.assertEqual(cli.build_settings(config, "C_465").smooth_factor, 23)
+        self.assertEqual(cli.build_settings(config, "A_560").smooth_factor, 5)
+
+    def test_cli_all_epocs_policy_prefers_available_pair_side(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        session.epocs = {
+            "CueA": Epoc(name="CueA", onset=np.array([10.0])),
+            "CueC": Epoc(name="CueC", onset=np.array([20.0])),
+            "Reward1_": Epoc(name="Reward1_", onset=np.array([10.0])),
+            "Reward2_": Epoc(name="Reward2_", onset=np.array([20.0])),
+            "Solo": Epoc(name="Solo", onset=np.array([30.0])),
+        }
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--all-epocs",
+                "--epoc-policy",
+                "prefer-right",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(args, {})
+        cli.validate_analyze_config(config)
+
+        self.assertEqual(
+            set(cli.epoc_names_for_config(session, config)),
+            {"CueC", "Reward2_", "Solo"},
+        )
+
+    def test_cli_validate_config_accepts_all_epocs_and_channel_settings(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "all_epocs": True,
+            "epoc_policy": "prefer_left",
+            "channel_settings": {
+                "A_465": {"smooth_factor": 11},
+                "C_465": {"smooth_factor": 21},
+            },
+            "exports": {"csv": False, "figures": False},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["config"]["all_epocs"])
+        self.assertEqual(
+            payload["config"]["channel_settings"]["C_465"]["smooth_factor"],
+            21,
+        )
 
     def test_cli_analyze_classified_source_filters_trial_type(self) -> None:
         from photon_cruncher import cli

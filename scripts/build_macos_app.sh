@@ -55,7 +55,9 @@ fi
 
 mkdir -p "${project_root}/dist/${zip_stem}"
 rm -rf "${project_root}/dist/${zip_stem:?}/"*
-cp -R "${project_root}/dist/${app_name}.app" "${project_root}/dist/${zip_stem}/"
+ditto \
+  "${project_root}/dist/${app_name}.app" \
+  "${project_root}/dist/${zip_stem}/${app_name}.app"
 if [[ -f "${project_root}/dist/photon-cruncher-cli" ]]; then
   cp "${project_root}/dist/photon-cruncher-cli" "${project_root}/dist/${zip_stem}/"
 fi

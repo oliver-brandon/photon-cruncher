@@ -79,6 +79,25 @@ class ServiceFacadeTests(unittest.TestCase):
         self.assertEqual(len(payload["times"]), result.processed.ts.size)
         self.assertEqual(len(payload["mean"]), result.processed.ts.size)
         self.assertEqual(len(payload["z"]), result.processed.zall.shape[0])
+        self.assertTrue(payload["settings"]["use_isosbestic"])
+        self.assertEqual(payload["settings"]["polynomial_degree"], 1)
+
+    def test_isosbestic_settings_overrides(self) -> None:
+        settings = service.settings_for_channel(
+            "A_465",
+            overrides={
+                "use_isosbestic": False,
+                "polynomial_degree": 3,
+            },
+        )
+        self.assertFalse(settings.use_isosbestic)
+        self.assertEqual(settings.polynomial_degree, 3)
+
+        with self.assertRaisesRegex(ValueError, "polynomial_degree"):
+            service.settings_for_channel(
+                "A_465",
+                overrides={"polynomial_degree": 0},
+            )
 
     def test_export_result_writes_csv(self) -> None:
         session = self._session()

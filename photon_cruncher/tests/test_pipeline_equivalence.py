@@ -98,6 +98,63 @@ class PipelineEquivalenceTests(unittest.TestCase):
             atol=1e-12,
         )
 
+    def test_signal_only_processing_does_not_access_isosbestic_stream(self) -> None:
+        session = _golden_session()
+        settings = _golden_settings()
+        settings.use_isosbestic = False
+        settings.artifact_405 = 0.0
+
+        processed = process_channel(
+            session=session,
+            iso_stream="missing-isosbestic-stream",
+            signal_stream="x465A",
+            epoc=session.epocs["Cue"],
+            settings=settings,
+        )
+
+        self.assertEqual(processed.trial_numbers, [1, 2, 3, 4])
+        self.assertEqual(processed.dropped_edge_trials, [5])
+        self.assertEqual(processed.num_artifacts, 0)
+        self.assertTrue(np.isfinite(processed.zall).all())
+
+    def test_polynomial_degree_changes_isosbestic_fit(self) -> None:
+        session = _golden_session()
+        linear_settings = _golden_settings()
+        quadratic_settings = _golden_settings()
+        quadratic_settings.polynomial_degree = 2
+
+        linear = process_channel(
+            session=session,
+            iso_stream="x405A",
+            signal_stream="x465A",
+            epoc=session.epocs["Cue"],
+            settings=linear_settings,
+        )
+        quadratic = process_channel(
+            session=session,
+            iso_stream="x405A",
+            signal_stream="x465A",
+            epoc=session.epocs["Cue"],
+            settings=quadratic_settings,
+        )
+
+        self.assertEqual(linear.zall.shape, quadratic.zall.shape)
+        self.assertFalse(np.allclose(linear.zall, quadratic.zall))
+
+    def test_polynomial_degree_must_be_positive_when_fit_is_enabled(self) -> None:
+        session = _golden_session()
+        settings = _golden_settings()
+        settings.polynomial_degree = 0
+
+        with self.assertRaisesRegex(ValueError, "degree must be at least 1"):
+            process_channel(
+                session=session,
+                iso_stream="x405A",
+                signal_stream="x465A",
+                epoc=session.epocs["Cue"],
+                settings=settings,
+            )
+
     def test_export_channel_preserves_labels_and_numeric_values(self) -> None:
         session = _golden_session()
         processed = process_channel(
