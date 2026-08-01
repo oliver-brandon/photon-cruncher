@@ -475,6 +475,7 @@
     if ($("sessionMetadata"))
       $("sessionMetadata").textContent = "Open a session to inspect metadata.";
     setBadge();
+    renderImportQueue();
     renderDataPage();
     renderBatchPage();
   }
@@ -496,8 +497,112 @@
     if (existing) existing.session = session;
     else state.sources.push({ path, session });
     renderSourceSelectors();
+    renderImportQueue();
     renderBatchSelectors();
     renderBatchPage();
+  }
+
+  function renderImportQueue() {
+    const list = $("importQueue");
+    const count = $("importQueueCount");
+    const meta = $("importQueueMeta");
+    if (!list) return;
+    list.innerHTML = "";
+    if (count) count.textContent = String(state.sources.length);
+    if (meta) {
+      meta.textContent = state.sources.length
+        ? "Click a session to analyze it · multi-select adds more files"
+        : "No files loaded yet";
+    }
+    state.sources.forEach((source) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className =
+        "trial-row import-row" + (source.path === state.path ? " active" : "");
+      row.innerHTML = `
+        <span class="n">${source.path === state.path ? "●" : "○"}</span>
+        <span>${sourceLabel(source)}</span>
+        <span class="n">${(source.session?.channels || []).length} ch</span>`;
+      row.title = source.path;
+      row.addEventListener("click", async () => {
+        if (source.path === state.path) {
+          showView("align");
+          return;
+        }
+        try {
+          await activateSource(source.path, source.session);
+        } catch (err) {
+          toast(String(err.message || err));
+        }
+      });
+      list.appendChild(row);
+    });
+    if (!state.sources.length) {
+      list.innerHTML = '<div class="quiet" style="padding:8px">Open one or more MAT files to populate this list.</div>';
+    }
+  }
+
+  async function activateSource(path, sessionSummary) {
+    toast(`opening ${path.split(/[\\/]/).pop()}…`);
+    let session = sessionSummary;
+    let resolvedPath = path;
+    if (!session) {
+      const data = await api("POST", "/api/open", { path });
+      resolvedPath = data.path || path;
+      session = data.session;
+    } else {
+      // Ensure backend cache has this session as current.
+      await api("POST", "/api/open", { path: resolvedPath });
+    }
+    resetAnalysisState();
+    state.path = resolvedPath;
+    rememberSource(resolvedPath, session);
+    applySessionSummary(session, resolvedPath);
+    const epocs = Object.keys(session.epocs || {});
+    state.activeEpoc =
+      epocs.find((e) => !["tick", "cam1"].includes(String(e).toLowerCase())) ||
+      epocs[0] ||
+      (session.classified_sources || [])[0]?.key ||
+      null;
+    state.activeChannel = (session.channels || [])[0] || null;
+    await runLiveAnalyze({ force: true });
+    renderImportQueue();
+    showView("align");
+  }
+
+  async function openManyPaths(paths) {
+    const unique = [...new Set((paths || []).filter(Boolean))];
+    if (!unique.length) return;
+    toast(unique.length === 1 ? "opening…" : `opening ${unique.length} files…`);
+    const data = await api("POST", "/api/inspect-paths", { paths: unique });
+    const sources = data.sources || [];
+    sources.forEach((source) => rememberSource(source.path, source.session));
+    if (!sources.length) {
+      const detail = (data.errors || []).map((e) => e.error || e).join("; ");
+      throw new Error(detail || "no sessions could be opened");
+    }
+    const primary = sources[0];
+    await activateSource(primary.path, primary.session);
+    if ((data.errors || []).length) {
+      toast(
+        `Loaded ${sources.length}; ${data.errors.length} file(s) failed`
+      );
+    } else if (sources.length > 1) {
+      toast(`Loaded ${sources.length} files · analyzing ${sourceLabel(primary)}`);
+    }
+  }
+
+  function parsePathList(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw !== "string") return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (_) {
+      /* plain path string */
+    }
+    return raw ? [raw] : [];
   }
 
   function renderSourceSelectors() {
@@ -1483,20 +1588,23 @@
     const page = $("page-data");
     if (page) page.classList.toggle("empty-mode", !hasSession());
     if (hasSession()) {
-      openBtn.textContent = "Open another MAT file";
+      openBtn.textContent = "Add MAT files";
       closeBtn.disabled = false;
       $("dataHint").textContent =
-        "Session loaded through photon_cruncher.service. Use Align to tune windows.";
+        "Multi-select MAT files (⌘/Ctrl-click) or TDT tanks/blocks. Click a session in Imported sessions to switch analysis focus.";
       $("dataLede").textContent =
-        "Session ready. Adjust processing on Align, filter trials, then export.";
+        state.sources.length > 1
+          ? `${state.sources.length} sessions imported. Active session ready on Align / Trials / Batch.`
+          : "Session ready. Adjust processing on Align, filter trials, then export.";
     } else {
-      openBtn.textContent = "Open MAT file";
+      openBtn.textContent = "Open MAT files";
       closeBtn.disabled = true;
       $("dataHint").textContent =
-        "Use Open MAT / TDT (or File menu in the native shell) to load real photometry data.";
+        "Multi-select MAT files or TDT tank/block folders. A tank expands to every nested block.";
       $("dataLede").textContent =
-        "Open a MATLAB export or TDT block, then analyze with the shared backend.";
+        "Open one or more MATLAB exports or TDT tanks/blocks, then analyze with the shared backend.";
     }
+    renderImportQueue();
   }
 
   function renderBatchPage() {
@@ -1735,52 +1843,39 @@
   }
 
   async function openLiveSession(path) {
-    toast("opening…");
-    const data = await api("POST", "/api/open", { path });
-    resetAnalysisState();
-    state.path = data.path;
-    applySessionSummary(data.session, data.path);
-    const epocs = Object.keys(data.session.epocs || {});
-    const preferred =
-      epocs.find((e) => !["tick", "cam1"].includes(e.toLowerCase())) ||
-      epocs[0] ||
-      (data.session.classified_sources || [])[0]?.key;
-    state.activeEpoc = preferred || null;
-    state.activeChannel = (data.session.channels || [])[0] || null;
-    await runLiveAnalyze({ force: true });
-    showView("align");
-    toast(`loaded ${data.session.session_name}`);
+    await openManyPaths([path]);
   }
 
   async function handleOpen() {
     if (window.auroraBridge?.openMatDialog) {
       try {
-        const path = await bridgeCall("openMatDialog");
-        if (!path) return;
-        const raw = await bridgeCall("openSession", path);
-        const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-        if (!data.ok) throw new Error(data.error || "open failed");
-        resetAnalysisState();
-        state.path = data.path;
-        applySessionSummary(data.session, data.path);
-        const epocs = Object.keys(data.session.epocs || {});
-        state.activeEpoc =
-          epocs.find((e) => !["tick", "cam1"].includes(e.toLowerCase())) ||
-          epocs[0] ||
-          null;
-        state.activeChannel = (data.session.channels || [])[0] || null;
-        await runLiveAnalyze({ force: true });
-        showView("align");
+        const raw = await bridgeCall("openMatDialog");
+        const paths = parsePathList(raw);
+        if (!paths.length) return;
+        await openManyPaths(paths);
       } catch (e) {
         toast(String(e.message || e));
       }
       return;
     }
-    // Browser mode without native bridge: ask for path
-    const path = prompt("Path to MAT file or TDT block folder:", "") || "";
-    if (!path) return;
+    // Browser mode: native multi file picker when possible
+    const input = $("matFileInput");
+    if (input) {
+      input.value = "";
+      input.click();
+      return;
+    }
+    const raw = prompt(
+      "Path(s) to MAT file or TDT block (comma or newline separated):",
+      ""
+    );
+    if (!raw) return;
+    const paths = raw
+      .split(/[\n,]/)
+      .map((p) => p.trim())
+      .filter(Boolean);
     try {
-      await openLiveSession(path);
+      await openManyPaths(paths);
     } catch (e) {
       toast(String(e.message || e));
     }
@@ -1805,10 +1900,33 @@
       showView(message.page);
       return;
     }
+    if (message.type === "sessions") {
+      const primary = message.primary || {};
+      const extras = message.sources || [];
+      if (primary.path && primary.session) {
+        rememberSource(primary.path, primary.session);
+        resetAnalysisState();
+        state.path = primary.path;
+        applySessionSummary(primary.session, primary.path);
+      }
+      extras.forEach((source) => rememberSource(source.path, source.session));
+      renderImportQueue();
+      renderDataPage();
+      if (primary.path) {
+        runLiveAnalyze({ force: true })
+          .then(() => showView("align"))
+          .catch((e) => toast(String(e.message || e)));
+      }
+      return;
+    }
     if (message.type === "session") {
       if (message.path && message.path !== state.path) resetAnalysisState();
       state.path = message.path;
-      if (message.session) applySessionSummary(message.session, message.path);
+      if (message.session) {
+        rememberSource(message.path, message.session);
+        applySessionSummary(message.session, message.path);
+      }
+      renderImportQueue();
       renderDataPage();
       return;
     }
@@ -1857,31 +1975,58 @@
     });
     $("openSessionBtn").addEventListener("click", handleOpen);
     $("closeSessionBtn").addEventListener("click", handleClose);
+    $("matFileInput")?.addEventListener("change", async () => {
+      const input = $("matFileInput");
+      const files = Array.from(input?.files || []);
+      if (!files.length) return;
+      // Browser file inputs only give File objects; path access is unavailable in pure web.
+      // Prefer name-based prompt of absolute paths when not in shell.
+      if (window.auroraBridge) return;
+      const names = files.map((f) => f.name).join("\n");
+      const raw = prompt(
+        "Browser mode cannot read local paths from the file picker.\n" +
+          "Paste absolute path(s) for the selected file(s):\n\n" +
+          names,
+        ""
+      );
+      if (!raw) return;
+      const paths = raw
+        .split(/[\n,]/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      try {
+        await openManyPaths(paths);
+      } catch (e) {
+        toast(String(e.message || e));
+      }
+    });
     $("openTdtBtn")?.addEventListener("click", async () => {
       if (window.auroraBridge?.openTdtDialog) {
         try {
-          const path = await bridgeCall("openTdtDialog");
-          if (!path) return;
-          const raw = await bridgeCall("openSession", path);
-          const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-          if (!data.ok) throw new Error(data.error || "open failed");
-          resetAnalysisState();
-          state.path = data.path;
-          applySessionSummary(data.session, data.path);
-          const epocs = Object.keys(data.session.epocs || {});
-          state.activeEpoc =
-            epocs.find((e) => !["tick", "cam1"].includes(e.toLowerCase())) ||
-            epocs[0] ||
-            null;
-          state.activeChannel = (data.session.channels || [])[0] || null;
-          await runLiveAnalyze({ force: true });
-          showView("align");
+          const raw = await bridgeCall("openTdtDialog");
+          const paths = parsePathList(raw);
+          if (!paths.length) return;
+          await openManyPaths(paths);
         } catch (e) {
           toast(String(e.message || e));
         }
         return;
       }
-      handleOpen();
+      const raw = prompt(
+        "Path(s) to TDT tank or block folder (comma or newline separated).\n" +
+          "Tank folders expand to all nested blocks.",
+        ""
+      );
+      if (!raw) return;
+      const paths = raw
+        .split(/[\n,]/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      try {
+        await openManyPaths(paths);
+      } catch (e) {
+        toast(String(e.message || e));
+      }
     });
     window.addEventListener("keydown", (e) => {
       if (e.metaKey || e.ctrlKey) {

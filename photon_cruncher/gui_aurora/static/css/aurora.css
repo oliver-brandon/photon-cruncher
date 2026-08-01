@@ -583,6 +583,21 @@ h1 {
 }
 .trial-row .n { font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .trial-row.artifact { color: #ffb4d4; }
+button.import-row {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+button.import-row.active {
+  border-color: rgba(0, 245, 212, 0.35);
+  background: rgba(0, 245, 212, 0.08);
+  color: var(--ink);
+}
+#importQueue {
+  max-height: 220px;
+  margin-top: 8px;
+}
 
 .batch-grid {
   display: grid;

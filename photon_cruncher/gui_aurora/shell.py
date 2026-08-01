@@ -19,9 +19,57 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from photon_cruncher.gui_aurora.server import serve_in_background
-from photon_cruncher.io.loader import discover_tdt_block_paths
+from photon_cruncher.io.loader import discover_tdt_block_paths, is_tdt_block_path
 from photon_cruncher.product import aurora_app_title
 from photon_cruncher.service import discover_data_sources
+
+
+def _paths_from_tdt_selection(folders: list[str] | list[Path] | list[str | Path]) -> list[str]:
+    """Expand selected tanks/blocks into unique TDT block paths."""
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for folder in folders:
+        root = Path(folder).expanduser()
+        if not root.exists():
+            continue
+        blocks = discover_tdt_block_paths(root)
+        if not blocks and is_tdt_block_path(root):
+            blocks = [root.resolve()]
+        for block in blocks:
+            key = str(block.resolve())
+            if key not in seen:
+                seen.add(key)
+                resolved.append(key)
+    return resolved
+
+
+def _pick_directories(
+    parent: QtWidgets.QWidget | None,
+    title: str,
+    *,
+    multiple: bool = True,
+) -> list[str]:
+    """Folder picker. When multiple=True, use a non-native dialog with multi-select."""
+    if not multiple:
+        path = QtWidgets.QFileDialog.getExistingDirectory(parent, title, "")
+        return [path] if path else []
+
+    dialog = QtWidgets.QFileDialog(parent, title)
+    dialog.setFileMode(QtWidgets.QFileDialog.FileMode.Directory)
+    dialog.setOption(QtWidgets.QFileDialog.Option.ShowDirsOnly, True)
+    # Native macOS/Windows pickers usually allow only one directory.
+    dialog.setOption(QtWidgets.QFileDialog.Option.DontUseNativeDialog, True)
+    dialog.setOption(QtWidgets.QFileDialog.Option.ReadOnly, True)
+
+    # Enable multi-select on the embedded list/tree views.
+    for view in dialog.findChildren(QtWidgets.QListView) + dialog.findChildren(
+        QtWidgets.QTreeView
+    ):
+        view.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+
+    if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return []
+    return [str(Path(path)) for path in dialog.selectedFiles() if path]
 
 
 class _QuietPage(QWebEnginePage):
@@ -40,13 +88,14 @@ class AuroraBridge(QtCore.QObject):
 
     @QtCore.Slot(result=str)
     def openMatDialog(self) -> str:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        """Multi-select MAT files. Returns JSON list of paths (may be empty)."""
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self._window,
-            "Open MATLAB photometry export",
+            "Open MATLAB photometry exports",
             "",
             "MATLAB (*.mat);;All files (*)",
         )
-        return path or ""
+        return json.dumps(paths)
 
     @QtCore.Slot(result=str)
     def selectMatFiles(self) -> str:
@@ -71,25 +120,22 @@ class AuroraBridge(QtCore.QObject):
 
     @QtCore.Slot(result=str)
     def selectTdtTank(self) -> str:
-        folder = QtWidgets.QFileDialog.getExistingDirectory(
+        folders = _pick_directories(
             self._window,
-            "Add TDT tank folder",
-            "",
+            "Add TDT tank folder(s) — multi-select supported",
+            multiple=True,
         )
-        if not folder:
-            return "[]"
-        return json.dumps(
-            [str(path.resolve()) for path in discover_tdt_block_paths(Path(folder))]
-        )
+        return json.dumps(_paths_from_tdt_selection(folders))
 
     @QtCore.Slot(result=str)
     def openTdtDialog(self) -> str:
-        path = QtWidgets.QFileDialog.getExistingDirectory(
+        """Multi-select TDT tanks/blocks. Tanks expand to nested blocks. JSON list."""
+        folders = _pick_directories(
             self._window,
-            "Open TDT block folder",
-            "",
+            "Open TDT tank or block folder(s) — multi-select supported",
+            multiple=True,
         )
-        return path or ""
+        return json.dumps(_paths_from_tdt_selection(folders))
 
     @QtCore.Slot(result=str)
     def savedExportDir(self) -> str:
@@ -331,11 +377,11 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         )
 
         file_menu = menu.addMenu("&File")
-        open_mat = file_menu.addAction("Open MAT File…")
+        open_mat = file_menu.addAction("Open MAT Files…")
         open_mat.setShortcut(QtGui.QKeySequence.StandardKey.Open)
         open_mat.triggered.connect(self.open_mat_file)
 
-        open_tdt = file_menu.addAction("Open TDT Block Folder…")
+        open_tdt = file_menu.addAction("Open TDT Tank / Blocks…")
         open_tdt.triggered.connect(self.open_tdt_block)
 
         file_menu.addSeparator()
@@ -436,14 +482,71 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         self._send_to_ui({"type": "goto", "page": page})
 
     def open_mat_file(self) -> None:
-        path = self._bridge.openMatDialog()
-        if path:
-            self.open_session_path(path)
+        raw = self._bridge.openMatDialog()
+        try:
+            paths = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            paths = [raw] if raw else []
+        if not paths:
+            return
+        self.open_mat_paths(paths)
+
+    def open_mat_paths(self, paths: list[str]) -> None:
+        if not paths:
+            return
+        loaded: list[dict[str, Any]] = []
+        errors: list[str] = []
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        try:
+            for path in paths:
+                try:
+                    payload = self.api("POST", "/api/open", {"path": path})
+                    if not payload.get("ok"):
+                        raise RuntimeError(payload.get("error") or "open failed")
+                    loaded.append(
+                        {
+                            "path": payload.get("path") or path,
+                            "session": payload["session"],
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"{Path(path).name}: {exc}")
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        if not loaded:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Open failed",
+                "\n".join(errors) or "No files could be opened.",
+            )
+            return
+
+        primary = loaded[0]
+        self._session_path = primary["path"]
+        self._send_to_ui(
+            {
+                "type": "sessions",
+                "paths": [item["path"] for item in loaded],
+                "primary": primary,
+                "sources": loaded[1:],
+                "toast": (
+                    f"Loaded {len(loaded)} file(s)"
+                    + (f" · {len(errors)} failed" if errors else "")
+                ),
+            }
+        )
+        self._status.showMessage(f"Loaded {len(loaded)} session(s)", 6000)
 
     def open_tdt_block(self) -> None:
-        path = self._bridge.openTdtDialog()
-        if path:
-            self.open_session_path(path)
+        raw = self._bridge.openTdtDialog()
+        try:
+            paths = json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            paths = [raw] if raw else []
+        if not paths:
+            return
+        self.open_mat_paths(paths)
 
     def open_session_path(
         self,

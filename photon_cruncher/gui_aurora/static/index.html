@@ -88,13 +88,20 @@
                 <p class="eyebrow">01 · DATA</p>
                 <h1>Session intake</h1>
                 <p class="lede" id="dataLede">
-                  Open a MATLAB export or TDT block, then analyze with the shared backend.
+                  Open a MATLAB export, TDT tank, or block folders, then analyze with the shared backend.
                 </p>
               </div>
               <div class="page-actions">
                 <button class="btn" type="button" id="closeSessionBtn" disabled>Close session</button>
-                <button class="btn" type="button" id="openTdtBtn">Open TDT block</button>
-                <button class="btn btn-primary" type="button" id="openSessionBtn">Open MAT file</button>
+                <button class="btn" type="button" id="openTdtBtn">Open TDT tanks</button>
+                <button class="btn btn-primary" type="button" id="openSessionBtn">Open MAT files</button>
+                <input
+                  id="matFileInput"
+                  type="file"
+                  accept=".mat,application/octet-stream"
+                  multiple
+                  hidden
+                />
               </div>
             </div>
 
@@ -103,6 +110,17 @@
               <div class="card stat"><span>Channels</span><strong id="statChannels">—</strong></div>
               <div class="card stat"><span>Epocs</span><strong id="statEpocs">—</strong></div>
               <div class="card stat"><span>Trials</span><strong id="hudTrials">—</strong></div>
+            </div>
+
+            <div class="card" id="importQueueCard" style="margin-bottom: 14px">
+              <div class="field-label-row">
+                <div>
+                  <div class="card-title" style="margin-bottom: 0">Imported sessions</div>
+                  <div class="quiet" id="importQueueMeta">No files loaded yet</div>
+                </div>
+                <span class="chip" id="importQueueCount">0</span>
+              </div>
+              <div class="trial-list" id="importQueue" role="list"></div>
             </div>
 
             <div class="split equal">
@@ -118,7 +136,7 @@
                 <div class="card-title">Epocs & classified sources</div>
                 <div class="chip-cloud" id="epocChips"><span class="quiet">—</span></div>
                 <p class="quiet" style="margin-top: 14px" id="dataHint">
-                  Use Open MAT / TDT (or File menu in the native shell) to load real photometry data.
+                  Multi-select MAT files (⌘/Ctrl-click) or TDT tank/block folders. A tank expands to all nested blocks.
                 </p>
               </div>
             </div>
