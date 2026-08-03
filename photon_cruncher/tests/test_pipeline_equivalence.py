@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -140,6 +141,72 @@ class PipelineEquivalenceTests(unittest.TestCase):
 
         self.assertEqual(linear.zall.shape, quadratic.zall.shape)
         self.assertFalse(np.allclose(linear.zall, quadratic.zall))
+
+    def test_linear_control_artifact_is_removed_by_linear_fit(self) -> None:
+        fs = 20.0
+        time = np.arange(0.0, 40.0, 1.0 / fs)
+        control = 1.0 + 0.15 * np.sin(time) + 0.01 * time
+        signal = 2.5 + 1.8 * control
+        session = PhotometrySession(
+            streams={
+                "x405A": Stream("x405A", fs, control),
+                "x465A": Stream("x465A", fs, signal),
+            },
+            epocs={"Cue": Epoc("Cue", np.array([10.0, 20.0, 30.0]))},
+            info={},
+            source_path=Path("linear-artifact.mat"),
+        )
+        settings = ProcessingSettings(
+            trange=(-2.0, 5.0),
+            baseline_per=(-2.0, -0.5),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+            polynomial_degree=1,
+        )
+
+        with mock.patch(
+            "photon_cruncher.processing.pipeline._zscore_trials",
+            side_effect=lambda corrected, _baseline_mask: corrected,
+        ):
+            processed = process_channel(
+                session, "x405A", "x465A", session.epocs["Cue"], settings
+            )
+
+        self.assertLess(np.nanmax(np.abs(processed.zall)), 1e-10)
+
+    def test_quadratic_control_artifact_is_removed_by_quadratic_fit(self) -> None:
+        fs = 20.0
+        time = np.arange(0.0, 40.0, 1.0 / fs)
+        control = 1.0 + 0.15 * np.sin(time) + 0.01 * time
+        signal = 2.5 + 1.8 * control + 0.7 * control**2
+        session = PhotometrySession(
+            streams={
+                "x405A": Stream("x405A", fs, control),
+                "x465A": Stream("x465A", fs, signal),
+            },
+            epocs={"Cue": Epoc("Cue", np.array([10.0, 20.0, 30.0]))},
+            info={},
+            source_path=Path("quadratic-artifact.mat"),
+        )
+        settings = ProcessingSettings(
+            trange=(-2.0, 5.0),
+            baseline_per=(-2.0, -0.5),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+            polynomial_degree=2,
+        )
+
+        with mock.patch(
+            "photon_cruncher.processing.pipeline._zscore_trials",
+            side_effect=lambda corrected, _baseline_mask: corrected,
+        ):
+            processed = process_channel(
+                session, "x405A", "x465A", session.epocs["Cue"], settings
+            )
+
+        self.assertLess(np.nanmax(np.abs(processed.zall)), 1e-9)
 
     def test_polynomial_degree_must_be_positive_when_fit_is_enabled(self) -> None:
         session = _golden_session()

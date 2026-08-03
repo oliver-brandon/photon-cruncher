@@ -102,10 +102,12 @@ photon-cruncher-cli analyze local-test-data \
 ```
 
 The CLI uses the paired 405 isosbestic fit by default with polynomial degree
-`1`. Use `--polynomial-degree N` to change the fit degree, or
-`--no-isosbestic` to skip the 405 fit and process the selected signal channel
-directly. Reusable JSON configs accept the corresponding processing fields:
-`"use_isosbestic": true` and `"polynomial_degree": 1`.
+`1`. The fit models the selected signal as a polynomial function of its paired
+405 control, then subtracts that fitted control contribution. Use
+`--polynomial-degree N` to change the fit degree, or `--no-isosbestic` to skip
+the fit and process the selected signal channel directly, including recordings
+that do not contain a 405 stream. Reusable JSON configs accept the corresponding
+processing fields: `"use_isosbestic": true` and `"polynomial_degree": 1`.
 
 Use `--channel-smooth CHANNEL=FACTOR` for channel-specific smoothing. Use
 `--all-epocs` to analyze every available epoc, optionally with
@@ -151,12 +153,20 @@ In the shell:
 
 Default URL: `http://127.0.0.1:8766/`
 
+Browser mode can import files directly from the browser: **Open MAT files**
+uploads selected `.mat` files, while **Open TDT tanks** and the Batch Export
+pickers upload a selected folder and preserve its relative layout. Uploaded
+data is kept in a temporary server folder for the current session and removed
+when the session is closed or the server exits.
+
 API (same backend as lab/CLI):
 - `GET /api/health`
 - `POST /api/open` or `/api/inspect` with `{"path": "..."}`
 - `POST /api/analyze` with `{"path": "...", "epoc": "Cue", "channels": ["A_465"]}`
 - `POST /api/export` with path, epoc, output_dir, and export flags
 - `POST /api/inspect-paths` with a list of batch source paths
+- `POST /api/upload?upload_id=...&relative_path=...&final=0|1` with the raw file
+  bytes; set `final=1` on the last file to receive discovered MAT/TDT paths
 - `POST /api/batch-export` with source paths, epoc selections, channels, and export flags
 
 Architecture: `docs/architecture-aurora.md`.
@@ -188,8 +198,9 @@ exports include those trial labels in the row names.
 
 ## Notes
 
-* The preprocessing pipeline follows the lab's MATLAB script exactly, including
-  downsampling, regression, baseline logic, and smoothing.
+* The preprocessing pipeline preserves the lab workflow's analysis windows,
+  downsampling, baseline logic, and smoothing. Isosbestic regression explicitly
+  fits signal from the paired 405 control before subtraction.
 * Export outputs include heatmap CSVs with the time vector in the first row,
   followed by per-trial z-score rows.
 

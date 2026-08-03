@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -17,6 +18,7 @@ from photon_cruncher.gui_aurora.server import (
     serve_in_background,
 )
 from photon_cruncher.gui_aurora.session_store import STORE
+from photon_cruncher.analysis.runner import BatchOutcome
 from photon_cruncher.model import Epoc, PhotometrySession, Stream
 
 
@@ -33,6 +35,31 @@ def _post(port: int, path: str, body: dict) -> dict:
 
 def _get(port: int, path: str) -> dict:
     with urlopen(f"http://127.0.0.1:{port}{path}", timeout=10) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _upload(
+    port: int,
+    upload_id: str,
+    relative_path: str,
+    data: bytes,
+    *,
+    final: bool,
+) -> dict:
+    query = urllib.parse.urlencode(
+        {
+            "upload_id": upload_id,
+            "relative_path": relative_path,
+            "final": "1" if final else "0",
+        }
+    )
+    req = Request(
+        f"http://127.0.0.1:{port}/api/upload?{query}",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    with urlopen(req, timeout=10) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -133,6 +160,52 @@ class AuroraAppTests(unittest.TestCase):
         self.assertTrue(AuroraBridge)
         self.assertTrue(AuroraShellWindow)
 
+    def test_browser_upload_streams_files_and_discovers_mat_sources(self) -> None:
+        httpd, _thread, port = serve_in_background(host="127.0.0.1", port=None)
+        try:
+            payload = _upload(
+                port,
+                "browser-test",
+                "selected/sample.mat",
+                b"not-a-real-mat",
+                final=True,
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["received"], len(b"not-a-real-mat"))
+            self.assertEqual(len(payload["paths"]), 1)
+            uploaded = Path(payload["paths"][0])
+            self.assertTrue(uploaded.exists())
+            self.assertEqual(uploaded.read_bytes(), b"not-a-real-mat")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_browser_upload_preserves_tdt_folder_layout(self) -> None:
+        httpd, _thread, port = serve_in_background(host="127.0.0.1", port=None)
+        try:
+            partial = _upload(
+                port,
+                "browser-tdt-test",
+                "Tank/Block/Block.tev",
+                b"tev",
+                final=False,
+            )
+            self.assertTrue(partial["ok"])
+            self.assertNotIn("paths", partial)
+            payload = _upload(
+                port,
+                "browser-tdt-test",
+                "Tank/Block/Block.tsq",
+                b"tsq",
+                final=True,
+            )
+            self.assertTrue(payload["ok"])
+            self.assertEqual(len(payload["paths"]), 1)
+            self.assertTrue(payload["paths"][0].endswith("/Tank/Block"))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_inspect_paths_does_not_replace_current_session(self) -> None:
         cached = SimpleNamespace(
             path="/data/session-a.mat",
@@ -154,16 +227,43 @@ class AuroraAppTests(unittest.TestCase):
             epoc=epoc,
             channel_key="A_465",
         )
-        exported = SimpleNamespace(output_dir=Path("/exports/a"), result=result)
+        exported = SimpleNamespace(
+            output_dir=Path("/exports/a"),
+            result=result,
+            csv_path=Path("/exports/a/a_CueA_A_465_heatmap.csv"),
+        )
+        failed_export = SimpleNamespace(
+            output_dir=Path("/exports/b"),
+            result=SimpleNamespace(
+                session=SimpleNamespace(source_path=Path("/data/b.mat")),
+                epoc=epoc,
+                channel_key="A_465",
+            ),
+            csv_path=None,
+        )
+
+        def batch_runner(**kwargs):
+            kwargs["outcomes"].append(
+                BatchOutcome(
+                    status="error",
+                    input_path=Path("/data/b.mat"),
+                    session="b",
+                    epoc="CueA",
+                    channels=("A_465",),
+                    reason="Analysis failed: synthetic failure",
+                )
+            )
+            return [exported, failed_export]
+
         with (
             mock.patch(
                 "photon_cruncher.gui_aurora.server.run_batch_custom",
-                return_value=[exported],
+                side_effect=batch_runner,
             ) as runner,
             mock.patch(
                 "photon_cruncher.gui_aurora.server.service.open_session",
                 return_value=session,
-            ),
+            ) as opened,
         ):
             payload = _batch_export_request(
                 {
@@ -200,7 +300,16 @@ class AuroraAppTests(unittest.TestCase):
         self.assertFalse(settings.use_isosbestic)
         self.assertEqual(settings.polynomial_degree, 3)
         self.assertEqual(payload["input_count"], 2)
+        self.assertEqual(len(payload["exports"]), 1)
         self.assertEqual(payload["exports"][0]["channel"], "A_465")
+        self.assertEqual(
+            payload["exports"][0]["csv"],
+            "/exports/a/a_CueA_A_465_heatmap.csv",
+        )
+        self.assertEqual(payload["errors"][0]["session"], "b")
+        self.assertEqual(payload["errors"][0]["channels"], ["A_465"])
+        self.assertIn("synthetic failure", payload["errors"][0]["reason"])
+        opened.assert_not_called()
 
     def test_filtered_analysis_keeps_full_plot_payloads(self) -> None:
         full_processed = object()

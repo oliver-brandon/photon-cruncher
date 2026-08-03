@@ -26,6 +26,11 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("page-align", html)
         self.assertIn("photon_cruncher.service", html)
         self.assertIn("openSessionBtn", html)
+        self.assertIn('id="matFileInput"', html)
+        self.assertIn('id="tdtFolderInput"', html)
+        self.assertIn('id="batchMatFileInput"', html)
+        self.assertIn('id="batchFolderInput"', html)
+        self.assertIn('id="batchTankInput"', html)
         self.assertIn('id="exportDir"', html)
         self.assertIn('id="chooseExportDir"', html)
         self.assertIn('id="smoothFactor"', html)
@@ -66,7 +71,14 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("exportBatchSelection", js)
         self.assertIn("/api/batch-export", js)
         self.assertIn("/api/inspect-paths", js)
+        self.assertIn("/api/upload?", js)
+        self.assertIn("uploadBrowserFiles", js)
+        self.assertIn("webkitRelativePath", js)
+        self.assertNotIn("Browser mode cannot read local paths", js)
+        self.assertNotIn("Batch source dialogs require the desktop app", js)
         self.assertIn("batchEpocSelections", js)
+        self.assertIn("errors.push(...(data.errors || []))", js)
+        self.assertIn("failed ${errors.length}", js)
         self.assertIn("batchEpocs", js)
         self.assertIn("runTrialAnalyze", js)
         self.assertIn("trialSettingsPayload", js)
@@ -78,6 +90,36 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("syncIsosbesticControls", js)
         self.assertGreaterEqual(js.count("channels: trialExportChannels()"), 2)
         self.assertNotIn("meanSemRows", js)
+
+    def test_import_rows_are_safe_and_isolated_from_trial_controls(self) -> None:
+        js = (STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('row.className = "import-row"', js)
+        self.assertIn("label.textContent = sourceLabel(source);", js)
+        self.assertIn("sourceCell.textContent = sourceLabel(source);", js)
+        self.assertIn('sourceCell.title = source.path || "";', js)
+        self.assertIn("chip.textContent = channel;", js)
+        self.assertIn("chip.textContent = epoc;", js)
+        self.assertIn("labelText.textContent = label || \"trial\";", js)
+        self.assertIn("checkbox.checked = checked;", js)
+        self.assertIn("function syncSessionIsosbesticAvailability(session)", js)
+        self.assertIn("details.every((detail) => !detail.iso_stream)", js)
+        self.assertIn("toggle.disabled = fullySignalOnly;", js)
+        self.assertIn("settings.use_isosbestic = false;", js)
+        self.assertNotIn('<td title="${source.path}">', js)
+        self.assertNotIn("row.innerHTML", js)
+        self.assertNotIn("`${c}</span>`", js)
+        self.assertNotIn("`${e}</span>`", js)
+        self.assertEqual(js.count('document.querySelectorAll("#trialStream .trial-row")'), 4)
+        self.assertNotIn('document.querySelectorAll(".trial-row")', js)
+
+    def test_starfield_animation_avoids_animated_filters(self) -> None:
+        css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")
+        near_keyframes = css.split("@keyframes star-twinkle-near", 1)[1].split(
+            "@keyframes dust-drift", 1
+        )[0]
+        self.assertNotIn("filter:", near_keyframes)
+        self.assertIn("from { opacity: 0.7; }", near_keyframes)
+        self.assertIn("to { opacity: 1; }", near_keyframes)
 
     def test_select_controls_are_contained(self) -> None:
         css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")

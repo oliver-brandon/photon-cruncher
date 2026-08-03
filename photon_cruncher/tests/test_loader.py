@@ -10,6 +10,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -126,6 +127,32 @@ class LoaderTests(unittest.TestCase):
                 [block_a, block_b],
             )
             self.assertEqual(discover_tdt_block_paths(block_a), [block_a])
+
+    def test_service_discovers_nested_mat_and_tdt_sources(self) -> None:
+        from photon_cruncher.service import discover_data_sources
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            top_level_mat = root / "top.mat"
+            nested_mat = root / "nested" / "recording.mat"
+            uppercase_mat = root / "uppercase.MAT"
+            block = root / "tank" / "BlockA"
+            top_level_mat.write_bytes(b"")
+            nested_mat.parent.mkdir()
+            nested_mat.write_bytes(b"")
+            uppercase_mat.write_bytes(b"")
+            block.mkdir(parents=True)
+            (block / "BlockA.tsq").write_bytes(b"")
+
+            self.assertEqual(
+                discover_data_sources(root),
+                [
+                    nested_mat.resolve(),
+                    top_level_mat.resolve(),
+                    uppercase_mat.resolve(),
+                    block.resolve(),
+                ],
+            )
 
     def test_load_session_reads_tdt_streams_and_epocs(self) -> None:
         fake_tdt = types.SimpleNamespace()
@@ -425,6 +452,103 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0].result.channel_key, "A_465")
 
+    def test_batch_custom_reports_partial_failures_without_reloading_sources(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        success = self._synthetic_cli_session()
+        success.source_path = Path("success.mat")
+        empty = PhotometrySession(
+            streams=success.streams,
+            epocs={"Cue": Epoc(name="Cue", onset=np.array([]))},
+            info={},
+            source_path=Path("empty.mat"),
+        )
+        load_paths: list[Path] = []
+
+        def load(path: Path) -> PhotometrySession:
+            load_paths.append(Path(path))
+            if path.name == "broken.mat":
+                raise ValueError("unreadable source")
+            return empty if path.name == "empty.mat" else success
+
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+        outcomes: list[runner.BatchOutcome] = []
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            runner, "load_session", side_effect=load
+        ):
+            exported = runner.run_batch_custom(
+                input_paths=[
+                    Path("success.mat"),
+                    Path("empty.mat"),
+                    Path("broken.mat"),
+                ],
+                epoc_selections=[("Cue", ("Cue",))],
+                output_dir=Path(tmp),
+                channel_keys=["A_465", "C_465"],
+                settings_factory=lambda _: settings,
+                export_csv=False,
+                outcomes=outcomes,
+            )
+
+        self.assertEqual(load_paths, [
+            Path("success.mat"),
+            Path("empty.mat"),
+            Path("broken.mat"),
+        ])
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(
+            [(outcome.status, outcome.session, outcome.epoc) for outcome in outcomes],
+            [
+                ("skipped", "success", "Cue"),
+                ("skipped", "empty", "Cue"),
+                ("error", "broken", ""),
+            ],
+        )
+        self.assertEqual(outcomes[0].channels, ("C_465",))
+        self.assertIn("not available", outcomes[0].reason.lower())
+        self.assertEqual(outcomes[1].channels, ("A_465", "C_465"))
+        self.assertIn("no events", outcomes[1].reason.lower())
+        self.assertIn("unreadable source", outcomes[2].reason)
+
+    def test_batch_custom_retains_result_when_csv_export_fails(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = self._synthetic_cli_session()
+        session.source_path = Path("synthetic.mat")
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+        outcomes: list[runner.BatchOutcome] = []
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            runner, "load_session", return_value=session
+        ), mock.patch.object(runner, "export_channel", side_effect=OSError("disk full")):
+            exported = runner.run_batch_custom(
+                input_paths=[Path("synthetic.mat")],
+                epoc_selections=[("Cue", ("Cue",))],
+                output_dir=Path(tmp),
+                channel_keys=["A_465"],
+                settings_factory=lambda _: settings,
+                export_csv=True,
+                outcomes=outcomes,
+            )
+
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].result.channel_key, "A_465")
+        self.assertIsNone(exported[0].csv_path)
+        self.assertEqual(outcomes[0].status, "error")
+        self.assertEqual(outcomes[0].channels, ("A_465",))
+        self.assertIn("disk full", outcomes[0].reason)
+
     def test_cli_validate_config_accepts_minimal_analyze_config(self) -> None:
         config = {
             "inputs": ["synthetic.mat"],
@@ -512,6 +636,40 @@ class LoaderTests(unittest.TestCase):
         payload = json.loads(stdout)
         self.assertFalse(payload["valid"])
         self.assertIn("trange_start", payload["errors"][0]["message"])
+
+    def test_cli_validate_config_rejects_malformed_sections_and_values(self) -> None:
+        cases = [
+            {"processing": "not an object"},
+            {"processing": []},
+            {"processing": {"smooth_factor": "abc"}},
+            {"processing": {"downsample_factor": True}},
+            {"trial_filter": {"trial_numbers": "1,2"}},
+            {"trial_filter": {"trial_numbers": [True]}},
+            {"channel_settings": {"A_465": {"smooth_factor": True}}},
+            {"exports": {"csv": "yes"}},
+            {"inputs": "synthetic.mat"},
+            {"output_dir": 123},
+            {"summary_json": 123},
+        ]
+        for override in cases:
+            config = {
+                "inputs": ["synthetic.mat"],
+                "epocs": ["Cue"],
+                "exports": {"csv": False, "figures": False},
+            }
+            config.update(override)
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / "analysis-config.json"
+                config_path.write_text(json.dumps(config), encoding="utf-8")
+                exit_code, stdout, stderr = self._invoke_cli(
+                    ["validate-config", str(config_path)]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertFalse(payload["valid"])
+            self.assertTrue(payload["errors"])
 
     def test_cli_inspect_outputs_session_json(self) -> None:
         from photon_cruncher import cli
@@ -628,6 +786,50 @@ class LoaderTests(unittest.TestCase):
         settings = json.loads(stdout)["results"][0]["settings"]
         self.assertFalse(settings["use_isosbestic"])
         self.assertEqual(settings["polynomial_degree"], 3)
+
+    def test_cli_analyze_signal_only_recording_without_a_405_stream(self) -> None:
+        from photon_cruncher import cli
+
+        paired = self._synthetic_cli_session()
+        session = PhotometrySession(
+            streams={"x465A": paired.streams["x465A"]},
+            epocs=paired.epocs,
+            info=paired.info,
+            source_path=Path("signal-only.mat"),
+        )
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("signal-only.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(
+                [
+                    "analyze",
+                    "signal-only.mat",
+                    "--epoc",
+                    "Cue",
+                    "--channel",
+                    "A_465",
+                    "--no-isosbestic",
+                    "--baseline-start",
+                    "-2",
+                    "--baseline-end",
+                    "-0.5",
+                    "--downsample-factor",
+                    "1",
+                    "--export",
+                    "none",
+                ]
+            )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        result = json.loads(stdout)["results"][0]
+        self.assertEqual(result["iso_stream"], "")
+        self.assertEqual(result["signal_stream"], "x465A")
 
     def test_cli_analyze_applies_polynomial_degree_with_isosbestic(self) -> None:
         from photon_cruncher import cli

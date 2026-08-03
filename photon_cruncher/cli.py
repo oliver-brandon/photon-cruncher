@@ -445,9 +445,9 @@ def normalize_analyze_config(
     args: argparse.Namespace,
     raw_config: dict[str, Any],
 ) -> dict[str, Any]:
-    processing = dict(raw_config.get("processing", {}))
-    exports = dict(raw_config.get("exports", {}))
-    trial_filter = dict(raw_config.get("trial_filter", {}))
+    processing = _config_object(raw_config, "processing")
+    exports = _config_object(raw_config, "exports")
+    trial_filter = _config_object(raw_config, "trial_filter")
     raw_channel_settings = raw_config.get("channel_settings", {})
     if not isinstance(raw_channel_settings, dict):
         raise ConfigError("channel_settings must be an object")
@@ -458,17 +458,17 @@ def normalize_analyze_config(
         channel_settings[str(channel)] = dict(settings)
 
     config = {
-        "inputs": list(raw_config.get("inputs", [])),
+        "inputs": _config_list(raw_config, "inputs"),
         "output_dir": raw_config.get("output_dir"),
         "summary_json": raw_config.get("summary_json"),
-        "channels": list(raw_config.get("channels", [])),
-        "epocs": list(raw_config.get("epocs", [])),
-        "all_epocs": bool(raw_config.get("all_epocs", False)),
+        "channels": _config_list(raw_config, "channels"),
+        "epocs": _config_list(raw_config, "epocs"),
+        "all_epocs": raw_config.get("all_epocs", False),
         "epoc_policy": str(raw_config.get("epoc_policy", "all")).replace("-", "_"),
         "channel_settings": channel_settings,
         "trial_filter": {
-            "trial_numbers": list(trial_filter.get("trial_numbers", [])),
-            "trial_types": list(trial_filter.get("trial_types", [])),
+            "trial_numbers": _config_list(trial_filter, "trial_numbers"),
+            "trial_types": _config_list(trial_filter, "trial_types"),
         },
         "processing": {
             "trange_start": processing.get("trange_start", -2.0),
@@ -557,6 +557,27 @@ def normalize_analyze_config(
 
 def validate_analyze_config(config: dict[str, Any]) -> None:
     errors: list[str] = []
+    for field in ("output_dir", "summary_json"):
+        if config[field] is not None and not isinstance(config[field], str):
+            errors.append(f"{field} must be a string or null")
+    for field in ("inputs", "channels", "epocs"):
+        if not isinstance(config[field], list) or not all(
+            isinstance(item, str) and item.strip() for item in config[field]
+        ):
+            errors.append(f"{field} must be a list of non-empty strings")
+    trial_filter = config["trial_filter"]
+    if not all(_is_positive_integer(value) for value in trial_filter["trial_numbers"]):
+        errors.append("trial_numbers must be a list of integers of at least 1")
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in trial_filter["trial_types"]
+    ):
+        errors.append("trial_types must be a list of non-empty strings")
+    if not isinstance(config["all_epocs"], bool):
+        errors.append("all_epocs must be true or false")
+    for field in ("csv", "figures", "per_session_subdir"):
+        if not isinstance(config["exports"][field], bool):
+            errors.append(f"exports.{field} must be true or false")
     if not config["inputs"]:
         errors.append("inputs must include at least one file or folder")
     if not config["epocs"] and not config["all_epocs"]:
@@ -570,17 +591,36 @@ def validate_analyze_config(config: dict[str, Any]) -> None:
     ):
         errors.append("output_dir is required when exporting CSV files or figures")
     processing = config["processing"]
-    if processing["trange_start"] >= processing["trange_end"]:
+    numeric_fields = (
+        "trange_start",
+        "trange_end",
+        "baseline_start",
+        "baseline_end",
+        "baseline_adjust",
+    )
+    for field in numeric_fields:
+        if not _is_finite_number(processing[field]):
+            errors.append(f"{field} must be a finite number")
+    if all(
+        _is_finite_number(processing[field])
+        for field in ("trange_start", "trange_end")
+    ) and processing["trange_start"] >= processing["trange_end"]:
         errors.append("trange_start must be less than trange_end")
-    if processing["baseline_start"] >= processing["baseline_end"]:
+    if all(
+        _is_finite_number(processing[field])
+        for field in ("baseline_start", "baseline_end")
+    ) and processing["baseline_start"] >= processing["baseline_end"]:
         errors.append("baseline_start must be less than baseline_end")
-    if processing["downsample_factor"] < 1:
-        errors.append("downsample_factor must be at least 1")
-    if (
-        processing["smooth_factor"] is not None
-        and int(processing["smooth_factor"]) < 1
+    if not _is_positive_integer(processing["downsample_factor"]):
+        errors.append("downsample_factor must be an integer of at least 1")
+    if processing["smooth_factor"] is not None and not _is_positive_integer(
+        processing["smooth_factor"]
     ):
-        errors.append("smooth_factor must be at least 1 when provided")
+        errors.append("smooth_factor must be an integer of at least 1 when provided")
+    for field in ("artifact_405", "artifact_465"):
+        value = processing[field]
+        if value is not None and (not _is_finite_number(value) or float(value) < 0):
+            errors.append(f"{field} must be a non-negative finite number or null")
     for channel, overrides in config["channel_settings"].items():
         if not isinstance(overrides, dict):
             errors.append(f"channel_settings.{channel} must be an object")
@@ -596,10 +636,13 @@ def validate_analyze_config(config: dict[str, Any]) -> None:
             errors.append(
                 f"channel_settings.{channel}.smooth_factor must be an integer of at least 1"
             )
-    if not isinstance(processing["use_isosbestic"], bool):
-        errors.append("use_isosbestic must be true or false")
+    for field in ("use_isosbestic", "plot_smoothed", "baseline_correction"):
+        if not isinstance(processing[field], bool):
+            errors.append(f"{field} must be true or false")
     polynomial_degree = processing["polynomial_degree"]
     try:
+        if isinstance(polynomial_degree, bool):
+            raise ValueError
         polynomial_degree_int = int(polynomial_degree)
         if float(polynomial_degree) != polynomial_degree_int:
             raise ValueError
@@ -608,7 +651,10 @@ def validate_analyze_config(config: dict[str, Any]) -> None:
     else:
         if polynomial_degree_int < 1:
             errors.append("polynomial_degree must be at least 1")
-    if config["exports"]["figure_format"] not in FIGURE_FORMATS:
+    if (
+        not isinstance(config["exports"]["figure_format"], str)
+        or config["exports"]["figure_format"] not in FIGURE_FORMATS
+    ):
         errors.append("figure_format must be one of: pdf, png, tiff")
     if errors:
         raise ConfigError("; ".join(errors))
@@ -903,10 +949,34 @@ def parse_channel_smooth_override(value: str) -> tuple[str, int]:
 
 def _is_positive_integer(value: Any) -> bool:
     try:
+        if isinstance(value, bool):
+            return False
         integer = int(value)
         return float(value) == integer and integer >= 1
     except (TypeError, ValueError):
         return False
+
+
+def _is_finite_number(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int | float)
+        and np.isfinite(value)
+    )
+
+
+def _config_object(raw_config: dict[str, Any], name: str) -> dict[str, Any]:
+    value = raw_config.get(name, {})
+    if not isinstance(value, dict):
+        raise ConfigError(f"{name} must be a JSON object")
+    return dict(value)
+
+
+def _config_list(raw_config: dict[str, Any], name: str) -> list[Any]:
+    value = raw_config.get(name, [])
+    if not isinstance(value, list):
+        raise ConfigError(f"{name} must be a JSON array")
+    return list(value)
 
 
 def _flatten(values: Iterable[Iterable[str]]) -> Iterable[str]:

@@ -189,7 +189,7 @@ def _zscore_trials(y_df_all: np.ndarray, baseline_mask: np.ndarray) -> np.ndarra
 
 def process_channel(
     session: PhotometrySession,
-    iso_stream: str,
+    iso_stream: str | None,
     signal_stream: str,
     epoc: Epoc,
     settings: ProcessingSettings,
@@ -207,6 +207,10 @@ def process_channel(
     if settings.use_isosbestic:
         if settings.polynomial_degree < 1:
             raise ValueError("Polynomial fit degree must be at least 1.")
+        if not iso_stream or iso_stream not in session.streams:
+            raise ValueError(
+                "A paired 405 isosbestic stream is required when isosbestic fitting is enabled."
+            )
         stream_405 = session.streams[iso_stream]
         extracted_405 = _extract_trials_with_edge_drops(
             stream_405.data,
@@ -298,10 +302,11 @@ def process_channel(
             raise ValueError(
                 "Polynomial fit degree must be smaller than the number of fitted samples."
             )
-        # MATLAB-faithful control->signal regression on Fortran-order flattened trials.
+        # Fit the control stream to the signal stream, preserving the
+        # MATLAB-compatible Fortran-order trial flattening.
         bls = np.polyfit(
-            f465.flatten(order="F"),
             f405.flatten(order="F"),
+            f465.flatten(order="F"),
             settings.polynomial_degree,
         )
         y_fit_all = np.polyval(bls, f405)
@@ -398,18 +403,26 @@ def subset_processed_signal(
     )
 
 
-def available_channels(session: PhotometrySession) -> dict[str, tuple[str, str, int]]:
-    mapping: dict[str, tuple[str, str, int]] = {}
-    if "x405A" in session.streams:
-        if "x465A" in session.streams:
-            mapping["A_465"] = ("x405A", "x465A", 10)
-        if "x560A" in session.streams:
-            mapping["A_560"] = ("x405A", "x560A", 30)
-    if "x405C" in session.streams:
-        if "x465C" in session.streams:
-            mapping["C_465"] = ("x405C", "x465C", 50)
-        if "x560C" in session.streams:
-            mapping["C_560"] = ("x405C", "x560C", 20)
+def available_channels(session: PhotometrySession) -> dict[str, tuple[str | None, str, int]]:
+    """Return signal channels, with a paired 405 stream when available.
+
+    Signal-only sessions remain analyzable when isosbestic fitting is disabled.
+    Corrected processing still requires the corresponding 405 stream.
+    """
+    mapping: dict[str, tuple[str | None, str, int]] = {}
+    channel_specs = (
+        ("A_465", "x405A", "x465A", 10),
+        ("A_560", "x405A", "x560A", 30),
+        ("C_465", "x405C", "x465C", 50),
+        ("C_560", "x405C", "x560C", 20),
+    )
+    for channel_key, control_stream, signal_stream, default_smooth in channel_specs:
+        if signal_stream in session.streams:
+            mapping[channel_key] = (
+                control_stream if control_stream in session.streams else None,
+                signal_stream,
+                default_smooth,
+            )
     return mapping
 
 

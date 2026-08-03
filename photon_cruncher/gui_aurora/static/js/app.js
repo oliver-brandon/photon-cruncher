@@ -345,6 +345,29 @@
     field?.classList.toggle("is-disabled", !enabled);
   }
 
+  function syncSessionIsosbesticAvailability(session) {
+    const details = session?.channel_details || [];
+    const fullySignalOnly =
+      details.length > 0 && details.every((detail) => !detail.iso_stream);
+    [
+      ["useIsosbestic", state.settings],
+      ["trialUseIsosbestic", state.trialSettings],
+    ].forEach(([id, settings]) => {
+      const toggle = $(id);
+      if (!toggle) return;
+      toggle.disabled = fullySignalOnly;
+      toggle.title = fullySignalOnly
+        ? "No 405 isosbestic control channel is available in this session."
+        : "";
+      if (fullySignalOnly) {
+        toggle.checked = false;
+        settings.use_isosbestic = false;
+      }
+    });
+    syncIsosbesticControls(false);
+    syncIsosbesticControls(true);
+  }
+
   function trialSettingsPayload() {
     readTrialSettingsFromForm();
     return {
@@ -517,12 +540,16 @@
     state.sources.forEach((source) => {
       const row = document.createElement("button");
       row.type = "button";
-      row.className =
-        "trial-row import-row" + (source.path === state.path ? " active" : "");
-      row.innerHTML = `
-        <span class="n">${source.path === state.path ? "●" : "○"}</span>
-        <span>${sourceLabel(source)}</span>
-        <span class="n">${(source.session?.channels || []).length} ch</span>`;
+      row.className = "import-row" + (source.path === state.path ? " active" : "");
+      const marker = document.createElement("span");
+      marker.className = "n";
+      marker.textContent = source.path === state.path ? "●" : "○";
+      const label = document.createElement("span");
+      label.textContent = sourceLabel(source);
+      const channels = document.createElement("span");
+      channels.className = "n";
+      channels.textContent = `${(source.session?.channels || []).length} ch`;
+      row.append(marker, label, channels);
       row.title = source.path;
       row.addEventListener("click", async () => {
         if (source.path === state.path) {
@@ -538,7 +565,11 @@
       list.appendChild(row);
     });
     if (!state.sources.length) {
-      list.innerHTML = '<div class="quiet" style="padding:8px">Open one or more MAT files to populate this list.</div>';
+      const empty = document.createElement("div");
+      empty.className = "quiet";
+      empty.style.padding = "8px";
+      empty.textContent = "Open one or more MAT files to populate this list.";
+      list.appendChild(empty);
     }
   }
 
@@ -590,6 +621,42 @@
     } else if (sources.length > 1) {
       toast(`Loaded ${sources.length} files · analyzing ${sourceLabel(primary)}`);
     }
+  }
+
+  async function uploadBrowserFiles(files) {
+    const selected = Array.from(files || []).filter(
+      (file) => file && (file.webkitRelativePath || file.name)
+    );
+    if (!selected.length) return [];
+    const uploadId =
+      globalThis.crypto?.randomUUID?.() ||
+      `browser-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const paths = [];
+    for (let index = 0; index < selected.length; index += 1) {
+      const file = selected[index];
+      const relativePath = file.webkitRelativePath || file.name;
+      const query = new URLSearchParams({
+        upload_id: uploadId,
+        relative_path: relativePath,
+        final: index === selected.length - 1 ? "1" : "0",
+      });
+      const response = await fetch(`/api/upload?${query.toString()}`, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      let data;
+      try {
+        data = await response.json();
+      } catch (_) {
+        throw new Error(`Upload failed for ${file.name} (${response.status}).`);
+      }
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || `Upload failed for ${file.name}.`);
+      }
+      if (Array.isArray(data.paths)) paths.push(...data.paths);
+    }
+    return [...new Set(paths)];
   }
 
   function parsePathList(raw) {
@@ -739,6 +806,7 @@
     state.session = session;
     state.path = path || state.path;
     rememberSource(state.path, session);
+    syncSessionIsosbesticAvailability(session);
     const name = session.session_name || "session";
     $("hudSession").textContent = name;
     $("orbitName").textContent = name;
@@ -759,30 +827,44 @@
     if ($("sessionPath")) $("sessionPath").textContent = state.path || "—";
     if ($("sessionMetadata"))
       $("sessionMetadata").textContent = JSON.stringify(session.info || {}, null, 2);
-    if ($("channelChips")) {
-      $("channelChips").innerHTML =
-        (session.channels || [])
-          .map((c) => `<span class="chip on">${c}</span>`)
-          .join("") || '<span class="quiet">No channels</span>';
-    }
-    if ($("epocChips")) {
-      const epocNames = Object.keys(session.epocs || {});
-      const classified = (session.classified_sources || []).map(
-        (s) => s.key || s.label
-      );
-      $("epocChips").innerHTML =
-        [...epocNames, ...classified]
-          .map(
-            (e, i) =>
-              `<span class="chip ${i < epocNames.length ? "on" : "mag"}">${e}</span>`
-          )
-          .join("") || '<span class="quiet">No epocs</span>';
-    }
-
     const epocNames = Object.keys(session.epocs || {});
     const classified = (session.classified_sources || []).map(
       (s) => s.key || s.label
     );
+    const channelChips = $("channelChips");
+    if (channelChips) {
+      channelChips.replaceChildren();
+      const channels = session.channels || [];
+      if (!channels.length) {
+        const empty = document.createElement("span");
+        empty.className = "quiet";
+        empty.textContent = "No channels";
+        channelChips.appendChild(empty);
+      }
+      channels.forEach((channel) => {
+        const chip = document.createElement("span");
+        chip.className = "chip on";
+        chip.textContent = channel;
+        channelChips.appendChild(chip);
+      });
+    }
+    const epocChips = $("epocChips");
+    if (epocChips) {
+      epocChips.replaceChildren();
+      const allEpocChips = [...epocNames, ...classified];
+      if (!allEpocChips.length) {
+        const empty = document.createElement("span");
+        empty.className = "quiet";
+        empty.textContent = "No epocs";
+        epocChips.appendChild(empty);
+      }
+      allEpocChips.forEach((epoc, index) => {
+        const chip = document.createElement("span");
+        chip.className = `chip ${index < epocNames.length ? "on" : "mag"}`;
+        chip.textContent = epoc;
+        epocChips.appendChild(chip);
+      });
+    }
     const allEpocs = Array.from(new Set([...epocNames, ...classified]));
     fillSelect($("alignEpoc"), allEpocs, (e) => e, (e) => e);
     fillSelect($("trialEpoc"), allEpocs, (e) => e, (e) => e);
@@ -1238,7 +1320,7 @@
         ? null
         : new Set(state.checkedTrialNumbers);
     const previousFilters = { ...state.outcomeFilters };
-    list.innerHTML = "";
+    list.replaceChildren();
     const resultValues = Object.values(state.trialResultsByChannel);
     const common = resultValues.reduce((shared, item, index) => {
       const current = new Set(item.trial_numbers || []);
@@ -1263,18 +1345,24 @@
       row.dataset.outcome = label || "unclassified";
       row.dataset.number = String(num);
       const checked = previousSelection === null || previousSelection.has(Number(num));
-      row.innerHTML = `
-        <input type="checkbox" ${checked ? "checked" : ""} data-number="${num}" />
-        <span>${label || "trial"}</span>
-        <span class="n">T${String(num).padStart(3, "0")}</span>`;
-      row.querySelector("input").addEventListener("change", async () => {
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = checked;
+      checkbox.dataset.number = String(num);
+      const labelText = document.createElement("span");
+      labelText.textContent = label || "trial";
+      const trialNumber = document.createElement("span");
+      trialNumber.className = "n";
+      trialNumber.textContent = `T${String(num).padStart(3, "0")}`;
+      row.append(checkbox, labelText, trialNumber);
+      checkbox.addEventListener("change", async () => {
         await refreshTrialSelection();
       });
       list.appendChild(row);
     });
 
     const chips = $("outcomeChips");
-    chips.innerHTML = "";
+    chips.replaceChildren();
     state.outcomeFilters = {};
     Array.from(presentOutcomes).forEach((label) => {
       state.outcomeFilters[label] = previousFilters[label] !== false;
@@ -1308,7 +1396,7 @@
 
   function filterTrials() {
     const q = $("trialSearch").value.trim().toLowerCase();
-    document.querySelectorAll(".trial-row").forEach((row) => {
+    document.querySelectorAll("#trialStream .trial-row").forEach((row) => {
       const o = row.dataset.outcome;
       const show =
         state.outcomeFilters[o] !== false &&
@@ -1319,7 +1407,7 @@
   }
 
   function syncSelected() {
-    const rows = document.querySelectorAll(".trial-row");
+    const rows = document.querySelectorAll("#trialStream .trial-row");
     const checkedRows = Array.from(rows).filter((row) => {
       const box = row.querySelector('input[type="checkbox"]');
       return !!box?.checked;
@@ -1355,7 +1443,7 @@
   }
 
   async function setChecks(checked, visibleOnly) {
-    document.querySelectorAll(".trial-row").forEach((row) => {
+    document.querySelectorAll("#trialStream .trial-row").forEach((row) => {
       if (visibleOnly && (row.style.display === "none" || row.classList.contains("hidden"))) {
         return;
       }
@@ -1366,7 +1454,7 @@
   }
 
   async function invertVisible() {
-    document.querySelectorAll(".trial-row").forEach((row) => {
+    document.querySelectorAll("#trialStream .trial-row").forEach((row) => {
       if (row.style.display === "none" || row.classList.contains("hidden")) return;
       const n = row.querySelector("input");
       if (n) n.checked = !n.checked;
@@ -1545,6 +1633,21 @@
       renderBatchPage();
     });
     $("figFormat").disabled = !$("expFig")?.checked;
+    ["batchMatFileInput", "batchFolderInput", "batchTankInput"].forEach((id) => {
+      $(id)?.addEventListener("change", async () => {
+        const input = $(id);
+        const files = Array.from(input?.files || []);
+        if (!files.length || window.auroraBridge) return;
+        try {
+          toast(`uploading ${files.length} batch file(s)…`);
+          const paths = await uploadBrowserFiles(files);
+          if (!paths.length) throw new Error("No supported data sources were found.");
+          await addBatchPaths(paths);
+        } catch (err) {
+          toast(String(err.message || err));
+        }
+      });
+    });
     $("abortBatch").disabled = true;
     renderBatchSelectors();
     renderBatchPage();
@@ -1552,14 +1655,32 @@
 
   async function addBatchSourcesFromDialog(method) {
     if (!window.auroraBridge?.[method]) {
-      toast("Batch source dialogs require the desktop app");
+      const inputId = {
+        selectMatFiles: "batchMatFileInput",
+        selectDataFolder: "batchFolderInput",
+        selectTdtTank: "batchTankInput",
+      }[method];
+      const input = inputId ? $(inputId) : null;
+      if (input) {
+        input.value = "";
+        input.click();
+        return;
+      }
+      toast("This browser does not support the batch picker.");
       return;
     }
     try {
       const raw = await bridgeCall(method);
       const paths = typeof raw === "string" ? JSON.parse(raw) : raw;
       if (!paths?.length) return;
-      const data = await api("POST", "/api/inspect-paths", { paths });
+      await addBatchPaths(paths);
+    } catch (err) {
+      toast(String(err.message || err));
+    }
+  }
+
+  async function addBatchPaths(paths) {
+    const data = await api("POST", "/api/inspect-paths", { paths });
       (data.sources || []).forEach((source) =>
         rememberSource(source.path, source.session)
       );
@@ -1577,9 +1698,6 @@
       } else {
         toast(`Added ${data.sources.length} data source(s)`);
       }
-    } catch (err) {
-      toast(String(err.message || err));
-    }
   }
 
   function renderDataPage() {
@@ -1613,14 +1731,19 @@
     if (state.sources.length) {
       const selectedChannels = state.batchChannels || [];
       const selectedEpocs = state.batchEpocs || [];
-      body.innerHTML = state.sources
-        .map(
-          (source) =>
-            `<tr><td title="${source.path}">${sourceLabel(source)}</td>` +
-            `<td>${(source.session?.channels || []).length}</td>` +
-            `<td>${Object.keys(source.session?.epocs || {}).length}</td></tr>`
-        )
-        .join("");
+      body.replaceChildren();
+      state.sources.forEach((source) => {
+        const row = document.createElement("tr");
+        const sourceCell = document.createElement("td");
+        sourceCell.title = source.path || "";
+        sourceCell.textContent = sourceLabel(source);
+        const channelCell = document.createElement("td");
+        channelCell.textContent = String((source.session?.channels || []).length);
+        const epocCell = document.createElement("td");
+        epocCell.textContent = String(Object.keys(source.session?.epocs || {}).length);
+        row.append(sourceCell, channelCell, epocCell);
+        body.appendChild(row);
+      });
       const hasOutputs = !!$("expCsv")?.checked || !!$("expFig")?.checked;
       const ready =
         selectedChannels.length > 0 &&
@@ -1646,7 +1769,13 @@
       $("launchBatch").disabled = !ready;
       $("abortBatch").disabled = !state.batchRunning || state.batchCancelled;
     } else {
-      body.innerHTML = `<tr><td colspan="3">No data sources added</td></tr>`;
+      body.replaceChildren();
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 3;
+      cell.textContent = "No data sources added";
+      row.appendChild(cell);
+      body.appendChild(row);
       $("batchSessionDetail").textContent =
         "Add MAT files, a mixed-data folder, or a TDT tank.";
       $("mChannels").textContent = "—";
@@ -1720,6 +1849,7 @@
       const selections = batchEpocSelections(epocs, policy);
       const exports = [];
       const skipped = [];
+      const errors = [];
       for (let index = 0; index < selections.length; index += 1) {
         if (state.batchCancelled) break;
         const selection = selections[index];
@@ -1741,6 +1871,7 @@
         });
         exports.push(...(data.exports || []));
         skipped.push(...(data.skipped || []));
+        errors.push(...(data.errors || []));
       }
       if (state.batchCancelled) {
         setBatch(
@@ -1753,10 +1884,12 @@
         const exportSets = exports.length;
         setBatch(
           100,
-          `wrote ${exportSets} export set(s)${skipped.length ? ` · skipped ${skipped.length}` : ""}`,
+          `wrote ${exportSets} export set(s)${skipped.length ? ` · skipped ${skipped.length}` : ""}${errors.length ? ` · failed ${errors.length}` : ""}`,
           "DONE"
         );
-        toast(`exported ${exportSets} epoc/channel set(s) → ${outputDir}`);
+        toast(
+          `exported ${exportSets} epoc/channel set(s)${skipped.length ? ` · skipped ${skipped.length}` : ""}${errors.length ? ` · failed ${errors.length}` : ""} → ${outputDir}`
+        );
       }
       if (window.auroraBridge?.setStatus) {
         window.auroraBridge.setStatus(`Exported to ${outputDir}`);
@@ -1979,22 +2112,11 @@
       const input = $("matFileInput");
       const files = Array.from(input?.files || []);
       if (!files.length) return;
-      // Browser file inputs only give File objects; path access is unavailable in pure web.
-      // Prefer name-based prompt of absolute paths when not in shell.
       if (window.auroraBridge) return;
-      const names = files.map((f) => f.name).join("\n");
-      const raw = prompt(
-        "Browser mode cannot read local paths from the file picker.\n" +
-          "Paste absolute path(s) for the selected file(s):\n\n" +
-          names,
-        ""
-      );
-      if (!raw) return;
-      const paths = raw
-        .split(/[\n,]/)
-        .map((p) => p.trim())
-        .filter(Boolean);
       try {
+        toast(files.length === 1 ? "uploading…" : `uploading ${files.length} files…`);
+        const paths = await uploadBrowserFiles(files);
+        if (!paths.length) throw new Error("No MAT files were found in the upload.");
         await openManyPaths(paths);
       } catch (e) {
         toast(String(e.message || e));
@@ -2012,17 +2134,22 @@
         }
         return;
       }
-      const raw = prompt(
-        "Path(s) to TDT tank or block folder (comma or newline separated).\n" +
-          "Tank folders expand to all nested blocks.",
-        ""
-      );
-      if (!raw) return;
-      const paths = raw
-        .split(/[\n,]/)
-        .map((p) => p.trim())
-        .filter(Boolean);
+      const input = $("tdtFolderInput");
+      if (input) {
+        input.value = "";
+        input.click();
+        return;
+      }
+      toast("This browser does not support folder selection.");
+    });
+    $("tdtFolderInput")?.addEventListener("change", async () => {
+      const input = $("tdtFolderInput");
+      const files = Array.from(input?.files || []);
+      if (!files.length || window.auroraBridge) return;
       try {
+        toast(`uploading ${files.length} TDT files…`);
+        const paths = await uploadBrowserFiles(files);
+        if (!paths.length) throw new Error("No TDT blocks were found in the folder.");
         await openManyPaths(paths);
       } catch (e) {
         toast(String(e.message || e));

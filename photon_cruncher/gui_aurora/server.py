@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import http.server
+import os
+import re
+import shutil
 import socketserver
+import tempfile
 import threading
 import time
 import traceback
@@ -27,9 +32,24 @@ from photon_cruncher.product import (
 from photon_cruncher import service
 from photon_cruncher.analysis.runner import (
     BatchEpocSelection,
-    epoc_names_for_selection,
+    BatchOutcome,
     run_batch_custom,
 )
+
+
+_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+_UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_UPLOAD_ROOT = Path(tempfile.mkdtemp(prefix="photon-cruncher-aurora-upload-"))
+_UPLOAD_DIRS: dict[str, Path] = {}
+_UPLOAD_LOCK = threading.Lock()
+
+
+def _cleanup_uploads() -> None:
+    shutil.rmtree(_UPLOAD_ROOT, ignore_errors=True)
+
+
+atexit.register(_cleanup_uploads)
 
 
 class _ReusableTCPServer(socketserver.TCPServer):
@@ -290,6 +310,7 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
         return service.settings_for_channel(channel_key, overrides=per_channel)
 
     destination = Path(str(output_dir)).expanduser().resolve()
+    outcomes: list[BatchOutcome] = []
     exported = run_batch_custom(
         input_paths=input_paths,
         epoc_selections=epoc_selections,
@@ -299,6 +320,7 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
         export_summary=False,
         per_session_subdir=True,
         export_csv=export_csv,
+        outcomes=outcomes,
     )
     written: list[dict[str, str]] = []
     for item in exported:
@@ -311,36 +333,127 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
                 export_figure=True,
                 figure_format=figure_format,
             )["figure"]
-        prefix = (
-            f"{item.result.session.source_path.stem}_{item.result.epoc.name}_"
-            f"{item.result.channel_key}"
-        )
-        csv_path = str(item.output_dir / f"{prefix}_heatmap.csv") if export_csv else ""
-        written.append(
-            {
-                "session": item.result.session.source_path.stem,
-                "epoc": item.result.epoc.name,
-                "channel": item.result.channel_key,
-                "csv": csv_path,
-                "figure": figure_path,
-            }
-        )
+        csv_path = str(getattr(item, "csv_path", None) or "")
+        if csv_path or figure_path:
+            written.append(
+                {
+                    "session": item.result.session.source_path.stem,
+                    "epoc": item.result.epoc.name,
+                    "channel": item.result.channel_key,
+                    "csv": csv_path,
+                    "figure": figure_path,
+                }
+            )
 
-    skipped: list[dict[str, str]] = []
-    for path in input_paths:
-        session = service.open_session(path)
-        for selection in epoc_selections:
-            names = epoc_names_for_selection(session, selection)
-            if not names or all(session.epocs[name].onset.size == 0 for name in names):
-                skipped.append({"session": path.name, "epoc": selection[0]})
+    def outcome_payload(outcome: BatchOutcome) -> dict[str, Any]:
+        return {
+            "input_path": str(outcome.input_path),
+            "session": outcome.session,
+            "epoc": outcome.epoc,
+            "channels": list(outcome.channels),
+            "reason": outcome.reason,
+        }
 
     return {
         "ok": True,
         "output_dir": str(destination),
         "input_count": len(input_paths),
         "exports": written,
-        "skipped": skipped,
+        "skipped": [
+            outcome_payload(outcome)
+            for outcome in outcomes
+            if outcome.status == "skipped"
+        ],
+        "errors": [
+            outcome_payload(outcome)
+            for outcome in outcomes
+            if outcome.status == "error"
+        ],
     }
+
+
+def _upload_destination(upload_id: str, relative_path: str) -> tuple[Path, Path]:
+    if not _UPLOAD_ID_RE.fullmatch(upload_id):
+        raise ValueError("upload_id must contain only letters, numbers, '_' or '-'.")
+    normalized = str(relative_path or "").replace("\\", "/")
+    if not normalized or len(normalized) > 2048:
+        raise ValueError(
+            "relative_path is required and must be at most 2048 characters."
+        )
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:/", normalized):
+        raise ValueError("relative_path must stay within the upload folder.")
+    parts = [part for part in normalized.split("/") if part not in {"", "."}]
+    if not parts or any(part == ".." or "\x00" in part for part in parts):
+        raise ValueError("relative_path must stay within the upload folder.")
+    relative = Path(*parts)
+    with _UPLOAD_LOCK:
+        upload_dir = _UPLOAD_DIRS.get(upload_id)
+        if upload_dir is None:
+            upload_dir = _UPLOAD_ROOT / upload_id
+            upload_dir.mkdir(mode=0o700)
+            _UPLOAD_DIRS[upload_id] = upload_dir
+    root = upload_dir.resolve()
+    destination = (upload_dir / relative).resolve()
+    if destination != root and root not in destination.parents:
+        raise ValueError("relative_path must stay within the upload folder.")
+    return upload_dir, destination
+
+
+def _upload_request(
+    handler: http.server.BaseHTTPRequestHandler,
+    query: dict[str, list[str]],
+) -> dict[str, Any]:
+    upload_id = (query.get("upload_id") or [""])[0]
+    relative_path = (query.get("relative_path") or [""])[0]
+    final = (query.get("final") or ["0"])[0].lower() in {"1", "true", "yes"}
+    _upload_dir, destination = _upload_destination(upload_id, relative_path)
+    raw_length = handler.headers.get("Content-Length")
+    if raw_length is None:
+        raise ValueError("Content-Length is required for browser uploads.")
+    try:
+        length = int(raw_length)
+    except ValueError as exc:
+        raise ValueError("Content-Length must be an integer.") from exc
+    if length < 0 or length > _MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"uploaded files must be no larger than {_MAX_UPLOAD_BYTES} bytes."
+        )
+
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    received = 0
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{destination.name}.",
+            suffix=".part",
+            dir=destination.parent,
+            delete=False,
+        ) as stream:
+            temp_path = Path(stream.name)
+            while received < length:
+                chunk = handler.rfile.read(min(_UPLOAD_CHUNK_BYTES, length - received))
+                if not chunk:
+                    raise ValueError(
+                        "browser upload ended before Content-Length bytes were received."
+                    )
+                stream.write(chunk)
+                received += len(chunk)
+        os.replace(temp_path, destination)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+    payload: dict[str, Any] = {
+        "ok": True,
+        "upload_id": upload_id,
+        "relative_path": relative_path,
+        "received": received,
+    }
+    if final:
+        payload["paths"] = [str(path) for path in service.discover_data_sources(_upload_dir)]
+    return payload
 
 
 def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]:
@@ -410,6 +523,12 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
         def do_POST(self) -> None:  # noqa: N802
             parsed = urllib.parse.urlparse(self.path)
             try:
+                if parsed.path == "/api/upload":
+                    _json_response(
+                        self,
+                        _upload_request(self, urllib.parse.parse_qs(parsed.query)),
+                    )
+                    return
                 if parsed.path in {"/api/open", "/api/inspect"}:
                     body = _read_json(self)
                     path = body.get("path")
@@ -439,6 +558,11 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                     return
                 if parsed.path == "/api/close":
                     STORE.clear()
+                    with _UPLOAD_LOCK:
+                        upload_dirs = list(_UPLOAD_DIRS.values())
+                        _UPLOAD_DIRS.clear()
+                    for upload_dir in upload_dirs:
+                        shutil.rmtree(upload_dir, ignore_errors=True)
                     _json_response(self, {"ok": True})
                     return
                 _json_response(self, {"ok": False, "error": "not found"}, status=404)

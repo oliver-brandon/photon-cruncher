@@ -56,6 +56,34 @@ class ServiceFacadeTests(unittest.TestCase):
             results[0].processed.zall.shape[0],
         )
 
+    def test_signal_only_session_analyzes_when_isosbestic_is_disabled(self) -> None:
+        paired = self._session()
+        session = PhotometrySession(
+            streams={"x465A": paired.streams["x465A"]},
+            epocs=paired.epocs,
+            info=paired.info,
+            source_path=Path("signal-only.mat"),
+        )
+
+        self.assertEqual([channel.key for channel in service.list_channels(session)], ["A_465"])
+        result = service.analyze(
+            session,
+            "Cue",
+            settings_overrides={
+                "use_isosbestic": False,
+                "trange": (-2.0, 5.0),
+                "baseline_per": (-2.0, -0.5),
+                "downsample_factor": 1,
+                "smooth_factor": 3,
+                "set_baseline": False,
+            },
+        )[0]
+        self.assertEqual(result.stream_store, ("", "x465A"))
+        self.assertTrue(np.isfinite(result.processed.zall).all())
+
+        with self.assertRaisesRegex(ValueError, "paired 405"):
+            service.analyze(session, "Cue", channel_keys=["A_465"])
+
     def test_session_summary_and_plot_payload(self) -> None:
         session = self._session()
         summary = service.session_summary(session)

@@ -57,11 +57,13 @@ def open_session(path: str | Path) -> PhotometrySession:
 
 
 def discover_data_sources(folder: str | Path) -> list[Path]:
-    """Find top-level MAT exports and nested TDT blocks below ``folder``."""
+    """Find MAT exports and TDT blocks below ``folder``."""
     root = Path(folder).expanduser()
     if not root.is_dir():
         raise ValueError(f"Data folder not found: {root}")
-    paths = list(sorted(root.glob("*.mat")))
+    paths = sorted(
+        path for path in root.rglob("*") if path.is_file() and path.suffix.lower() == ".mat"
+    )
     paths.extend(discover_tdt_block_paths(root))
     return list(dict.fromkeys(path.resolve() for path in paths))
 
@@ -71,7 +73,7 @@ def list_channels(session: PhotometrySession) -> list[ChannelInfo]:
     return [
         ChannelInfo(
             key=key,
-            iso_stream=iso,
+            iso_stream=iso or "",
             signal_stream=signal,
             default_smooth=smooth,
         )
@@ -203,7 +205,7 @@ def analyze(
                 channel_key=channel_key,
                 processed=processed,
                 settings=settings,
-                stream_store=(iso_stream, signal_stream),
+                stream_store=(iso_stream or "", signal_stream),
             )
         )
     return results
