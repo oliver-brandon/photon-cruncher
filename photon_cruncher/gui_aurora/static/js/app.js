@@ -25,6 +25,7 @@
     outputDir: "",
     batchEpocs: null,
     batchChannels: null,
+    batchOutcomes: [],
     batchRunning: false,
     batchCancelled: false,
     settings: {
@@ -54,6 +55,11 @@
     ready: false,
     apiBase: "",
   };
+
+  let alignAnalyzeTimer = null;
+  let trialAnalyzeTimer = null;
+  let alignRequestSequence = 0;
+  let trialRequestSequence = 0;
 
   const modeNames = {
     data: "DATA",
@@ -410,7 +416,97 @@
     };
   }
 
+  function processingFormIsValid(trial = false) {
+    const ids = trial
+      ? [
+          "trialTr0",
+          "trialTr1",
+          "trialB0",
+          "trialB1",
+          "trialBaseAdjust",
+          "trialDownsample",
+          "trialSmoothFactor",
+          "trialPolynomialDegree",
+        ]
+      : [
+          "tr0",
+          "tr1",
+          "b0",
+          "b1",
+          "baseAdjust",
+          "downsample",
+          "smoothFactor",
+          "polynomialDegree",
+        ];
+    const inputs = ids.map((id) => $(id));
+    if (
+      inputs.some(
+        (input) => {
+          if (!input) return true;
+          if (input.disabled) return false;
+          return (
+            input.value.trim() === "" ||
+            !Number.isFinite(Number(input.value)) ||
+            !input.checkValidity()
+          );
+        }
+      )
+    ) {
+      return false;
+    }
+    const values = trial ? state.trialSettings : state.settings;
+    return (
+      values.trange_start < values.trange_end &&
+      values.baseline_start < values.baseline_end &&
+      values.downsample_factor >= 1 &&
+      values.polynomial_degree >= 1
+    );
+  }
+
+  function scheduleAlignAnalyze(delay = 280) {
+    clearTimeout(alignAnalyzeTimer);
+    if (
+      !hasSession() ||
+      !hasResults() ||
+      !state.analysisChannels.length ||
+      !processingFormIsValid(false)
+    ) {
+      return;
+    }
+    alignAnalyzeTimer = setTimeout(() => {
+      alignAnalyzeTimer = null;
+      runLiveAnalyze({ force: true }).catch((error) =>
+        toast(String(error.message || error))
+      );
+    }, delay);
+  }
+
+  function scheduleTrialAnalyze(delay = 280) {
+    clearTimeout(trialAnalyzeTimer);
+    if (
+      !hasSession() ||
+      !Object.keys(state.trialResultsByChannel).length ||
+      !state.trialAnalysisChannels.length ||
+      state.selectedTrialNumbers?.length === 0 ||
+      !processingFormIsValid(true)
+    ) {
+      return;
+    }
+    trialAnalyzeTimer = setTimeout(() => {
+      trialAnalyzeTimer = null;
+      runTrialAnalyze({ force: true }).catch((error) =>
+        toast(String(error.message || error))
+      );
+    }, delay);
+  }
+
   function resetAnalysisState() {
+    clearTimeout(alignAnalyzeTimer);
+    clearTimeout(trialAnalyzeTimer);
+    alignAnalyzeTimer = null;
+    trialAnalyzeTimer = null;
+    alignRequestSequence += 1;
+    trialRequestSequence += 1;
     state.resultsByChannel = {};
     state.filteredResultsByChannel = {};
     state.trialResultsByChannel = {};
@@ -481,6 +577,11 @@
     if ($("selLabel")) $("selLabel").textContent = "0 selected";
     if ($("alignSummary")) $("alignSummary").textContent = "Open a session to analyze";
     if ($("trialSummary")) $("trialSummary").textContent = "—";
+    if ($("trialCalloutText")) {
+      $("trialCalloutText").textContent =
+        "Selections re-filter the displayed mean / heatmap using the shared service.";
+    }
+    $("trialCallout")?.classList.remove("callout-warn");
     if ($("rPeak")) $("rPeak").textContent = "—";
     if ($("rLat")) $("rLat").textContent = "—";
     if ($("rN")) $("rN").textContent = "—";
@@ -512,6 +613,28 @@
 
   function sourceLabel(source) {
     return source.session?.session_name || source.path?.split(/[\\/]/).pop() || "session";
+  }
+
+  function classifiedSourceFor(value) {
+    return (state.session?.classified_sources || []).find(
+      (source) => source.key === value || source.label === value
+    );
+  }
+
+  function epocDisplayName(value) {
+    return classifiedSourceFor(value)?.label || value || "epoc";
+  }
+
+  function resultDisplayTitle(result, suffix) {
+    const fileName =
+      result?.source_path?.split(/[\\/]/).pop() ||
+      result?.session_name ||
+      state.session?.source_path?.split(/[\\/]/).pop() ||
+      state.session?.session_name ||
+      "session";
+    const parts = [fileName, epocDisplayName(result?.epoc), result?.channel];
+    if (suffix) parts.push(suffix);
+    return parts.filter(Boolean).join(" · ");
   }
 
   function rememberSource(path, session) {
@@ -593,7 +716,6 @@
     state.activeEpoc =
       epocs.find((e) => !["tick", "cam1"].includes(String(e).toLowerCase())) ||
       epocs[0] ||
-      (session.classified_sources || [])[0]?.key ||
       null;
     state.activeChannel = (session.channels || [])[0] || null;
     await runLiveAnalyze({ force: true });
@@ -716,7 +838,9 @@
       state.analysisChannels,
       (next) => {
         state.analysisChannels = next;
+        alignRequestSequence += 1;
         renderAnalysisChannelSelectors();
+        scheduleAlignAnalyze();
       }
     );
     renderChannelSelector(
@@ -725,7 +849,9 @@
       state.trialAnalysisChannels,
       (next) => {
         state.trialAnalysisChannels = next;
+        trialRequestSequence += 1;
         renderAnalysisChannelSelectors();
+        scheduleTrialAnalyze();
       }
     );
   }
@@ -828,9 +954,7 @@
     if ($("sessionMetadata"))
       $("sessionMetadata").textContent = JSON.stringify(session.info || {}, null, 2);
     const epocNames = Object.keys(session.epocs || {});
-    const classified = (session.classified_sources || []).map(
-      (s) => s.key || s.label
-    );
+    const classified = session.classified_sources || [];
     const channelChips = $("channelChips");
     if (channelChips) {
       channelChips.replaceChildren();
@@ -851,40 +975,57 @@
     const epocChips = $("epocChips");
     if (epocChips) {
       epocChips.replaceChildren();
-      const allEpocChips = [...epocNames, ...classified];
+      const allEpocChips = [
+        ...epocNames.map((value) => ({ value, label: value, classified: false })),
+        ...classified.map((source) => ({
+          value: source.key || source.label,
+          label: source.label || source.key,
+          classified: true,
+        })),
+      ];
       if (!allEpocChips.length) {
         const empty = document.createElement("span");
         empty.className = "quiet";
         empty.textContent = "No epocs";
         epocChips.appendChild(empty);
       }
-      allEpocChips.forEach((epoc, index) => {
+      allEpocChips.forEach((epoc) => {
         const chip = document.createElement("span");
-        chip.className = `chip ${index < epocNames.length ? "on" : "mag"}`;
-        chip.textContent = epoc;
+        chip.className = `chip ${epoc.classified ? "mag" : "on"}`;
+        chip.textContent = epoc.label;
+        if (epoc.classified) chip.title = `Derived source: ${epoc.value}`;
         epocChips.appendChild(chip);
       });
     }
-    const allEpocs = Array.from(new Set([...epocNames, ...classified]));
-    fillSelect($("alignEpoc"), allEpocs, (e) => e, (e) => e);
-    fillSelect($("trialEpoc"), allEpocs, (e) => e, (e) => e);
+    const trialEpocs = [
+      ...epocNames.map((value) => ({ value, label: value })),
+      ...classified.map((source) => ({
+        value: source.key || source.label,
+        label: source.label || source.key,
+      })),
+    ].filter(
+      (item, index, items) =>
+        items.findIndex((candidate) => candidate.value === item.value) === index
+    );
+    fillSelect($("alignEpoc"), epocNames, (e) => e, (e) => e);
+    fillSelect($("trialEpoc"), trialEpocs, (e) => e.label, (e) => e.value);
     fillSelect(
       $("alignChannel"),
       session.channels || [],
       (c) => c,
       (c) => c
     );
-    if (!state.activeEpoc || !allEpocs.includes(state.activeEpoc)) {
+    if (!state.activeEpoc || !epocNames.includes(state.activeEpoc)) {
       state.activeEpoc =
         epocNames.find((e) => !["tick", "cam1"].includes(String(e).toLowerCase())) ||
-        allEpocs[0] ||
+        epocNames[0] ||
         null;
     }
     if (!state.activeChannel || !(session.channels || []).includes(state.activeChannel)) {
       state.activeChannel = (session.channels || [])[0] || null;
     }
-    if (!state.trialEpoc || !allEpocs.includes(state.trialEpoc)) {
-      state.trialEpoc = state.activeEpoc;
+    if (!state.trialEpoc || !trialEpocs.some((item) => item.value === state.trialEpoc)) {
+      state.trialEpoc = state.activeEpoc || trialEpocs[0]?.value || null;
     }
     if (!state.trialChannel || !(session.channels || []).includes(state.trialChannel)) {
       state.trialChannel = state.activeChannel;
@@ -949,10 +1090,20 @@
       "downsample",
       "smoothFactor",
       "polynomialDegree",
-      "useIsosbestic",
-      "plotSmooth",
-      "applyBaseline",
-    ].forEach((id) => $(id)?.addEventListener("change", readSettingsFromForm));
+    ].forEach((id) =>
+      $(id)?.addEventListener("input", () => {
+        readSettingsFromForm();
+        alignRequestSequence += 1;
+        scheduleAlignAnalyze();
+      })
+    );
+    ["useIsosbestic", "plotSmooth", "applyBaseline"].forEach((id) =>
+      $(id)?.addEventListener("change", () => {
+        readSettingsFromForm();
+        alignRequestSequence += 1;
+        scheduleAlignAnalyze();
+      })
+    );
     $("alignSession")?.addEventListener("change", async () => {
       try {
         await openKnownSource($("alignSession").value, "align");
@@ -962,10 +1113,13 @@
     });
     $("alignAllChannels")?.addEventListener("click", () => {
       state.analysisChannels = [...(state.session?.channels || [])];
+      alignRequestSequence += 1;
       renderAnalysisChannelSelectors();
+      scheduleAlignAnalyze(0);
     });
     $("alignNoChannels")?.addEventListener("click", () => {
       state.analysisChannels = [];
+      alignRequestSequence += 1;
       renderAnalysisChannelSelectors();
     });
     $("alignChannel").addEventListener("change", () => {
@@ -976,8 +1130,6 @@
     });
     $("alignEpoc").addEventListener("change", async () => {
       state.activeEpoc = $("alignEpoc").value;
-      state.selectedTrialNumbers = null;
-      state.outcomeFilters = {};
       $("alignTag").textContent = state.activeEpoc || "—";
       if (!hasSession()) return;
       try {
@@ -1025,7 +1177,9 @@
       $("plotSmooth").checked = true;
       $("applyBaseline").checked = true;
       readSettingsFromForm();
+      alignRequestSequence += 1;
       toast("defaults restored");
+      scheduleAlignAnalyze(0);
     });
     $("alignExportCsv")?.addEventListener("click", () =>
       exportLive({
@@ -1047,6 +1201,12 @@
 
   async function runLiveAnalyze(opts = {}) {
     if (!state.path) throw new Error("No session open");
+    clearTimeout(alignAnalyzeTimer);
+    alignAnalyzeTimer = null;
+    readSettingsFromForm();
+    if (!processingFormIsValid(false)) {
+      throw new Error("Check the processing window and numeric settings");
+    }
     const epoc =
       state.activeEpoc ||
       $("alignEpoc").value ||
@@ -1056,20 +1216,24 @@
     if (window.auroraBridge?.setStatus) window.auroraBridge.setStatus("Analyzing…");
     const channels = [...state.analysisChannels];
     if (!channels.length) throw new Error("Select at least one channel to analyze");
-    const data = await nativeOrFetchAnalyze({
-      path: state.path,
-      epoc,
-      channels,
-      settings: settingsPayload(),
-      channel_settings: channelSettingsPayload(),
-      force: !!opts.force,
-      trial_numbers:
-        state.selectedTrialNumbers === null
-          ? undefined
-          : state.selectedTrialNumbers,
-    });
+    const requestId = ++alignRequestSequence;
+    let data;
+    try {
+      data = await nativeOrFetchAnalyze({
+        path: state.path,
+        epoc,
+        channels,
+        settings: settingsPayload(),
+        channel_settings: channelSettingsPayload(),
+        force: !!opts.force,
+      });
+    } catch (error) {
+      if (requestId !== alignRequestSequence) return null;
+      throw error;
+    }
+    if (requestId !== alignRequestSequence) return null;
     applyAnalyzePayload(data);
-    toast(`analyzed ${epoc}`);
+    toast(`analyzed ${epocDisplayName(epoc)}`);
     return data;
   }
 
@@ -1132,26 +1296,34 @@
     const mean = Float64Array.from(result.mean || []);
     const sem = Float64Array.from(result.sem || []);
     const z = (result.z || []).map((row) => Float64Array.from(row));
+    const plotIdentity = resultDisplayTitle(result);
     window.AuroraPlots.drawGlowTrace($("alignTrace"), {
       times,
       mean,
       sem,
       color: "#00f5d4",
+      title: `${plotIdentity} · Mean ± SEM`,
       baseline: result.settings?.baseline_per || [
         state.settings.baseline_start,
         state.settings.baseline_end,
       ],
     });
-    window.AuroraPlots.drawHeat($("alignHeat"), { times, matrix: z });
+    window.AuroraPlots.drawHeat($("alignHeat"), {
+      times,
+      matrix: z,
+      trialNumbers: result.trial_numbers || [],
+      title: `${plotIdentity} · Z-score heatmap`,
+    });
     if (mean.length) {
       const pk = window.AuroraPlots.peakLatency(times, mean);
       $("rPeak").textContent = pk.peak.toFixed(2) + " z";
       $("rLat").textContent = pk.lat.toFixed(2) + "s";
       $("rN").textContent = String(result.num_trials || z.length);
     }
-    $("alignTag").textContent = result.epoc || "epoc";
+    $("alignTag").textContent = epocDisplayName(result.epoc);
     $("alignSummary").textContent =
-      `${result.num_trials || 0} trials · ${result.channel} · ${correctionSummary(result)}`;
+      `${resultDisplayTitle(result)} · ` +
+      `${result.num_trials || 0} trials · ${correctionSummary(result)}`;
     $("hudTrials").textContent = String(result.num_trials || 0);
     const notices = [];
     const dropped = result.dropped_edge_trials || [];
@@ -1186,10 +1358,21 @@
       "trialDownsample",
       "trialSmoothFactor",
       "trialPolynomialDegree",
-      "trialUseIsosbestic",
-      "trialPlotSmooth",
-      "trialApplyBaseline",
-    ].forEach((id) => $(id)?.addEventListener("change", readTrialSettingsFromForm));
+    ].forEach((id) =>
+      $(id)?.addEventListener("input", () => {
+        readTrialSettingsFromForm();
+        trialRequestSequence += 1;
+        scheduleTrialAnalyze();
+      })
+    );
+    ["trialUseIsosbestic", "trialPlotSmooth", "trialApplyBaseline"].forEach(
+      (id) =>
+        $(id)?.addEventListener("change", () => {
+          readTrialSettingsFromForm();
+          trialRequestSequence += 1;
+          scheduleTrialAnalyze();
+        })
+    );
     $("trialSession")?.addEventListener("change", async () => {
       try {
         await openKnownSource($("trialSession").value, "trials");
@@ -1197,18 +1380,27 @@
         toast(String(e.message || e));
       }
     });
-    $("trialEpoc")?.addEventListener("change", () => {
+    $("trialEpoc")?.addEventListener("change", async () => {
       state.trialEpoc = $("trialEpoc").value;
       state.selectedTrialNumbers = null;
       state.checkedTrialNumbers = null;
       state.outcomeFilters = {};
+      if (!hasSession()) return;
+      try {
+        await runTrialAnalyze({ force: true, resetSelection: true });
+      } catch (error) {
+        toast(String(error.message || error));
+      }
     });
     $("trialAllChannels")?.addEventListener("click", () => {
       state.trialAnalysisChannels = [...(state.session?.channels || [])];
+      trialRequestSequence += 1;
       renderAnalysisChannelSelectors();
+      scheduleTrialAnalyze(0);
     });
     $("trialNoChannels")?.addEventListener("click", () => {
       state.trialAnalysisChannels = [];
+      trialRequestSequence += 1;
       renderAnalysisChannelSelectors();
     });
     $("trialLoad")?.addEventListener("click", async () => {
@@ -1259,6 +1451,12 @@
 
   async function runTrialAnalyze(opts = {}) {
     if (!state.path) throw new Error("No session open");
+    clearTimeout(trialAnalyzeTimer);
+    trialAnalyzeTimer = null;
+    readTrialSettingsFromForm();
+    if (!processingFormIsValid(true)) {
+      throw new Error("Check the Trial Explorer processing settings");
+    }
     const epoc = state.trialEpoc || $("trialEpoc")?.value;
     if (!epoc) throw new Error("Select a Trial Explorer epoc");
     if (!state.trialAnalysisChannels.length) {
@@ -1269,18 +1467,26 @@
       state.checkedTrialNumbers = null;
       state.outcomeFilters = {};
     }
-    const data = await nativeOrFetchAnalyze({
-      path: state.path,
-      epoc,
-      channels: [...state.trialAnalysisChannels],
-      settings: trialSettingsPayload(),
-      channel_settings: trialChannelSettingsPayload(),
-      force: !!opts.force,
-      trial_numbers:
-        state.selectedTrialNumbers === null
-          ? undefined
-          : state.selectedTrialNumbers,
-    });
+    const requestId = ++trialRequestSequence;
+    let data;
+    try {
+      data = await nativeOrFetchAnalyze({
+        path: state.path,
+        epoc,
+        channels: [...state.trialAnalysisChannels],
+        settings: trialSettingsPayload(),
+        channel_settings: trialChannelSettingsPayload(),
+        force: !!opts.force,
+        trial_numbers:
+          state.selectedTrialNumbers === null
+            ? undefined
+            : state.selectedTrialNumbers,
+      });
+    } catch (error) {
+      if (requestId !== trialRequestSequence) return null;
+      throw error;
+    }
+    if (requestId !== trialRequestSequence) return null;
     state.trialEpoc = data.epoc || epoc;
     const fullResults = data.all_results || data.results || [];
     state.trialResultsByChannel = {};
@@ -1305,7 +1511,7 @@
     populateTrialStreamFromLive();
     renderTrials();
     setBadge();
-    toast(`loaded trials for ${state.trialEpoc}`);
+    toast(`loaded trials for ${epocDisplayName(state.trialEpoc)}`);
     return data;
   }
 
@@ -1334,12 +1540,20 @@
         (result.trial_labels || [])[index] || "trial",
       ])
     );
+    const timesByNumber = new Map(
+      (result.trial_numbers || []).map((number, index) => [
+        number,
+        Number((result.trial_times || [])[index]),
+      ])
+    );
     const numbers = Array.from(common).sort((a, b) => a - b);
     const labels = numbers.map((number) => labelsByNumber.get(number) || "trial");
     const presentOutcomes = new Set();
+    const outcomeCounts = new Map();
     numbers.forEach((num, i) => {
       const label = labels[i] || "trial";
       presentOutcomes.add(label);
+      outcomeCounts.set(label, (outcomeCounts.get(label) || 0) + 1);
       const row = document.createElement("label");
       row.className = "trial-row";
       row.dataset.outcome = label || "unclassified";
@@ -1350,11 +1564,16 @@
       checkbox.checked = checked;
       checkbox.dataset.number = String(num);
       const labelText = document.createElement("span");
+      labelText.className = "trial-label";
       labelText.textContent = label || "trial";
       const trialNumber = document.createElement("span");
-      trialNumber.className = "n";
+      trialNumber.className = "n trial-number";
       trialNumber.textContent = `T${String(num).padStart(3, "0")}`;
-      row.append(checkbox, labelText, trialNumber);
+      const trialTime = document.createElement("span");
+      trialTime.className = "n trial-time";
+      const onset = timesByNumber.get(num);
+      trialTime.textContent = Number.isFinite(onset) ? `${onset.toFixed(3)} s` : "—";
+      row.append(checkbox, trialNumber, labelText, trialTime);
       checkbox.addEventListener("change", async () => {
         await refreshTrialSelection();
       });
@@ -1369,7 +1588,7 @@
       const b = document.createElement("button");
       b.type = "button";
       b.className = `chip-btn ${state.outcomeFilters[label] ? "on" : ""}`;
-      b.textContent = label;
+      b.textContent = `${label} (${outcomeCounts.get(label) || 0})`;
       b.dataset.outcome = label;
       b.addEventListener("click", async () => {
         state.outcomeFilters[label] = !state.outcomeFilters[label];
@@ -1388,7 +1607,7 @@
     );
     if (state.trialChannel) $("trialChannel").value = state.trialChannel;
     $("trialSub").textContent = state.trialEpoc
-      ? `${state.trialEpoc} · trial list`
+      ? `${epocDisplayName(state.trialEpoc)} · ${numbers.length} analyzed trials`
       : "trial list";
     filterTrials();
     syncSelected();
@@ -1429,7 +1648,10 @@
   async function refreshTrialSelection() {
     const numbers = syncSelected();
     if (!numbers.length) {
-      state.filteredResultsByChannel = {};
+      clearTimeout(trialAnalyzeTimer);
+      trialAnalyzeTimer = null;
+      trialRequestSequence += 1;
+      state.trialFilteredResultsByChannel = {};
       renderTrials();
       toast("select at least one trial");
       return;
@@ -1462,38 +1684,107 @@
     await refreshTrialSelection();
   }
 
+  function renderTrialStatus(fullResult, filteredResult) {
+    const source = classifiedSourceFor(state.trialEpoc);
+    const allSources = (state.session?.classified_sources || [])
+      .map((item) => item.label || item.key)
+      .filter(Boolean);
+    const total = fullResult?.num_trials || fullResult?.z?.length || 0;
+    const selected = filteredResult?.num_trials || filteredResult?.z?.length || 0;
+    const notices = [`${selected} of ${total} analyzed trials selected`];
+    const counts = new Map();
+    (fullResult?.trial_labels || []).forEach((label) => {
+      if (!label) return;
+      counts.set(label, (counts.get(label) || 0) + 1);
+    });
+    if (!counts.size && source?.trial_type_counts) {
+      Object.entries(source.trial_type_counts).forEach(([label, count]) =>
+        counts.set(label, Number(count))
+      );
+    }
+    if (counts.size) {
+      notices.push(
+        `types: ${Array.from(counts.entries())
+          .map(([label, count]) => `${label} ${count}`)
+          .join(", ")}`
+      );
+    } else if (allSources.length) {
+      notices.push(`classified sources available: ${allSources.join(", ")}`);
+    }
+    const dropped = fullResult?.dropped_edge_trials || [];
+    if (dropped.length) {
+      notices.push(`${dropped.length} incomplete edge trial(s) dropped`);
+    }
+    if (fullResult?.num_artifacts) {
+      notices.push(`${fullResult.num_artifacts} artifact trial(s) removed`);
+    }
+    (source?.warnings || []).forEach((warning) => notices.push(`warning: ${warning}`));
+    if ($("trialCalloutText")) $("trialCalloutText").textContent = notices.join(" · ");
+    const warns = dropped.length > 0 || !!fullResult?.num_artifacts || !!source?.warnings?.length;
+    $("trialCallout")?.classList.toggle("callout-warn", warns);
+  }
+
   function renderTrials() {
-    if (
-      !Object.keys(state.trialResultsByChannel).length ||
-      !Object.keys(state.trialFilteredResultsByChannel).length
-    ) {
-      clearCanvas($("trialTrace"));
-      clearCanvas($("trialHeat"));
+    const key = $("trialChannel")?.value || state.trialChannel;
+    const fullResult =
+      state.trialResultsByChannel[key] ||
+      Object.values(state.trialResultsByChannel)[0];
+    const result = state.trialFilteredResultsByChannel[key];
+    if (!fullResult || !result) {
+      const emptyMessage = state.selectedTrialNumbers?.length === 0
+        ? "Select at least one trial"
+        : "Analyze to populate trials";
+      const title = fullResult
+        ? resultDisplayTitle(fullResult)
+        : `${state.session?.source_path?.split(/[\\/]/).pop() || state.session?.session_name || "session"} · ${epocDisplayName(state.trialEpoc)}`;
+      window.AuroraPlots.drawGlowTrace($("trialTrace"), {
+        times: [],
+        mean: [],
+        title: `${title} · Mean ± SEM`,
+        emptyMessage,
+      });
+      window.AuroraPlots.drawHeat($("trialHeat"), {
+        times: [],
+        matrix: [],
+        title: `${title} · Z-score heatmap`,
+        emptyMessage,
+      });
       $("trialSummary").textContent = !hasSession()
         ? "Open a session first"
         : state.selectedTrialNumbers?.length === 0
           ? "Select at least one trial"
           : "Analyze to populate trials";
+      renderTrialStatus(fullResult, null);
       return;
     }
-    const key = $("trialChannel").value || state.trialChannel;
-    const result = state.trialFilteredResultsByChannel[key];
-    if (!result) return;
     const mode = $("trialMode").value;
     const times = Float64Array.from(result.times || []);
     const mean = Float64Array.from(result.mean || []);
     const sem = Float64Array.from(result.sem || []);
     const z = (result.z || []).map((row) => Float64Array.from(row));
+    const plotIdentity = resultDisplayTitle(result);
     window.AuroraPlots.drawGlowTrace($("trialTrace"), {
       times,
       mean,
       sem: mode === "mean" ? sem : null,
       individuals: mode === "individual" ? z : null,
       color: "#00f5d4",
+      title: `${plotIdentity} · ${mode === "mean" ? "Mean ± SEM" : "Individual trials"}`,
+      baseline: result.settings?.baseline_per || [
+        state.trialSettings.baseline_start,
+        state.trialSettings.baseline_end,
+      ],
     });
-    window.AuroraPlots.drawHeat($("trialHeat"), { times, matrix: z });
+    window.AuroraPlots.drawHeat($("trialHeat"), {
+      times,
+      matrix: z,
+      trialNumbers: result.trial_numbers || [],
+      title: `${plotIdentity} · Z-score heatmap`,
+    });
     $("trialSummary").textContent =
-      `${result.num_trials || z.length} trials · ${key} · ${correctionSummary(result)}`;
+      `${resultDisplayTitle(result)} · ` +
+      `${result.num_trials || z.length} trials · ${correctionSummary(result)}`;
+    renderTrialStatus(fullResult, result);
   }
 
   function sessionEpocChoices() {
@@ -1619,6 +1910,7 @@
       state.sources = [];
       state.batchEpocs = [];
       state.batchChannels = [];
+      state.batchOutcomes = [];
       renderSourceSelectors();
       renderBatchSelectors();
       renderBatchPage();
@@ -1787,6 +2079,71 @@
       $("abortBatch").disabled = true;
       renderBatchSelectors();
     }
+    renderBatchResults();
+  }
+
+  function renderBatchResults() {
+    const body = $("batchResults");
+    if (!body) return;
+    body.replaceChildren();
+    if (!state.batchOutcomes.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.className = "quiet";
+      cell.textContent = "No batch results yet";
+      row.appendChild(cell);
+      body.appendChild(row);
+      return;
+    }
+    state.batchOutcomes.forEach((outcome) => {
+      const row = document.createElement("tr");
+      const statusCell = document.createElement("td");
+      const status = document.createElement("span");
+      status.className = `batch-result-status ${outcome.status}`;
+      status.textContent = outcome.status;
+      statusCell.appendChild(status);
+      const sourceCell = document.createElement("td");
+      sourceCell.textContent = outcome.source || "—";
+      sourceCell.title = outcome.inputPath || outcome.source || "";
+      const epocCell = document.createElement("td");
+      epocCell.textContent = outcome.epoc || "—";
+      const channelsCell = document.createElement("td");
+      channelsCell.textContent = (outcome.channels || []).join(", ") || "—";
+      const detailCell = document.createElement("td");
+      detailCell.textContent = outcome.detail || "—";
+      detailCell.title = outcome.paths?.join("\n") || outcome.detail || "";
+      row.append(statusCell, sourceCell, epocCell, channelsCell, detailCell);
+      body.appendChild(row);
+    });
+  }
+
+  function appendBatchOutcomes(data) {
+    (data.exports || []).forEach((item) => {
+      const paths = [item.csv, item.figure].filter(Boolean);
+      const kinds = [item.csv ? "CSV" : "", item.figure ? "figure" : ""].filter(Boolean);
+      state.batchOutcomes.push({
+        status: "exported",
+        source: item.session,
+        epoc: item.epoc,
+        channels: item.channel ? [item.channel] : [],
+        detail: `${kinds.join(" + ")} written`,
+        paths,
+      });
+    });
+    for (const [key, status] of [["skipped", "skipped"], ["errors", "failed"]]) {
+      (data[key] || []).forEach((item) => {
+        state.batchOutcomes.push({
+          status,
+          source: item.session || item.input_path?.split(/[\\/]/).pop(),
+          inputPath: item.input_path,
+          epoc: item.epoc,
+          channels: item.channels || [],
+          detail: item.reason || "No reason reported",
+        });
+      });
+    }
+    renderBatchResults();
   }
 
   function setBatch(pct, detail, status) {
@@ -1840,6 +2197,7 @@
 
     state.batchRunning = true;
     state.batchCancelled = false;
+    state.batchOutcomes = [];
     renderBatchSelectors();
     renderBatchPage();
     const settings = settingsPayload();
@@ -1872,6 +2230,7 @@
         exports.push(...(data.exports || []));
         skipped.push(...(data.skipped || []));
         errors.push(...(data.errors || []));
+        appendBatchOutcomes(data);
       }
       if (state.batchCancelled) {
         setBatch(
@@ -1895,6 +2254,13 @@
         window.auroraBridge.setStatus(`Exported to ${outputDir}`);
       }
     } catch (err) {
+      state.batchOutcomes.push({
+        status: "failed",
+        source: "Batch request",
+        epoc: "—",
+        channels,
+        detail: String(err.message || err),
+      });
       setBatch(0, "batch export failed", "FAIL");
       toast(String(err.message || err));
     } finally {
@@ -1937,8 +2303,7 @@
       toast("choose at least one channel");
       return;
     }
-    let outputDir = state.outputDir || $("exportDir")?.value.trim() || "";
-    if (!outputDir) outputDir = await chooseExportDestination();
+    const outputDir = await chooseExportDestination();
     if (!outputDir) return;
     state.outputDir = outputDir;
     if ($("exportDir")) $("exportDir").value = outputDir;

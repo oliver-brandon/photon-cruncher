@@ -66,8 +66,43 @@ bundles on `v*` tags or manual workflow dispatch.
 
 ## Update the App
 
-Download the newest release zip and replace the previous Aurora app/folder.
-Data files and exports live outside the app bundle.
+Photon Cruncher does not update itself automatically. Download the newest
+release zip and replace the old app copy. Recordings and exports live outside
+the app bundle, and saved processing settings are kept in the user's app
+settings, so updating should not remove them.
+
+### Update on Windows
+
+1. Quit Photon Cruncher Aurora.
+2. Open **Releases** on the GitHub repository and download the newest
+   `Photon-Cruncher-Aurora-v2.0-Windows.zip`.
+3. Right-click the zip and choose **Extract All...**.
+4. Rename the existing `Photon Cruncher Aurora v2.0` folder to
+   `Photon Cruncher Aurora old`.
+5. Move the newly extracted `Photon Cruncher Aurora v2.0` folder into the same
+   location.
+6. Open the new folder and double-click `Photon Cruncher Aurora v2.0.exe`.
+7. Confirm the new app opens, then delete `Photon Cruncher Aurora old`.
+
+Keep the whole extracted folder together. Do not move only the `.exe`; it needs
+the bundled files beside it. The rename-first approach keeps a working copy
+available until the update is verified.
+
+### Update on macOS
+
+1. Quit Photon Cruncher Aurora.
+2. Open **Releases** on the GitHub repository and download the newest
+   `Photon-Cruncher-Aurora-v2.0-macOS.zip`.
+3. Double-click the zip to expand it.
+4. In **Applications** (or wherever the old copy lives), rename the existing
+   app to `Photon Cruncher Aurora old.app`.
+5. Drag the new `Photon Cruncher Aurora v2.0.app` into that location.
+6. Open the new app and confirm it works, then delete the old copy.
+
+If macOS shows the Apple verification warning again, Control-click the new app,
+choose **Open**, then choose **Open** again. If that option is unavailable, use
+**System Settings → Privacy & Security → Open Anyway** for a build downloaded
+from the lab's GitHub release page.
 
 ## Data Expectations
 
@@ -140,9 +175,10 @@ Opens a real desktop window (PySide6 + Qt WebEngine) wrapping the Aurora web UI:
 In the shell:
 - **File → Open MAT / TDT** uses native dialogs
 - Analysis runs through the local API → `photon_cruncher.service`
-- Align exposes explicit channels-to-analyze controls and separate CSV/figure exports
-- Trial Explorer has its own source, epoc, channel, processing, and smoothing controls
-- Batch Export accepts multiple MAT files, mixed-data folders, and TDT tanks
+- Align exposes explicit channel controls, reactive processing updates, and separate CSV/figure exports
+- Trial Explorer shows original trial numbers, onset times, classified outcomes, and selected-trial plots/exports
+- Displayed plots include file, epoc, channel, labeled axes, and integer trial-aligned heatmap ticks
+- Batch Export accepts multiple MAT files, mixed-data folders, and TDT tanks, with detailed exported/skipped/failed results
 - Processing and export-folder settings persist between launches
 
 ### Browser mode (optional)

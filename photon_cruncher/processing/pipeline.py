@@ -241,8 +241,8 @@ def process_channel(
 
         good_405 = _artifact_mask(trials_405, settings.artifact_405)
         good_465 = _artifact_mask(trials_465, settings.artifact_465)
-        num_artifacts = int((~good_405).sum() + (~good_465).sum())
         good_trials = good_405 & good_465
+        num_artifacts = int((~good_trials).sum())
         trials_405 = [
             trial for trial, keep in zip(trials_405, good_trials) if keep
         ]

@@ -116,6 +116,8 @@ class AuroraAppTests(unittest.TestCase):
             self.assertIn("times", result)
             self.assertIn("mean", result)
             self.assertIn("z", result)
+            self.assertIn("trial_times", result)
+            self.assertEqual(len(result["trial_times"]), result["num_trials"])
             self.assertGreater(len(result["times"]), 10)
 
             with tempfile.TemporaryDirectory() as tmp:

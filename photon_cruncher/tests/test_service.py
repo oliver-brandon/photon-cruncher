@@ -6,6 +6,10 @@ from pathlib import Path
 
 import numpy as np
 
+from photon_cruncher.analysis.trial_classifier import (
+    CORRECT_NOT_REWARDED,
+    CORRECT_REWARDED,
+)
 from photon_cruncher.model import Epoc, PhotometrySession, Stream
 from photon_cruncher import service
 from photon_cruncher.product import AURORA_APP_NAME, aurora_app_title
@@ -107,8 +111,28 @@ class ServiceFacadeTests(unittest.TestCase):
         self.assertEqual(len(payload["times"]), result.processed.ts.size)
         self.assertEqual(len(payload["mean"]), result.processed.ts.size)
         self.assertEqual(len(payload["z"]), result.processed.zall.shape[0])
+        self.assertEqual(payload["trial_times"], [10.0, 20.0, 30.0])
         self.assertTrue(payload["settings"]["use_isosbestic"])
         self.assertEqual(payload["settings"]["polynomial_degree"], 1)
+
+    def test_session_summary_reports_classified_trial_type_counts(self) -> None:
+        session = self._session()
+        session.epocs.update(
+            {
+                "cRewA": Epoc(name="cRewA", onset=np.array([10.0, 30.0])),
+                "cNoRewA": Epoc(name="cNoRewA", onset=np.array([20.0])),
+            }
+        )
+
+        summary = service.session_summary(session)
+
+        self.assertEqual(len(summary["classified_sources"]), 1)
+        source = summary["classified_sources"][0]
+        self.assertEqual(source["label"], "Classified trials")
+        self.assertEqual(
+            source["trial_type_counts"],
+            {CORRECT_NOT_REWARDED: 1, CORRECT_REWARDED: 2},
+        )
 
     def test_isosbestic_settings_overrides(self) -> None:
         settings = service.settings_for_channel(

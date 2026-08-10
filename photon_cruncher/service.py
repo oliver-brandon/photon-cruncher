@@ -350,6 +350,14 @@ def session_summary(session: PhotometrySession) -> dict[str, Any]:
                 "key": source.key,
                 "label": source.label,
                 "events": len(source.trials),
+                "trial_type_counts": {
+                    label: sum(
+                        1 for trial in source.trials if trial.trial_type == label
+                    )
+                    for label in sorted(
+                        {trial.trial_type for trial in source.trials}
+                    )
+                },
                 "warnings": list(source.warnings),
             }
             for source in sources
@@ -377,6 +385,7 @@ def result_plot_payload(result: AnalysisResult) -> dict[str, Any]:
         "dropped_edge_trials": list(processed.dropped_edge_trials),
         "trial_numbers": list(processed.trial_numbers),
         "trial_labels": list(processed.trial_labels),
+        "trial_times": _json_safe(processed.trial_times),
         "settings": {
             "trange": list(result.settings.trange),
             "baseline_per": list(result.settings.baseline_per),

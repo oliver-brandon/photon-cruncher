@@ -327,7 +327,7 @@
                   <summary>Trial processing settings</summary>
                   <div class="field-grid">
                     <label class="field"><span>TRANGE start</span><input id="trialTr0" type="number" min="-60" max="60" step="0.1" value="-2" /></label>
-                    <label class="field"><span>TRANGE end</span><input id="trialTr1" type="number" min="-60" max="120" step="0.1" value="5" /></label>
+                    <label class="field"><span>TRANGE end after epoc</span><input id="trialTr1" type="number" min="-60" max="120" step="0.1" value="5" /></label>
                     <label class="field"><span>Baseline start</span><input id="trialB0" type="number" min="-60" max="60" step="0.1" value="-3" /></label>
                     <label class="field"><span>Baseline end</span><input id="trialB1" type="number" min="-60" max="60" step="0.1" value="-1" /></label>
                     <label class="field"><span>Baseline adjust</span><input id="trialBaseAdjust" type="number" min="-120" max="0" step="0.1" value="-2" /></label>
@@ -350,9 +350,9 @@
                 <div class="trial-list" id="trialStream" role="list"></div>
               </aside>
               <div class="plot-stack">
-                <div class="callout">
+                <div class="callout" id="trialCallout">
                   <span class="callout-mark">i</span>
-                  <span>Selections re-filter the displayed mean / heatmap using the shared service.</span>
+                  <span id="trialCalloutText">Selections re-filter the displayed mean / heatmap using the shared service.</span>
                 </div>
                 <div class="plot-card card grow">
                   <div class="plot-head">
@@ -491,6 +491,19 @@
                     <strong id="batchPct">0%</strong>
                   </div>
                   <div class="progress"><div class="progress-bar" id="batchBar" style="width:0%"></div></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Batch results</div>
+                  <div class="table-wrap batch-results-wrap">
+                    <table class="table batch-results-table">
+                      <thead>
+                        <tr><th>Status</th><th>Source</th><th>Epoc</th><th>Channels</th><th>Detail</th></tr>
+                      </thead>
+                      <tbody id="batchResults">
+                        <tr><td colspan="5" class="quiet">No batch results yet</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>

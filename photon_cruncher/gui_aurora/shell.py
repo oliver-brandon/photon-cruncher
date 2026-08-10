@@ -409,8 +409,8 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         for name, page in (
             ("Ingest", "data"),
             ("Align", "align"),
-            ("Spectrum", "trials"),
-            ("Launch", "batch"),
+            ("Trial Explorer", "trials"),
+            ("Batch Export", "batch"),
         ):
             action = view_menu.addAction(name)
             action.triggered.connect(lambda _=False, p=page: self._goto_page(p))

@@ -767,7 +767,11 @@ h1 {
 .table td { color: var(--ink); }
 .table tbody tr:hover td { background: rgba(0, 245, 212, 0.04); }
 
-.trial-panel { max-height: calc(100vh - 180px); overflow: auto; }
+.trial-panel {
+  max-height: calc(100vh - 180px);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 .search { width: 100%; margin-bottom: 10px; }
 .filter-grid {
   display: flex;
@@ -783,6 +787,9 @@ h1 {
   padding: 5px 10px;
   font-size: 11px;
   font-family: var(--mono);
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .filter-grid .chip-btn.on {
   color: var(--cyan);
@@ -794,12 +801,12 @@ h1 {
   flex-direction: column;
   gap: 4px;
   max-height: 420px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   margin-top: 4px;
 }
 .trial-row, .import-row {
   display: grid;
-  grid-template-columns: 18px 1fr auto;
   gap: 8px;
   align-items: center;
   padding: 8px 8px;
@@ -807,6 +814,14 @@ h1 {
   border: 1px solid transparent;
   color: var(--mute);
 }
+.import-row { grid-template-columns: 18px minmax(0, 1fr) auto; }
+.trial-row {
+  grid-template-columns: 18px 50px minmax(0, 1fr) auto;
+  font-size: 12px;
+}
+.trial-row > span { min-width: 0; }
+.trial-label { overflow-wrap: anywhere; }
+.trial-time { white-space: nowrap; text-align: right; }
 .trial-row:hover, .import-row:hover {
   background: rgba(0, 245, 212, 0.04);
   border-color: var(--line);
@@ -834,6 +849,23 @@ button.import-row.active {
   grid-template-columns: 1.15fr 0.95fr;
   gap: 14px;
 }
+.batch-results-wrap { max-height: 440px; }
+.batch-results-table { table-layout: fixed; }
+.batch-results-table th:nth-child(1) { width: 15%; }
+.batch-results-table th:nth-child(2) { width: 22%; }
+.batch-results-table th:nth-child(3) { width: 15%; }
+.batch-results-table th:nth-child(4) { width: 18%; }
+.batch-results-table td { vertical-align: top; overflow-wrap: anywhere; }
+.batch-result-status {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+.batch-result-status.exported { color: var(--cyan); }
+.batch-result-status.skipped { color: var(--warn); }
+.batch-result-status.failed { color: var(--magenta); }
 .check-row {
   display: flex;
   flex-wrap: wrap;

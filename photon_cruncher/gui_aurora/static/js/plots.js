@@ -25,57 +25,117 @@
     return { min: min - p, max: max + p };
   }
 
+  function formatTick(value) {
+    const absolute = Math.abs(value);
+    if (absolute >= 100) return value.toFixed(0);
+    if (absolute >= 10) return value.toFixed(1);
+    return value.toFixed(2).replace(/\.00$/, "");
+  }
+
+  function clippedText(ctx, value, maxWidth) {
+    const text = String(value || "");
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    let clipped = text;
+    while (clipped.length > 1 && ctx.measureText(`${clipped}…`).width > maxWidth) {
+      clipped = clipped.slice(0, -1);
+    }
+    return `${clipped}…`;
+  }
+
+  function fillPanel(ctx, w, h) {
+    const gradient = ctx.createLinearGradient(0, 0, w, h);
+    gradient.addColorStop(0, "rgba(4,10,18,0.95)");
+    gradient.addColorStop(1, "rgba(10,8,20,0.95)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  function drawTitle(ctx, title, w) {
+    if (!title) return;
+    ctx.fillStyle = "rgba(231,248,255,0.92)";
+    ctx.font = "600 11px Inter, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(clippedText(ctx, title, Math.max(40, w - 24)), 12, 18);
+  }
+
+  function drawEmpty(ctx, w, h, message) {
+    ctx.fillStyle = "rgba(139,163,184,0.9)";
+    ctx.font = "12px JetBrains Mono, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(message || "no data", w / 2, h / 2);
+    ctx.textAlign = "left";
+  }
+
   function drawGlowTrace(canvas, opts) {
     const { ctx, w, h } = prep(canvas);
     ctx.clearRect(0, 0, w, h);
+    fillPanel(ctx, w, h);
+    drawTitle(ctx, opts.title, w);
 
-    // dark panel
-    const g = ctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0, "rgba(4,10,18,0.95)");
-    g.addColorStop(1, "rgba(10,8,20,0.95)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, w, h);
-
-    const plot = { l: 48, t: 28, w: w - 70, h: h - 56 };
-    const times = opts.times;
-    const mean = opts.mean;
+    const times = Array.from(opts.times || []);
+    const mean = Array.from(opts.mean || []);
     const sem = opts.sem;
     const color = opts.color || "#00f5d4";
+    if (!times.length || !mean.length) {
+      drawEmpty(ctx, w, h, opts.emptyMessage || "no signal available");
+      return;
+    }
+    const plot = {
+      l: 58,
+      t: opts.title ? 34 : 18,
+      w: Math.max(1, w - 76),
+      h: Math.max(1, h - (opts.title ? 78 : 62)),
+    };
     const x0 = times[0];
     const x1 = times[times.length - 1];
+    const xSpan = x1 === x0 ? 1 : x1 - x0;
 
     const ys = [];
     if (opts.individuals) {
-      for (const row of opts.individuals) for (const v of row) ys.push(v);
+      for (const row of opts.individuals) {
+        for (const v of row) if (Number.isFinite(v)) ys.push(v);
+      }
     } else {
       for (let i = 0; i < mean.length; i += 1) {
-        ys.push(mean[i]);
+        if (Number.isFinite(mean[i])) ys.push(mean[i]);
         if (sem) {
-          ys.push(mean[i] + sem[i], mean[i] - sem[i]);
+          if (Number.isFinite(sem[i])) {
+            ys.push(mean[i] + sem[i], mean[i] - sem[i]);
+          }
         }
       }
     }
     const yb = bounds(ys);
 
-    const X = (t) => plot.l + ((t - x0) / (x1 - x0)) * plot.w;
+    const X = (t) => plot.l + ((t - x0) / xSpan) * plot.w;
     const Y = (v) => plot.t + ((yb.max - v) / (yb.max - yb.min)) * plot.h;
 
-    // grid
+    ctx.font = "10px JetBrains Mono, monospace";
+    ctx.fillStyle = "rgba(139,163,184,0.88)";
     ctx.strokeStyle = "rgba(100,140,180,0.08)";
     for (let i = 0; i <= 4; i += 1) {
       const y = plot.t + (plot.h * i) / 4;
+      const value = yb.max - ((yb.max - yb.min) * i) / 4;
       ctx.beginPath();
       ctx.moveTo(plot.l, y);
       ctx.lineTo(plot.l + plot.w, y);
       ctx.stroke();
+      ctx.textAlign = "right";
+      ctx.fillText(formatTick(value), plot.l - 7, y + 3);
+    }
+    for (let i = 0; i <= 4; i += 1) {
+      const x = plot.l + (plot.w * i) / 4;
+      const value = x0 + (xSpan * i) / 4;
+      ctx.textAlign = "center";
+      ctx.fillText(formatTick(value), x, plot.t + plot.h + 16);
     }
 
     // baseline band
     if (opts.baseline) {
-      const a = X(opts.baseline[0]);
-      const b = X(opts.baseline[1]);
+      const a = Math.max(plot.l, Math.min(plot.l + plot.w, X(opts.baseline[0])));
+      const b = Math.max(plot.l, Math.min(plot.l + plot.w, X(opts.baseline[1])));
       ctx.fillStyle = "rgba(0,245,212,0.07)";
-      ctx.fillRect(a, plot.t, Math.max(1, b - a), plot.h);
+      ctx.fillRect(Math.min(a, b), plot.t, Math.max(1, Math.abs(b - a)), plot.h);
     }
 
     // zero
@@ -96,7 +156,7 @@
       ctx.lineWidth = 1;
       for (const row of opts.individuals) {
         ctx.beginPath();
-        for (let i = 0; i < times.length; i += 1) {
+        for (let i = 0; i < Math.min(times.length, row.length); i += 1) {
           const x = X(times[i]);
           const y = Y(row[i]);
           if (i === 0) ctx.moveTo(x, y);
@@ -109,8 +169,15 @@
 
     if (sem && !opts.individuals) {
       ctx.beginPath();
-      for (let i = 0; i < times.length; i += 1) ctx.lineTo(X(times[i]), Y(mean[i] + sem[i]));
-      for (let i = times.length - 1; i >= 0; i -= 1) ctx.lineTo(X(times[i]), Y(mean[i] - sem[i]));
+      for (let i = 0; i < times.length; i += 1) {
+        const x = X(times[i]);
+        const y = Y(mean[i] + sem[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      for (let i = times.length - 1; i >= 0; i -= 1) {
+        ctx.lineTo(X(times[i]), Y(mean[i] - sem[i]));
+      }
       ctx.closePath();
       ctx.fillStyle = color + "33";
       ctx.fill();
@@ -147,11 +214,15 @@
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    ctx.fillStyle = "rgba(139,163,184,0.85)";
-    ctx.font = "11px JetBrains Mono, monospace";
-    ctx.fillText(x0.toFixed(1) + "s", plot.l, plot.t + plot.h + 18);
-    ctx.textAlign = "right";
-    ctx.fillText(x1.toFixed(1) + "s", plot.l + plot.w, plot.t + plot.h + 18);
+    ctx.fillStyle = "rgba(139,163,184,0.95)";
+    ctx.font = "11px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Time (s)", plot.l + plot.w / 2, h - 8);
+    ctx.save();
+    ctx.translate(13, plot.t + plot.h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText("Z-score", 0, 0);
+    ctx.restore();
     ctx.textAlign = "left";
   }
 
@@ -176,23 +247,32 @@
   function drawHeat(canvas, opts) {
     const { ctx, w, h } = prep(canvas);
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "rgba(4,8,16,0.95)";
-    ctx.fillRect(0, 0, w, h);
+    fillPanel(ctx, w, h);
+    drawTitle(ctx, opts.title, w);
     const matrix = opts.matrix || [];
-    if (!matrix.length) {
-      ctx.fillStyle = "#8ba3b8";
-      ctx.font = "12px JetBrains Mono, monospace";
-      ctx.fillText("no trials selected", 16, 28);
+    if (!matrix.length || !matrix[0]?.length) {
+      drawEmpty(ctx, w, h, opts.emptyMessage || "no trials selected");
       return;
     }
-    const plot = { l: 10, t: 10, w: w - 20, h: h - 20 };
+    const plot = {
+      l: 46,
+      t: opts.title ? 32 : 14,
+      w: Math.max(1, w - 58),
+      h: Math.max(1, h - (opts.title ? 72 : 54)),
+    };
     let min = Infinity;
     let max = -Infinity;
-    for (const row of matrix) for (const v of row) {
-      if (v < min) min = v;
-      if (v > max) max = v;
+    for (const row of matrix) {
+      for (const v of row) {
+        if (!Number.isFinite(v)) continue;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
     }
-    if (min === max) {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      min = -1;
+      max = 1;
+    } else if (min === max) {
       min -= 1;
       max += 1;
     }
@@ -201,14 +281,21 @@
     const cw = plot.w / cols;
     const ch = plot.h / rows;
     for (let r = 0; r < rows; r += 1) {
+      const drawRow = rows - 1 - r;
       for (let c = 0; c < cols; c += 1) {
-        const t = (matrix[r][c] - min) / (max - min);
-        ctx.fillStyle = heatColor(t);
-        ctx.fillRect(plot.l + c * cw, plot.t + r * ch, Math.ceil(cw), Math.ceil(ch));
+        const value = matrix[r][c];
+        const t = (value - min) / (max - min);
+        ctx.fillStyle = Number.isFinite(value) ? heatColor(t) : "rgb(8,12,28)";
+        ctx.fillRect(
+          plot.l + c * cw,
+          plot.t + drawRow * ch,
+          Math.ceil(cw),
+          Math.ceil(ch)
+        );
       }
     }
     // zero marker
-    const times = opts.times;
+    const times = Array.from(opts.times || []);
     if (times && times[0] < 0 && times[times.length - 1] > 0) {
       const zx = plot.l + ((0 - times[0]) / (times[times.length - 1] - times[0])) * plot.w;
       ctx.strokeStyle = "rgba(255,255,255,0.55)";
@@ -217,6 +304,45 @@
       ctx.lineTo(zx, plot.t + plot.h);
       ctx.stroke();
     }
+
+    ctx.fillStyle = "rgba(139,163,184,0.9)";
+    ctx.font = "10px JetBrains Mono, monospace";
+    if (times.length) {
+      const x0 = times[0];
+      const x1 = times[times.length - 1];
+      for (let i = 0; i <= 2; i += 1) {
+        const x = plot.l + (plot.w * i) / 2;
+        const value = x0 + ((x1 - x0) * i) / 2;
+        ctx.textAlign = "center";
+        ctx.fillText(formatTick(value), x, plot.t + plot.h + 15);
+      }
+    }
+    const trialNumbers = opts.trialNumbers || [];
+    const maxTicks = Math.max(1, Math.min(rows, Math.floor(plot.h / 28)));
+    const tickIndices = [];
+    if (maxTicks === 1) {
+      tickIndices.push(0);
+    } else {
+      for (let i = 0; i < maxTicks; i += 1) {
+        tickIndices.push(Math.round((i * (rows - 1)) / (maxTicks - 1)));
+      }
+    }
+    Array.from(new Set(tickIndices)).forEach((rowIndex) => {
+      const raw = Number(trialNumbers[rowIndex] ?? rowIndex + 1);
+      const label = Number.isFinite(raw) ? String(Math.round(raw)) : String(rowIndex + 1);
+      const y = plot.t + (rows - rowIndex - 0.5) * ch;
+      ctx.textAlign = "right";
+      ctx.fillText(label, plot.l - 6, y + 3);
+    });
+    ctx.font = "11px Inter, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Time (s)", plot.l + plot.w / 2, h - 8);
+    ctx.save();
+    ctx.translate(12, plot.t + plot.h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText("Trial", 0, 0);
+    ctx.restore();
+    ctx.textAlign = "left";
   }
 
   function subset(channel, indices) {

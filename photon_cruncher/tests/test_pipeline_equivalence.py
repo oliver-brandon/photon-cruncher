@@ -118,6 +118,40 @@ class PipelineEquivalenceTests(unittest.TestCase):
         self.assertEqual(processed.num_artifacts, 0)
         self.assertTrue(np.isfinite(processed.zall).all())
 
+    def test_artifact_count_reports_unique_removed_trials(self) -> None:
+        fs = 10.0
+        time = np.arange(0.0, 40.0, 1.0 / fs)
+        control = 1.0 + 0.1 * np.sin(time)
+        signal = 2.0 + 0.3 * control + 0.1 * np.cos(time)
+        artifact_slice = slice(int(19.5 * fs), int(20.5 * fs))
+        control[artifact_slice] = 100.0
+        signal[artifact_slice] = 100.0
+        session = PhotometrySession(
+            streams={
+                "x405A": Stream("x405A", fs, control),
+                "x465A": Stream("x465A", fs, signal),
+            },
+            epocs={"Cue": Epoc("Cue", np.array([10.0, 20.0, 30.0]))},
+            info={},
+            source_path=Path("artifact-count.mat"),
+        )
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, -0.5),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+            artifact_405=50.0,
+            artifact_465=50.0,
+        )
+
+        processed = process_channel(
+            session, "x405A", "x465A", session.epocs["Cue"], settings
+        )
+
+        self.assertEqual(processed.num_artifacts, 1)
+        self.assertEqual(processed.trial_numbers, [1, 3])
+
     def test_polynomial_degree_changes_isosbestic_fit(self) -> None:
         session = _golden_session()
         linear_settings = _golden_settings()
