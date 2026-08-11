@@ -1,18 +1,80 @@
-name: Build desktop apps
+name: Publish Aurora dev updates
 
 on:
   workflow_dispatch:
   push:
     tags:
-      - "v*"
+      - "aurora-dev-v*"
 
 permissions:
   contents: write
 
+concurrency:
+  group: aurora-dev-update-publish
+  cancel-in-progress: false
+
 jobs:
+  validate-source:
+    name: Validate dev release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      version: ${{ steps.metadata.outputs.version }}
+      velopack_version: ${{ steps.metadata.outputs.velopack_version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read and validate canonical metadata
+        id: metadata
+        env:
+          PHOTON_CRUNCHER_UPDATE_SYSTEM: Windows
+          PHOTON_CRUNCHER_UPDATE_MACHINE: AMD64
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/version_metadata.py --check
+          echo "version=$(python scripts/version_metadata.py --field version)" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$(python scripts/version_metadata.py --field update_release_tag)" >> "$GITHUB_OUTPUT"
+          echo "velopack_version=$(python scripts/version_metadata.py --field velopack_version)" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce dev-only publication
+        env:
+          EXPECTED_TAG: ${{ steps.metadata.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ "${GITHUB_REF}" == "refs/heads/dev" ]] || {
+              echo "Manual Aurora update publishing must run from the dev branch." >&2
+              exit 1
+            }
+          else
+            [[ "${GITHUB_REF_NAME}" == "${EXPECTED_TAG}" ]] || {
+              echo "Tag ${GITHUB_REF_NAME} does not match ${EXPECTED_TAG}." >&2
+              exit 1
+            }
+            git fetch origin dev
+            git merge-base --is-ancestor "${GITHUB_SHA}" origin/dev || {
+              echo "The update tag must point to a commit contained in dev." >&2
+              exit 1
+            }
+          fi
+
   build-windows:
-    name: Windows Aurora bundle
+    name: Build Windows installer and feed
+    needs: validate-source
     runs-on: windows-latest
+    outputs:
+      channel: ${{ steps.metadata.outputs.channel }}
 
     steps:
       - name: Check out repository
@@ -23,19 +85,56 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build Windows Aurora app
-        shell: pwsh
-        run: .\scripts\build_windows_app.ps1
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
 
-      - name: Upload Windows artifact
+      - name: Install pinned Velopack CLI
+        shell: pwsh
+        run: dotnet tool install --global vpk --version "${{ needs.validate-source.outputs.velopack_version }}"
+
+      - name: Read Windows update channel
+        id: metadata
+        shell: pwsh
+        run: |
+          $channel = (python scripts/version_metadata.py --field update_channel).Trim()
+          "channel=$channel" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Download previous Windows dev release
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist\velopack-releases -Force | Out-Null
+          vpk download github `
+            --outputDir dist\velopack-releases `
+            --channel "${{ steps.metadata.outputs.channel }}" `
+            --repoUrl "https://github.com/${{ github.repository }}" `
+            --token $env:GITHUB_TOKEN `
+            --pre true
+
+      - name: Build Windows Velopack release
+        env:
+          VELOPACK_OUTPUT_DIR: ${{ github.workspace }}\dist\velopack-releases
+        shell: pwsh
+        run: .\scripts\package_windows_update.ps1
+
+      - name: Upload Windows release payload
         uses: actions/upload-artifact@v4
         with:
-          name: Photon-Cruncher-Aurora-v2.0-Windows
-          path: dist/Photon-Cruncher-Aurora-v2.0-Windows.zip
+          name: aurora-dev-windows-release
+          path: dist/velopack-releases/*
+          if-no-files-found: error
+          retention-days: 7
 
   build-macos:
-    name: macOS Aurora bundle
-    runs-on: macos-latest
+    name: Build signed macOS installer and feed
+    needs: validate-source
+    runs-on: macos-15
+    outputs:
+      channel: ${{ steps.metadata.outputs.channel }}
 
     steps:
       - name: Check out repository
@@ -46,32 +145,183 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build macOS Aurora app
-        run: scripts/build_macos_app.sh
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
 
-      - name: Upload macOS artifact
+      - name: Install pinned Velopack CLI
+        run: dotnet tool install --global vpk --version "${{ needs.validate-source.outputs.velopack_version }}"
+
+      - name: Read macOS update channel
+        id: metadata
+        run: echo "channel=$(python scripts/version_metadata.py --field update_channel)" >> "$GITHUB_OUTPUT"
+
+      - name: Require Apple signing secrets
+        env:
+          APP_CERT: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          INSTALLER_CERT: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION }}
+          INSTALLER_IDENTITY: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variable in APP_CERT INSTALLER_CERT CERT_PASSWORD KEYCHAIN_PASSWORD \
+            APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APP_IDENTITY INSTALLER_IDENTITY; do
+            [[ -n "${!variable:-}" ]] || {
+              echo "Required Apple signing secret ${variable} is missing." >&2
+              exit 1
+            }
+          done
+
+      - name: Install Developer ID certificates and notary profile
+        env:
+          APP_CERT: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64 }}
+          INSTALLER_CERT: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/aurora-signing.keychain-db"
+          app_cert="$RUNNER_TEMP/developer-id-application.p12"
+          installer_cert="$RUNNER_TEMP/developer-id-installer.p12"
+
+          printf '%s' "$APP_CERT" | base64 --decode > "$app_cert"
+          printf '%s' "$INSTALLER_CERT" | base64 --decode > "$installer_cert"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$app_cert" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security import "$installer_cert" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          xcrun notarytool store-credentials "aurora-velopack" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_PASSWORD" \
+            --keychain "$keychain"
+          echo "MACOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "MACOS_NOTARY_PROFILE=aurora-velopack" >> "$GITHUB_ENV"
+
+      - name: Download previous macOS dev release
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist/velopack-releases
+          vpk download github \
+            --outputDir dist/velopack-releases \
+            --channel "${{ steps.metadata.outputs.channel }}" \
+            --repoUrl "https://github.com/${{ github.repository }}" \
+            --token "$GITHUB_TOKEN" \
+            --pre true
+
+      - name: Build signed and notarized macOS Velopack release
+        env:
+          VELOPACK_OUTPUT_DIR: ${{ github.workspace }}/dist/velopack-releases
+          MACOS_DEVELOPER_ID_APPLICATION: ${{ secrets.MACOS_DEVELOPER_ID_APPLICATION }}
+          MACOS_DEVELOPER_ID_INSTALLER: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER }}
+        run: scripts/package_macos_update.sh
+
+      - name: Upload macOS release payload
         uses: actions/upload-artifact@v4
         with:
-          name: Photon-Cruncher-Aurora-v2.0-macOS
-          path: dist/Photon-Cruncher-Aurora-v2.0-macOS.zip
+          name: aurora-dev-macos-release
+          path: dist/velopack-releases/*
+          if-no-files-found: error
+          retention-days: 7
 
-  publish-release:
-    name: Publish release assets
+      - name: Remove signing keychain
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -n "${MACOS_SIGNING_KEYCHAIN:-}" && -f "${MACOS_SIGNING_KEYCHAIN}" ]]; then
+            security delete-keychain "${MACOS_SIGNING_KEYCHAIN}"
+          fi
+
+  publish-windows:
+    name: Publish Windows installer, packages, and feed
     needs:
+      - validate-source
       - build-windows
       - build-macos
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
-      - name: Download build artifacts
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install pinned Velopack CLI
+        run: dotnet tool install --global vpk --version "${{ needs.validate-source.outputs.velopack_version }}"
+
+      - name: Download Windows release payload
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
-          merge-multiple: true
+          name: aurora-dev-windows-release
+          path: release-windows
 
-      - name: Attach zips to GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+      - name: Publish Windows dev channel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          vpk upload github \
+            --outputDir release-windows \
+            --channel "${{ needs.build-windows.outputs.channel }}" \
+            --repoUrl "https://github.com/${{ github.repository }}" \
+            --token "$GITHUB_TOKEN" \
+            --publish true \
+            --pre true \
+            --merge true \
+            --releaseName "Photon Cruncher Aurora Dev v${{ needs.validate-source.outputs.version }}" \
+            --tag "${{ needs.validate-source.outputs.release_tag }}" \
+            --targetCommitish "${{ github.sha }}"
+
+  publish-macos:
+    name: Publish signed macOS installer, packages, and feed
+    needs:
+      - validate-source
+      - build-macos
+      - publish-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
         with:
-          files: release-assets/*.zip
+          dotnet-version: "8.0.x"
+
+      - name: Install pinned Velopack CLI
+        run: dotnet tool install --global vpk --version "${{ needs.validate-source.outputs.velopack_version }}"
+
+      - name: Download macOS release payload
+        uses: actions/download-artifact@v4
+        with:
+          name: aurora-dev-macos-release
+          path: release-macos
+
+      - name: Merge macOS dev channel into release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          vpk upload github \
+            --outputDir release-macos \
+            --channel "${{ needs.build-macos.outputs.channel }}" \
+            --repoUrl "https://github.com/${{ github.repository }}" \
+            --token "$GITHUB_TOKEN" \
+            --publish true \
+            --pre true \
+            --merge true \
+            --releaseName "Photon Cruncher Aurora Dev v${{ needs.validate-source.outputs.version }}" \
+            --tag "${{ needs.validate-source.outputs.release_tag }}" \
+            --targetCommitish "${{ github.sha }}"

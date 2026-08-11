@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import argparse
 
+from photon_cruncher import __version__
 from photon_cruncher.product import aurora_app_title, aurora_brand_label
+from photon_cruncher.updates import run_velopack_startup
 
 
 def main(argv: list[str] | None = None) -> int:
+    run_velopack_startup()
     parser = argparse.ArgumentParser(
         prog="photon-cruncher",
         description=(
@@ -19,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
             "desktop GUI. Live analysis via photon_cruncher.service."
         ),
     )
+    parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument(
         "--port",

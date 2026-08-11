@@ -2,23 +2,28 @@
 """PyInstaller spec for Photon Cruncher Aurora (dev desktop app)."""
 
 from pathlib import Path
+import runpy
+
+from PyInstaller.utils.hooks import collect_all
 
 
 project_root = Path(SPECPATH).parents[1]
 package_root = project_root / "photon_cruncher"
+version_meta = runpy.run_path(str(package_root / "version.py"))
 icon_path = package_root / "assets" / "icons" / "photon-cruncher-aurora.icns"
 if not icon_path.exists():
     icon_path = package_root / "assets" / "icons" / "photon-cruncher.icns"
-app_name = "Photon Cruncher Aurora v2.0"
+app_name = version_meta["BUNDLE_APP_NAME"]
+velopack_datas, velopack_binaries, velopack_hiddenimports = collect_all("velopack")
 
 a = Analysis(
     [str(package_root / "aurora_main.py")],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=velopack_binaries,
     datas=[
         (str(package_root / "assets"), "photon_cruncher/assets"),
         (str(package_root / "gui_aurora" / "static"), "photon_cruncher/gui_aurora/static"),
-    ],
+    ] + velopack_datas,
     hiddenimports=[
         "tdt",
         "PySide6.QtWebEngineWidgets",
@@ -29,7 +34,9 @@ a = Analysis(
         "photon_cruncher.gui_aurora.session_store",
         "photon_cruncher.service",
         "photon_cruncher.product",
-    ],
+        "photon_cruncher.updates",
+        "velopack",
+    ] + velopack_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -114,12 +121,12 @@ app = BUNDLE(
     coll,
     name=f"{app_name}.app",
     icon=str(icon_path),
-    bundle_identifier="com.photoncruncher.aurora",
+    bundle_identifier=version_meta["BUNDLE_IDENTIFIER"],
     info_plist={
-        "CFBundleDisplayName": "Photon Cruncher Aurora",
-        "CFBundleName": "Photon Cruncher Aurora",
-        "CFBundleShortVersionString": "2.0.0",
-        "CFBundleVersion": "2.0.0",
+        "CFBundleDisplayName": version_meta["APP_NAME"],
+        "CFBundleName": version_meta["APP_NAME"],
+        "CFBundleShortVersionString": version_meta["__version__"],
+        "CFBundleVersion": version_meta["__version__"],
         "LSApplicationCategoryType": "public.app-category.science",
         "NSHighResolutionCapable": True,
     },

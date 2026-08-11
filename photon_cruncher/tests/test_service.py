@@ -172,11 +172,12 @@ class ServiceFacadeTests(unittest.TestCase):
     def test_aurora_product_title(self) -> None:
         self.assertIn("Aurora", AURORA_APP_NAME)
         # Window title has no version suffix; version lives in the UI rail.
-        self.assertEqual(aurora_app_title(), "Photon Cruncher Aurora")
+        self.assertEqual(aurora_app_title(), AURORA_APP_NAME)
         from photon_cruncher.product import AURORA_UI_VERSION, aurora_brand_label
+        from photon_cruncher.version import __version__, major_minor
 
-        self.assertEqual(AURORA_UI_VERSION, "2.0")
-        self.assertEqual(aurora_brand_label(), "Aurora v2.0")
+        self.assertEqual(AURORA_UI_VERSION, major_minor(__version__))
+        self.assertEqual(aurora_brand_label(), f"Aurora v{major_minor(__version__)}")
 
 
 if __name__ == "__main__":

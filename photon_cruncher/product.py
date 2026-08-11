@@ -5,14 +5,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from photon_cruncher import __version__
+from photon_cruncher.version import (
+    APP_NAME,
+    AURORA_CODENAME,
+    AURORA_UI_VERSION,
+    BUNDLE_APP_NAME,
+)
 
 # Dev branch ships Aurora only.
-APP_NAME = "Photon Cruncher Aurora"
 AURORA_APP_NAME = APP_NAME
-AURORA_CODENAME = "aurora"
-# UI-facing version next to "Aurora" in the rail (and package version on this branch).
-AURORA_UI_VERSION = "2.0"
 
 # Kept for older call sites that still say "lab".
 LAB_APP_NAME = APP_NAME
@@ -83,10 +84,12 @@ def aurora_app_title(version: str | None = None) -> str:
 
 
 def aurora_brand_label(version: str | None = None) -> str:
-    """In-app rail label, e.g. 'Aurora v2.0'."""
+    """Return the versioned label shown in the Aurora rail."""
     return f"Aurora v{version or AURORA_UI_VERSION}"
 
 
 def bundle_app_name(version: str | None = None) -> str:
     """Filesystem / installer bundle stem."""
-    return f"{AURORA_APP_NAME} v{version or AURORA_UI_VERSION}"
+    if version is None:
+        return BUNDLE_APP_NAME
+    return f"{AURORA_APP_NAME} v{version}"

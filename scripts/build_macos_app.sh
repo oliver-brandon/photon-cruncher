@@ -6,8 +6,7 @@ project_root="$(cd "${script_dir}/.." && pwd)"
 python_bin="${PYTHON_BIN:-}"
 venv_dir="${project_root}/.build-venv"
 spec_file="${project_root}/packaging/macos/PhotonCruncher.spec"
-app_name="Photon Cruncher Aurora v2.0"
-zip_stem="Photon-Cruncher-Aurora-v2.0-macOS"
+version_script="${project_root}/scripts/version_metadata.py"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This build script creates a macOS .app bundle and must be run on macOS." >&2
@@ -28,6 +27,10 @@ if [[ -z "${python_bin}" ]]; then
     python_bin="python3"
   fi
 fi
+
+app_name="$("${python_bin}" "${version_script}" --field bundle_app_name)"
+archive_stem="$("${python_bin}" "${version_script}" --field archive_stem)"
+zip_stem="${archive_stem}-macOS"
 
 if [[ ! -x "${venv_dir}/bin/python" ]]; then
   "${python_bin}" -m venv "${venv_dir}"

@@ -2575,10 +2575,10 @@
         if (health.ui_version && $("railMeta")) {
           $("railMeta").textContent = `developer surface · v${health.ui_version}`;
         }
-        document.title = health.title || "Photon Cruncher Aurora";
+        document.title = health.title || document.title;
       })
       .catch(() => {
-        /* static HTML already has Aurora v2.0 fallback */
+        /* Keep the unversioned static fallback when metadata is unavailable. */
       });
   }
 

@@ -10,6 +10,7 @@ dist/
 *.spec.bak
 local-test-data/
 *.py[cod]
+*.egg-info/
 scripts/analyze_photometry.py
 prototype-assets/
 tmp/

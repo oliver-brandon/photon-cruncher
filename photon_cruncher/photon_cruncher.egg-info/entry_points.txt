@@ -1,4 +1,0 @@
-[console_scripts]
-photon-cruncher = photon_cruncher.aurora_main:main
-photon-cruncher-aurora = photon_cruncher.aurora_main:main
-photon-cruncher-cli = photon_cruncher.cli:main

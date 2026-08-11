@@ -6,12 +6,15 @@ $PythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python" }
 $VenvDir = Join-Path $ProjectRoot ".build-venv-windows"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $SpecFile = Join-Path $ProjectRoot "packaging\windows\PhotonCruncher.spec"
+$VersionScript = Join-Path $ProjectRoot "scripts\version_metadata.py"
 $DistDir = Join-Path $ProjectRoot "dist"
-$AppName = "Photon Cruncher Aurora v2.0"
+$AppName = (& $PythonBin $VersionScript --field bundle_app_name).Trim()
+$ArchiveStem = (& $PythonBin $VersionScript --field archive_stem).Trim()
 $AppDir = Join-Path $DistDir $AppName
 $CliExe = Join-Path $DistDir "photon-cruncher-cli.exe"
 $CliTarget = Join-Path $AppDir "photon-cruncher-cli.exe"
-$ZipPath = Join-Path $DistDir "Photon-Cruncher-Aurora-v2.0-Windows.zip"
+$ZipName = "$ArchiveStem-Windows.zip"
+$ZipPath = Join-Path $DistDir $ZipName
 
 $RunningOnWindows = ($env:OS -eq "Windows_NT") -or ($PSVersionTable.Platform -eq "Win32NT")
 if (-not $RunningOnWindows) {
@@ -52,4 +55,4 @@ Write-Host ""
 Write-Host "Built zip for GitHub/download sharing:"
 Write-Host "  $ZipPath"
 Write-Host ""
-Write-Host "Unzip Photon-Cruncher-Aurora-v2.0-Windows.zip and double-click 'Photon Cruncher Aurora v2.0.exe'."
+Write-Host "Unzip $ZipName and double-click '$AppName.exe'."

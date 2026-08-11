@@ -26,8 +26,39 @@
 
 | Surface | Entry | Branding |
 | --- | --- | --- |
-| Desktop | `python -m photon_cruncher.aurora_main` / `photon-cruncher` | Window: `Photon Cruncher Aurora` · UI rail: `Aurora v2.0` |
-| CLI | `photon-cruncher-cli` | package version `2.0.0` |
+| Desktop | `python -m photon_cruncher.aurora_main` / `photon-cruncher` | Window: `Photon Cruncher Aurora`; rail from `aurora_brand_label()` |
+| CLI | `photon-cruncher-cli` | version from `photon_cruncher.version` |
+
+## Version Metadata
+
+`photon_cruncher/version.py` is the canonical source for the full semantic
+version, display version, product name, bundle name, archive stem, and macOS
+bundle identifier. Package metadata, PyInstaller specs, build scripts, the API,
+and the interface derive their values from it. Run:
+
+```bash
+.build-venv/bin/python scripts/version_metadata.py --check
+```
+
+Generated `.egg-info` metadata is ignored and should not be committed.
+
+## Automatic Updates
+
+`photon_cruncher/updates.py` is the UI-independent update coordinator. The
+Aurora shell owns only the native status indicator, dialog, and background task
+wiring. Velopack lifecycle hooks run before packaged desktop startup, and update
+checks/downloads never run on the Qt UI thread.
+
+- Package ID: `com.photoncruncher.aurora.dev`
+- Channels: `aurora-dev-<os>-<architecture>`
+- Source: GitHub prereleases for this repository
+- Version acceptance: newer versions only; no downgrade/channel switching
+- Failure behavior: offline checks are silent during automatic polling, failed
+  downloads leave the installed app unchanged, and manual checks explain errors
+
+The explicit dev package ID, prerelease source, and OS/architecture channel are
+all required. A channel or package mismatch disables updates instead of falling
+back to a stable or cross-platform feed.
 
 ## Shared service API
 
@@ -56,16 +87,28 @@ scripts/build_windows_app.ps1
 ```
 
 Artifacts:
-- `dist/Photon Cruncher Aurora v2.0.app`
-- `dist/Photon-Cruncher-Aurora-v2.0-macOS.zip`
-- `dist/Photon Cruncher Aurora v2.0/` (+ zip on Windows)
+- Windows Velopack `Setup.exe`, full/delta `.nupkg`, and
+  `releases.aurora-dev-win-x64.json`
+- Developer ID signed/notarized macOS `.pkg`, full/delta `.nupkg`, and
+  `releases.aurora-dev-osx-arm64.json`
+- Existing PyInstaller bundles remain intermediate build/staging outputs
 
-GitHub Actions workflow builds those same Aurora bundles on `v*` tags / manual dispatch.
+GitHub Actions publishes only from `dev` manual dispatch or a matching
+`aurora-dev-v*` tag. Both platform builds must succeed before the GitHub
+prerelease is created. The macOS job refuses to publish without Developer ID
+Application/Installer certificates and successful notarization.
 
 ## Branch notes
 
 - `dev` — Aurora desktop + shared backend + CLI.
-- `main` — lab-facing stable history; this branch no longer carries the old PySide lab GUI.
+- `main` — current public stable v1.1.4 line with the earlier PySide lab GUI;
+  Aurora has not yet been merged or released there.
+
+See `docs/project-status.md` for the verified release state, known risks, and
+Aurora v2 release gate.
+
+Current backend measurements and performance guardrails are in
+`docs/backend-performance.md`.
 
 ## Verification
 
@@ -76,5 +119,7 @@ env -u PYTHONPATH -u PYTHONHOME .build-venv/bin/python -m unittest \
   photon_cruncher.tests.test_pipeline_equivalence \
   photon_cruncher.tests.test_gui_aurora \
   photon_cruncher.tests.test_aurora_shell \
-  photon_cruncher.tests.test_aurora_app
+  photon_cruncher.tests.test_aurora_app \
+  photon_cruncher.tests.test_updates \
+  photon_cruncher.tests.test_version_metadata
 ```

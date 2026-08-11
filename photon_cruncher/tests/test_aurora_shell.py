@@ -7,7 +7,7 @@ from urllib.request import urlopen
 
 from photon_cruncher.gui_aurora.server import find_free_port, serve_in_background, static_files
 from photon_cruncher.gui_aurora import STATIC_DIR
-from photon_cruncher.product import aurora_app_title
+from photon_cruncher.product import AURORA_UI_VERSION, aurora_app_title, aurora_brand_label
 
 
 class AuroraShellSpikeTests(unittest.TestCase):
@@ -37,9 +37,9 @@ class AuroraShellSpikeTests(unittest.TestCase):
             self.assertTrue(health["ok"])
             self.assertEqual(health["backend"], "photon_cruncher.service")
             self.assertIn("Aurora", health["title"])
-            self.assertEqual(health["title"], "Photon Cruncher Aurora")
-            self.assertEqual(health.get("brand"), "Aurora v2.0")
-            self.assertEqual(health.get("ui_version"), "2.0")
+            self.assertEqual(health["title"], aurora_app_title())
+            self.assertEqual(health.get("brand"), aurora_brand_label())
+            self.assertEqual(health.get("ui_version"), AURORA_UI_VERSION)
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -55,6 +55,15 @@ class AuroraShellSpikeTests(unittest.TestCase):
 
     def test_title(self) -> None:
         self.assertIn("Aurora", aurora_app_title())
+
+    def test_native_update_controls_are_wired(self) -> None:
+        shell_text = (
+            Path(__file__).resolve().parents[1] / "gui_aurora" / "shell.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('addAction("Check for Updates…")', shell_text)
+        self.assertIn('setObjectName("updateIndicator")', shell_text)
+        self.assertIn('"Install and restart"', shell_text)
+        self.assertIn("create_update_service()", shell_text)
 
 
 if __name__ == "__main__":

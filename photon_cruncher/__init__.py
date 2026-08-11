@@ -1,7 +1,7 @@
 """Photometry analysis application (Aurora / dev)."""
 
-__version__ = "2.0.0"
-__app_name__ = "Photon Cruncher Aurora"
+from photon_cruncher.version import APP_NAME as __app_name__
+from photon_cruncher.version import __version__
 
 
 def app_title() -> str:

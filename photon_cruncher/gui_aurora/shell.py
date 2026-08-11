@@ -18,10 +18,18 @@ from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
+from photon_cruncher import __version__
 from photon_cruncher.gui_aurora.server import serve_in_background
 from photon_cruncher.io.loader import discover_tdt_block_paths, is_tdt_block_path
 from photon_cruncher.product import aurora_app_title
 from photon_cruncher.service import discover_data_sources
+from photon_cruncher.updates import (
+    UpdateSnapshot,
+    UpdateState,
+    create_update_service,
+    update_channel,
+    velopack_runtime_available,
+)
 
 
 def _paths_from_tdt_selection(folders: list[str] | list[Path] | list[str | Path]) -> list[str]:
@@ -299,6 +307,143 @@ class AuroraBridge(QtCore.QObject):
         self._window.statusBar().showMessage(message, 6000)
 
 
+class _UpdateTaskSignals(QtCore.QObject):
+    finished = QtCore.Signal(object)
+    failed = QtCore.Signal(str)
+    progress = QtCore.Signal(int)
+
+
+class _UpdateTask(QtCore.QRunnable):
+    def __init__(self, operation, *, with_progress: bool = False) -> None:
+        super().__init__()
+        self.operation = operation
+        self.with_progress = with_progress
+        self.signals = _UpdateTaskSignals()
+
+    @QtCore.Slot()
+    def run(self) -> None:
+        try:
+            if self.with_progress:
+                result = self.operation(self.signals.progress.emit)
+            else:
+                result = self.operation()
+            self.signals.finished.emit(result)
+        except Exception as exc:  # noqa: BLE001
+            self.signals.failed.emit(str(exc))
+
+
+class UpdateDialog(QtWidgets.QDialog):
+    installRequested = QtCore.Signal()
+
+    def __init__(
+        self,
+        snapshot: UpdateSnapshot,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._busy = False
+        self.setWindowTitle("Photon Cruncher update")
+        self.setModal(True)
+        self.setMinimumWidth(520)
+        self.resize(580, 430)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(14)
+
+        self.heading = QtWidgets.QLabel()
+        heading_font = self.heading.font()
+        heading_font.setPointSize(17)
+        heading_font.setBold(True)
+        self.heading.setFont(heading_font)
+        layout.addWidget(self.heading)
+
+        self.version_detail = QtWidgets.QLabel()
+        self.version_detail.setStyleSheet("color: #587083;")
+        layout.addWidget(self.version_detail)
+
+        notes_label = QtWidgets.QLabel("What's new")
+        notes_label.setStyleSheet("font-weight: 600;")
+        layout.addWidget(notes_label)
+
+        self.notes = QtWidgets.QTextBrowser()
+        self.notes.setOpenExternalLinks(False)
+        self.notes.setMinimumHeight(180)
+        layout.addWidget(self.notes, 1)
+
+        self.status = QtWidgets.QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.hide()
+        layout.addWidget(self.progress)
+
+        buttons = QtWidgets.QDialogButtonBox()
+        self.later_button = buttons.addButton(
+            "Later", QtWidgets.QDialogButtonBox.ButtonRole.RejectRole
+        )
+        self.install_button = buttons.addButton(
+            "Install and restart",
+            QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole,
+        )
+        self.install_button.setDefault(True)
+        self.later_button.clicked.connect(self.reject)
+        self.install_button.clicked.connect(self.installRequested.emit)
+        layout.addWidget(buttons)
+
+        self.set_snapshot(snapshot)
+
+    def set_snapshot(self, snapshot: UpdateSnapshot) -> None:
+        release = snapshot.release
+        if release is None:
+            return
+        self.heading.setText(f"Aurora v{release.version} is available")
+        self.version_detail.setText(
+            f"Installed: v{snapshot.current_version}    Update: v{release.version}"
+        )
+        self.notes.setMarkdown(
+            release.notes_markdown.strip() or "No release notes were provided."
+        )
+        self.status.setText(snapshot.message)
+
+        busy = snapshot.state in {UpdateState.DOWNLOADING, UpdateState.INSTALLING}
+        self._busy = busy
+        self.install_button.setEnabled(not busy)
+        self.later_button.setEnabled(not busy)
+        self.progress.setVisible(
+            snapshot.state
+            in {UpdateState.DOWNLOADING, UpdateState.READY, UpdateState.INSTALLING}
+        )
+        if snapshot.progress is not None:
+            self.progress.setValue(snapshot.progress)
+        if snapshot.state == UpdateState.READY:
+            self.install_button.setText("Install and restart")
+        elif snapshot.state in {
+            UpdateState.DOWNLOAD_FAILED,
+            UpdateState.INSTALL_FAILED,
+        }:
+            self.install_button.setText("Try again")
+        else:
+            self.install_button.setText("Install and restart")
+
+    def set_download_progress(self, value: int) -> None:
+        self.progress.show()
+        self.progress.setValue(max(0, min(100, int(value))))
+        self.status.setText(f"Downloading update... {self.progress.value()}%")
+
+    def reject(self) -> None:
+        if not self._busy:
+            super().reject()
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802
+        if self._busy:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+
 class AuroraShellWindow(QtWidgets.QMainWindow):
     def __init__(
         self,
@@ -318,6 +463,10 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         self._port = bound_port
         self._base_url = f"http://{host}:{bound_port}"
         self._session_path: str | None = None
+        self._update_service = create_update_service()
+        self._update_tasks: set[_UpdateTask] = set()
+        self._update_busy = False
+        self._update_dialog: UpdateDialog | None = None
 
         self.view = QWebEngineView(self)
         page = _QuietPage(self.view)
@@ -343,10 +492,22 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             "border-top: 1px solid #1b2a3a; }"
         )
         self._status.showMessage(f"Backend {self._base_url} · photon_cruncher.service")
+        self._build_update_indicator()
 
         self._build_menu()
         self.view.loadFinished.connect(self._on_load_finished)
         self._load_ui()
+
+        self._update_timer = QtCore.QTimer(self)
+        self._update_timer.setInterval(6 * 60 * 60 * 1000)
+        self._update_timer.timeout.connect(
+            lambda: self.check_for_updates(manual=False)
+        )
+        if velopack_runtime_available():
+            self._update_timer.start()
+            QtCore.QTimer.singleShot(
+                5000, lambda: self.check_for_updates(manual=False)
+            )
 
     def api(
         self,
@@ -416,10 +577,209 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             action.triggered.connect(lambda _=False, p=page: self._goto_page(p))
 
         help_menu = menu.addMenu("&Help")
+        check_updates = help_menu.addAction("Check for Updates…")
+        check_updates.triggered.connect(
+            lambda: self.check_for_updates(manual=True)
+        )
+        help_menu.addSeparator()
         health = help_menu.addAction("Backend Health")
         health.triggered.connect(self.show_health)
         about = help_menu.addAction("About Aurora")
         about.triggered.connect(self.show_about)
+
+    def _build_update_indicator(self) -> None:
+        self._update_indicator = QtWidgets.QToolButton(self)
+        self._update_indicator.setObjectName("updateIndicator")
+        self._update_indicator.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self._update_indicator.setIcon(
+            self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self._update_indicator.setStyleSheet(
+            "QToolButton { color: #d8fbff; background: #155e63; "
+            "border: 1px solid #2dd4bf; border-radius: 4px; "
+            "padding: 3px 8px; margin: 1px 5px; } "
+            "QToolButton:hover { background: #18747a; }"
+        )
+        self._update_indicator.clicked.connect(self.show_update_dialog)
+        self._update_indicator.hide()
+        self._status.addPermanentWidget(self._update_indicator)
+
+    def _run_update_task(
+        self,
+        operation,
+        on_finished,
+        *,
+        with_progress: bool = False,
+        on_progress=None,
+    ) -> None:
+        task = _UpdateTask(operation, with_progress=with_progress)
+        self._update_tasks.add(task)
+
+        def finish(result) -> None:
+            self._update_tasks.discard(task)
+            on_finished(result)
+
+        def fail(message: str) -> None:
+            self._update_tasks.discard(task)
+            self._update_busy = False
+            self._status.showMessage(f"Update operation failed: {message}", 8000)
+
+        task.signals.finished.connect(finish)
+        task.signals.failed.connect(fail)
+        if on_progress is not None:
+            task.signals.progress.connect(on_progress)
+        QtCore.QThreadPool.globalInstance().start(task)
+
+    def check_for_updates(self, *, manual: bool = False) -> None:
+        if self._update_busy:
+            if manual:
+                self._status.showMessage("An update operation is already running.", 5000)
+            return
+        if not velopack_runtime_available():
+            if manual:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Check for updates",
+                    (
+                        "Automatic updates are available in the installed "
+                        "Aurora dev app. This source/development launch is not "
+                        "managed by Velopack."
+                    ),
+                )
+            return
+
+        self._update_busy = True
+        self._status.showMessage("Checking for Aurora dev updates...")
+        self._run_update_task(
+            self._update_service.check,
+            lambda snapshot: self._finish_update_check(snapshot, manual=manual),
+        )
+
+    def _finish_update_check(
+        self,
+        snapshot: UpdateSnapshot,
+        *,
+        manual: bool,
+    ) -> None:
+        self._update_busy = False
+        self._sync_update_indicator(snapshot)
+        self._status.showMessage(snapshot.message, 7000)
+
+        if snapshot.state == UpdateState.AVAILABLE:
+            if manual:
+                self.show_update_dialog()
+            return
+        if not manual:
+            return
+        if snapshot.state == UpdateState.CURRENT:
+            QtWidgets.QMessageBox.information(
+                self, "Check for updates", snapshot.message
+            )
+        elif snapshot.state in {UpdateState.UNAVAILABLE, UpdateState.DISABLED}:
+            QtWidgets.QMessageBox.warning(
+                self, "Check for updates", snapshot.message
+            )
+
+    def _sync_update_indicator(self, snapshot: UpdateSnapshot) -> None:
+        if not snapshot.update_visible or snapshot.release is None:
+            self._update_indicator.hide()
+            return
+        version = snapshot.release.version
+        if snapshot.state == UpdateState.DOWNLOADING and snapshot.progress is not None:
+            text = f"Updating {snapshot.progress}%"
+        elif snapshot.state == UpdateState.READY:
+            text = "Restart to update"
+        else:
+            text = f"Update {version}"
+        self._update_indicator.setText(text)
+        self._update_indicator.setToolTip(
+            f"Aurora v{version} is available. Click for release notes."
+        )
+        self._update_indicator.show()
+
+    def show_update_dialog(self) -> None:
+        if self._update_dialog is not None and self._update_dialog.isVisible():
+            self._update_dialog.raise_()
+            self._update_dialog.activateWindow()
+            return
+        snapshot = self._update_service.snapshot
+        if not snapshot.update_visible or snapshot.release is None:
+            self.check_for_updates(manual=True)
+            return
+        dialog = UpdateDialog(snapshot, self)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.installRequested.connect(lambda: self._install_update(dialog))
+        dialog.destroyed.connect(
+            lambda _object=None: setattr(self, "_update_dialog", None)
+        )
+        self._update_dialog = dialog
+        dialog.open()
+
+    def _install_update(self, dialog: UpdateDialog) -> None:
+        if self._update_busy:
+            return
+        if self._update_service.snapshot.state == UpdateState.READY:
+            self._apply_downloaded_update(dialog)
+            return
+
+        self._update_busy = True
+        release = self._update_service.snapshot.release
+        if release is None:
+            self._update_busy = False
+            return
+        downloading = UpdateSnapshot(
+            UpdateState.DOWNLOADING,
+            __version__,
+            update_channel(),
+            release=release,
+            progress=0,
+            message=f"Downloading Aurora v{release.version}...",
+        )
+        dialog.set_snapshot(downloading)
+        self._sync_update_indicator(downloading)
+        self._run_update_task(
+            self._update_service.download,
+            lambda snapshot: self._finish_update_download(snapshot, dialog),
+            with_progress=True,
+            on_progress=lambda value: self._show_update_progress(value, dialog),
+        )
+
+    def _show_update_progress(self, value: int, dialog: UpdateDialog) -> None:
+        if dialog.isVisible():
+            dialog.set_download_progress(value)
+        snapshot = self._update_service.snapshot
+        if snapshot.release is not None:
+            progress_snapshot = UpdateSnapshot(
+                UpdateState.DOWNLOADING,
+                snapshot.current_version,
+                snapshot.channel,
+                release=snapshot.release,
+                progress=int(value),
+                message=snapshot.message,
+            )
+            self._sync_update_indicator(progress_snapshot)
+
+    def _finish_update_download(
+        self,
+        snapshot: UpdateSnapshot,
+        dialog: UpdateDialog,
+    ) -> None:
+        self._update_busy = False
+        dialog.set_snapshot(snapshot)
+        self._sync_update_indicator(snapshot)
+        self._status.showMessage(snapshot.message, 8000)
+        if snapshot.state == UpdateState.READY:
+            QtCore.QTimer.singleShot(
+                150, lambda: self._apply_downloaded_update(dialog)
+            )
+
+    def _apply_downloaded_update(self, dialog: UpdateDialog) -> None:
+        snapshot = self._update_service.install_and_restart()
+        dialog.set_snapshot(snapshot)
+        self._sync_update_indicator(snapshot)
+        self._status.showMessage(snapshot.message, 8000)
 
     def _load_ui(self) -> None:
         self.view.load(QtCore.QUrl(f"{self._base_url}/index.html?shell=1&app=1"))
@@ -601,6 +961,8 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             "Aurora",
             (
                 f"{aurora_app_title()}\n\n"
+                f"Version: {__version__}\n"
+                f"Update channel: {update_channel()}\n\n"
                 "Desktop app: Qt WebEngine shell + Aurora UI.\n"
                 "Analysis backend: photon_cruncher.service (shared with CLI).\n"
             ),
@@ -620,7 +982,7 @@ def run_shell(*, host: str = "127.0.0.1", port: int | None = None) -> int:
         QtCore.Qt.ApplicationAttribute.AA_ShareOpenGLContexts
     )
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("Photon Cruncher Aurora")
+    app.setApplicationName(aurora_app_title())
     app.setOrganizationName("PhotonCruncher")
     try:
         from photon_cruncher.product import set_app_icon

@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import platform
+import statistics
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, Callable
 
+from photon_cruncher import __version__
 from photon_cruncher.export.exporter import export_channel, save_result_figure
 from photon_cruncher.io.loader import load_session
 from photon_cruncher.processing.pipeline import (
@@ -13,6 +17,7 @@ from photon_cruncher.processing.pipeline import (
     default_settings_for_channel,
     process_channel,
 )
+from photon_cruncher.service import AnalysisResult
 
 
 def _pick_epoc(session, preferred: str | None):
@@ -25,12 +30,26 @@ def _pick_epoc(session, preferred: str | None):
     return name, session.epocs[name]
 
 
-def bench_path(path: Path, *, export_figure: bool, epoc_name: str | None) -> None:
+def _median_call(call: Callable[[], Any], repeats: int) -> tuple[float, Any]:
+    timings: list[float] = []
+    result: Any = None
+    for _ in range(repeats):
+        started = time.perf_counter()
+        result = call()
+        timings.append(time.perf_counter() - started)
+    return statistics.median(timings), result
+
+
+def bench_path(
+    path: Path,
+    *,
+    export_figure: bool,
+    epoc_name: str | None,
+    repeats: int,
+) -> None:
     print(f"\n== {path}")
-    t0 = time.perf_counter()
-    session = load_session(path)
-    t_load = time.perf_counter() - t0
-    print(f"load_session                 {t_load:8.3f}s")
+    t_load, session = _median_call(lambda: load_session(path), repeats)
+    print(f"load_session                 {t_load:8.3f}s  median n={repeats}")
 
     channels = available_channels(session)
     if not channels:
@@ -42,19 +61,24 @@ def bench_path(path: Path, *, export_figure: bool, epoc_name: str | None) -> Non
         f"epoc={chosen_epoc_name!r} events={epoc.onset.size} channels={list(channels)}"
     )
 
-    results = []
-    t0 = time.perf_counter()
-    for channel_key, (iso, signal, smooth) in channels.items():
-        settings = default_settings_for_channel(channel_key)
-        settings.smooth_factor = smooth
-        try:
-            processed = process_channel(session, iso, signal, epoc, settings)
-        except ValueError as exc:
-            print(f"  {channel_key}: skipped ({exc})")
-            continue
-        results.append((channel_key, iso, signal, settings, processed))
-    t_process = time.perf_counter() - t0
-    print(f"process all channels         {t_process:8.3f}s  n={len(results)}")
+    def process_all_channels():
+        results = []
+        for channel_key, (iso, signal, smooth) in channels.items():
+            settings = default_settings_for_channel(channel_key)
+            settings.smooth_factor = smooth
+            try:
+                processed = process_channel(session, iso, signal, epoc, settings)
+            except ValueError as exc:
+                print(f"  {channel_key}: skipped ({exc})")
+                continue
+            results.append((channel_key, iso, signal, settings, processed))
+        return results
+
+    t_process, results = _median_call(process_all_channels, repeats)
+    print(
+        f"process all channels         {t_process:8.3f}s  "
+        f"median n={repeats} channels={len(results)}"
+    )
 
     if not results:
         return
@@ -63,37 +87,36 @@ def bench_path(path: Path, *, export_figure: bool, epoc_name: str | None) -> Non
     print(f"first channel matrix         {processed.zall.shape}")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp)
-        t0 = time.perf_counter()
-        export_channel(
-            output_dir=out,
-            session_name=path.stem,
-            epoc_name=chosen_epoc_name,
-            channel_key=channel_key,
-            processed=processed,
-            settings=settings,
-            dropped_trials=[],
-            stream_store=(iso, signal),
-            metadata={},
-        )
-        t_csv = time.perf_counter() - t0
-        print(f"export_channel CSV           {t_csv:8.3f}s")
+
+        def export_csv():
+            return export_channel(
+                output_dir=out,
+                session_name=path.stem,
+                epoc_name=chosen_epoc_name,
+                channel_key=channel_key,
+                processed=processed,
+                settings=settings,
+                dropped_trials=[],
+                stream_store=(iso, signal),
+                metadata={},
+            )
+
+        t_csv, _ = _median_call(export_csv, repeats)
+        print(f"export_channel CSV           {t_csv:8.3f}s  median n={repeats}")
 
         if export_figure:
-            result = type(
-                "BenchResult",
-                (),
-                {
-                    "session": session,
-                    "epoc": epoc,
-                    "channel_key": channel_key,
-                    "processed": processed,
-                    "settings": settings,
-                },
-            )()
-            t0 = time.perf_counter()
+            result = AnalysisResult(
+                session=session,
+                epoc=epoc,
+                channel_key=channel_key,
+                processed=processed,
+                settings=settings,
+                stream_store=(iso, signal),
+            )
+            # Exclude Matplotlib/font initialization from steady-state export timing.
             save_result_figure(out, result)
-            t_fig = time.perf_counter() - t0
-            print(f"save_result_figure           {t_fig:8.3f}s")
+            t_fig, _ = _median_call(lambda: save_result_figure(out, result), repeats)
+            print(f"save_result_figure           {t_fig:8.3f}s  median n={repeats}")
 
 
 def main() -> None:
@@ -101,14 +124,32 @@ def main() -> None:
     parser.add_argument("inputs", nargs="+", help="MAT files or TDT block folders")
     parser.add_argument("--epoc", default=None, help="Preferred epoc name")
     parser.add_argument("--figure", action="store_true", help="Also time figure export")
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=3,
+        help="Number of timed repetitions per stage (default: 3).",
+    )
     args = parser.parse_args()
+    if args.repeat < 1:
+        parser.error("--repeat must be at least 1")
+
+    print(
+        f"Photon Cruncher {__version__} | Python {platform.python_version()} | "
+        f"{platform.system()} {platform.release()} {platform.machine()}"
+    )
 
     for raw in args.inputs:
         path = Path(raw).expanduser().resolve()
         if not path.exists():
             print(f"missing: {path}")
             continue
-        bench_path(path, export_figure=args.figure, epoc_name=args.epoc)
+        bench_path(
+            path,
+            export_figure=args.figure,
+            epoc_name=args.epoc,
+            repeats=args.repeat,
+        )
 
 
 if __name__ == "__main__":

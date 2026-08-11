@@ -20,7 +20,7 @@ class AuroraPrototypeTests(unittest.TestCase):
 
     def test_index_identity(self) -> None:
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-        self.assertIn("Aurora v2.0", html)
+        self.assertNotRegex(html, r"Aurora v\d")
         self.assertIn("brandSub", html)
         self.assertIn("nav-item", html)
         self.assertIn("page-align", html)

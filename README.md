@@ -5,11 +5,20 @@ Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. On the
 Qt WebEngine UI + shared analysis service). The pipeline mirrors lab MATLAB
 preprocessing, supports MAT exports and raw TDT blocks, and exports CSV/figures.
 
-## Dev branch (Aurora v2.0)
+> **Release status:** the newest public lab release is
+> [v1.1.4](https://github.com/oliver-brandon/photon-cruncher/releases/tag/v1.1.4)
+> from `main`. Aurora is implemented on `dev` but has not yet been tagged
+> or published as a stable GitHub release. Dev-only Velopack prereleases use
+> separate Aurora channels and do not update the v1 app. See [Project Status](docs/project-status.md)
+> for the verified handoff and release checklist.
+
+## Dev Branch (Aurora)
 
 * Desktop GUI: **Aurora only** (`photon-cruncher` / `python -m photon_cruncher.aurora_main`)
-* UI rail label: `Aurora v2.0` (window title has no version suffix)
-* Package / CLI version: `2.0.0`
+* Version source: `photon_cruncher/version.py`
+* Current version: `photon-cruncher-cli --version`
+* The UI label and bundle names are derived automatically from that version
+* Automatic updates: Velopack prereleases on isolated Windows/macOS dev channels
 * Shared analysis facade: `photon_cruncher.service`
 * Live sessions only (MAT/TDT open → analyze → export)
 
@@ -19,19 +28,23 @@ preprocessing, supports MAT exports and raw TDT blocks, and exports CSV/figures.
 photon-cruncher
 ```
 
-## Download (prebuilt)
+## Downloads And Release Status
 
-Most users should use GitHub Releases. No Python install required.
+Most users should use GitHub Releases. No Python install is required. The
+currently available v1.1.4 assets are `Photon-Cruncher-v1.1.4-Windows.zip` and
+`Photon-Cruncher-v1.1.4-macOS.zip`.
+
+Aurora v2 dev installers appear as GitHub **prereleases** only after the
+`Publish Aurora dev updates` workflow succeeds. They are intentionally separate
+from the stable v1.1.4 downloads. Developers can also run Aurora from source,
+but source launches are not managed by the automatic updater.
 
 ### Windows
 
 1. Open **Releases** on the GitHub repo.
-2. Download `Photon-Cruncher-Aurora-v2.0-Windows.zip`.
-3. Extract the zip.
-4. Open the `Photon Cruncher Aurora v2.0` folder.
-5. Double-click `Photon Cruncher Aurora v2.0.exe`.
-
-Keep the whole extracted folder together.
+2. Open the Aurora dev prerelease and download the Windows `Setup.exe` asset.
+3. Double-click the installer and follow its prompts.
+4. Launch **Photon Cruncher Aurora** from the shortcut it creates.
 
 If Windows SmartScreen warns about an unknown publisher, choose **More info** →
 **Run anyway** for builds you trust from the lab GitHub release page.
@@ -39,70 +52,97 @@ If Windows SmartScreen warns about an unknown publisher, choose **More info** �
 ### macOS
 
 1. Open **Releases** on the GitHub repo.
-2. Download `Photon-Cruncher-Aurora-v2.0-macOS.zip`.
-3. Expand the zip.
-4. Drag `Photon Cruncher Aurora v2.0.app` to **Applications** (or anywhere).
-5. Double-click the app.
+2. Open the Aurora dev prerelease and download the macOS `.pkg` asset.
+3. Open the installer and choose **Applications** or your user Applications folder.
+4. Launch **Photon Cruncher Aurora**.
 
-If macOS blocks an unsigned build: Control-click → **Open** → **Open**, or use
-**System Settings → Privacy & Security → Open Anyway**.
+The Aurora dev `.pkg` is required to be Developer ID signed and notarized by
+the release workflow. Do not distribute a macOS workflow artifact if its
+signing/notarization job failed.
 
 ## Build from source
 
 ```bash
 # macOS
 scripts/build_macos_app.sh
-# → dist/Photon Cruncher Aurora v2.0.app
-# → dist/Photon-Cruncher-Aurora-v2.0-macOS.zip
+# → dist/Photon Cruncher Aurora v<version>.app
+# → dist/Photon-Cruncher-Aurora-v<version>-macOS.zip
 
 # Windows (PowerShell)
 .\scripts\build_windows_app.ps1
-# → dist/Photon Cruncher Aurora v2.0/
-# → dist/Photon-Cruncher-Aurora-v2.0-Windows.zip
+# → dist/Photon Cruncher Aurora v<version>/
+# → dist/Photon-Cruncher-Aurora-v<version>-Windows.zip
 ```
 
 GitHub Actions (`.github/workflows/build-desktop-apps.yml`) builds the same Aurora
-bundles on `v*` tags or manual workflow dispatch.
+PyInstaller bundles, then packages and publishes them with Velopack. For local
+Velopack packaging, use `scripts/package_windows_update.ps1` or
+`scripts/package_macos_update.sh`; the macOS command requires Developer ID and
+notary credentials.
 
 ## Update the App
 
-Photon Cruncher does not update itself automatically. Download the newest
-release zip and replace the old app copy. Recordings and exports live outside
-the app bundle, and saved processing settings are kept in the user's app
-settings, so updating should not remove them.
+Aurora dev installations check their own OS/architecture-specific prerelease
+channel after launch and every six hours while open. When a newer version is
+available, a small **Update x.y.z** indicator appears in the lower-right corner.
+Click it to review the new version and release notes, then choose **Install and
+restart** or **Later**. You can also choose **Help → Check for Updates…** at any
+time. An unavailable network is nonfatal and does not interrupt analysis.
+
+Recordings and exports live outside the app bundle, and saved processing
+settings remain in the user's app settings. Updates never consume stable or
+cross-platform packages: Windows x64 and macOS arm64 dev builds each have their
+own feed.
 
 ### Update on Windows
 
-1. Quit Photon Cruncher Aurora.
-2. Open **Releases** on the GitHub repository and download the newest
-   `Photon-Cruncher-Aurora-v2.0-Windows.zip`.
-3. Right-click the zip and choose **Extract All...**.
-4. Rename the existing `Photon Cruncher Aurora v2.0` folder to
-   `Photon Cruncher Aurora old`.
-5. Move the newly extracted `Photon Cruncher Aurora v2.0` folder into the same
-   location.
-6. Open the new folder and double-click `Photon Cruncher Aurora v2.0.exe`.
-7. Confirm the new app opens, then delete `Photon Cruncher Aurora old`.
+1. Click the update indicator or choose **Help → Check for Updates…**.
+2. Review the release notes and choose **Install and restart**.
+3. If a download fails, leave the app open and choose **Try again** later. The
+   current installation is not changed by an incomplete download.
 
-Keep the whole extracted folder together. Do not move only the `.exe`; it needs
-the bundled files beside it. The rename-first approach keeps a working copy
-available until the update is verified.
+If the updater itself cannot be used, download the newest Windows `Setup.exe`
+from the Aurora dev prerelease and run it again. Windows builds are not yet
+Authenticode signed, so SmartScreen may still appear.
 
 ### Update on macOS
 
-1. Quit Photon Cruncher Aurora.
-2. Open **Releases** on the GitHub repository and download the newest
-   `Photon-Cruncher-Aurora-v2.0-macOS.zip`.
-3. Double-click the zip to expand it.
-4. In **Applications** (or wherever the old copy lives), rename the existing
-   app to `Photon Cruncher Aurora old.app`.
-5. Drag the new `Photon Cruncher Aurora v2.0.app` into that location.
-6. Open the new app and confirm it works, then delete the old copy.
+1. Click the update indicator or choose **Help → Check for Updates…**.
+2. Review the release notes and choose **Install and restart**.
+3. macOS may request an administrator password when updating an app in the
+   system Applications folder. Choose **Later** if you do not want to restart.
 
-If macOS shows the Apple verification warning again, Control-click the new app,
-choose **Open**, then choose **Open** again. If that option is unavailable, use
-**System Settings → Privacy & Security → Open Anyway** for a build downloaded
-from the lab's GitHub release page.
+If the updater itself cannot be used, run the newest signed `.pkg` from the
+Aurora dev prerelease. A correctly published build is Developer ID signed and
+notarized, so it should identify the developer instead of showing an
+unverified-developer warning.
+
+### Publishing an Aurora dev update
+
+1. Change only `__version__` in `photon_cruncher/version.py`.
+2. Update the brief Markdown notes in `packaging/velopack/release-notes.md`.
+3. Commit and push the change to `dev`.
+4. Run **Actions → Publish Aurora dev updates → Run workflow** from `dev`, or
+   push the matching `aurora-dev-v<version>` tag.
+5. Confirm the prerelease contains a Windows installer, a signed macOS `.pkg`,
+   full/delta `.nupkg` files, and both `releases.aurora-dev-*.json` feeds.
+
+The macOS job requires these GitHub Actions secrets:
+
+- `MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64`
+- `MACOS_DEVELOPER_ID_INSTALLER_P12_BASE64`
+- `MACOS_CERTIFICATE_PASSWORD`
+- `MACOS_KEYCHAIN_PASSWORD`
+- `MACOS_DEVELOPER_ID_APPLICATION`
+- `MACOS_DEVELOPER_ID_INSTALLER`
+- `APPLE_ID`
+- `APPLE_APP_PASSWORD`
+- `APPLE_TEAM_ID`
+
+The two identity secrets should contain the certificate names without the Team
+ID suffix, such as `Developer ID Application: Your Name` and
+`Developer ID Installer: Your Name`. The workflow validates, signs, notarizes,
+and assesses the installer before publishing either platform.
 
 ## Data Expectations
 
@@ -158,7 +198,7 @@ photon-cruncher-cli analyze --config analysis-config.json
 
 Packaged downloads include the CLI beside the desktop app. CLI output is JSON.
 
-## Aurora GUI (developer v2 surface)
+## Aurora GUI (Developer Surface)
 
 Codename **Aurora**. Separate from the lab PySide GUI. Live analysis only via
 `photon_cruncher.service` (no synthetic demo feed).
@@ -180,6 +220,8 @@ In the shell:
 - Displayed plots include file, epoc, channel, labeled axes, and integer trial-aligned heatmap ticks
 - Batch Export accepts multiple MAT files, mixed-data folders, and TDT tanks, with detailed exported/skipped/failed results
 - Processing and export-folder settings persist between launches
+- A lower-right update indicator shows the dev version and release notes
+- **Help → Check for Updates…** runs an immediate manual update check
 
 ### Browser mode (optional)
 
@@ -206,6 +248,10 @@ API (same backend as lab/CLI):
 - `POST /api/batch-export` with source paths, epoc selections, channels, and export flags
 
 Architecture: `docs/architecture-aurora.md`.
+Current performance measurements: `docs/backend-performance.md`.
+
+Current branch/release state, verification evidence, known risks, and the next
+recommended work are maintained in `docs/project-status.md`.
 
 ## Trial Explorer
 

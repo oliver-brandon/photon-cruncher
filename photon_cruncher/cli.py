@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="photon-cruncher-cli",
         description="Headless Photon Cruncher access point for automated workflows.",
     )
+    parser.add_argument("--version", action="version", version=__version__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     inspect_parser = subparsers.add_parser(
