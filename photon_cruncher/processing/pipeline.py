@@ -41,6 +41,7 @@ class ProcessedSignal:
     trial_numbers: list[int] = field(default_factory=list)
     trial_labels: list[str] = field(default_factory=list)
     trial_times: list[float] = field(default_factory=list)
+    baseline_standard_deviations: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -315,6 +316,9 @@ def process_channel(
         y_df_all = f465
 
     baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
+    baseline_standard_deviations = (
+        y_df_all[:, baseline_mask].std(axis=1, ddof=1).astype(float).tolist()
+    )
     zall = _zscore_trials(y_df_all, baseline_mask)
     zall_smooth = _moving_mean_rows(zall, settings.smooth_factor)
 
@@ -340,6 +344,7 @@ def process_channel(
         num_edge_trials=len(dropped_edge_trials),
         dropped_edge_trials=dropped_edge_trials,
         trial_numbers=kept_trial_numbers,
+        baseline_standard_deviations=baseline_standard_deviations,
     )
 
 
@@ -385,6 +390,18 @@ def subset_processed_signal(
         if len(processed.trial_times) == len(trial_numbers)
         else []
     )
+    baseline_standard_deviations = (
+        [
+            value
+            for value, keep in zip(
+                processed.baseline_standard_deviations,
+                keep_mask,
+            )
+            if keep
+        ]
+        if len(processed.baseline_standard_deviations) == len(trial_numbers)
+        else []
+    )
 
     return ProcessedSignal(
         ts=processed.ts.copy(),
@@ -400,6 +417,7 @@ def subset_processed_signal(
         trial_numbers=kept_trial_numbers,
         trial_labels=trial_labels,
         trial_times=trial_times,
+        baseline_standard_deviations=baseline_standard_deviations,
     )
 
 

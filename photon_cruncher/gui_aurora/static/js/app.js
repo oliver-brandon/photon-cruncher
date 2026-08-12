@@ -28,6 +28,11 @@
     batchOutcomes: [],
     batchRunning: false,
     batchCancelled: false,
+    batchJobId: null,
+    presets: {},
+    alignPreset: "Default",
+    trialPreset: "Default",
+    presetImportTarget: "align",
     settings: {
       trange_start: -2,
       trange_end: 5,
@@ -60,6 +65,10 @@
   let trialAnalyzeTimer = null;
   let alignRequestSequence = 0;
   let trialRequestSequence = 0;
+  let alignRequestController = null;
+  let trialRequestController = null;
+  let alignMatrixController = null;
+  let trialMatrixController = null;
 
   const modeNames = {
     data: "DATA",
@@ -111,8 +120,8 @@
     }
   }
 
-  function api(method, path, body) {
-    const opts = { method, headers: {} };
+  function api(method, path, body, options = {}) {
+    const opts = { method, headers: {}, signal: options.signal };
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
@@ -143,14 +152,10 @@
     });
   }
 
-  async function nativeOrFetchAnalyze(body) {
-    if (window.auroraBridge && window.auroraBridge.analyze) {
-      const raw = await bridgeCall("analyze", JSON.stringify(body));
-      const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-      if (!data.ok) throw new Error(data.error || "analyze failed");
-      return data;
-    }
-    return api("POST", "/api/analyze", body);
+  async function nativeOrFetchAnalyze(body, options = {}) {
+    return api("POST", "/api/analyze", body, {
+      signal: options.signal,
+    });
   }
 
   async function nativeOrFetchExport(body) {
@@ -163,8 +168,48 @@
     return api("POST", "/api/export", body);
   }
 
-  async function nativeOrFetchBatch(body) {
-    return api("POST", "/api/batch-export", body);
+  async function fetchPlotMatrix(body, signal) {
+    const response = await fetch(state.apiBase + "/api/plot-matrix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
+      try {
+        const error = await response.json();
+        message = error.error || message;
+      } catch (_) {
+        /* binary endpoint may not return JSON after transport failure */
+      }
+      throw new Error(message);
+    }
+    const rows = Number(response.headers.get("X-Aurora-Rows") || 0);
+    const columns = Number(response.headers.get("X-Aurora-Columns") || 0);
+    const buffer = await response.arrayBuffer();
+    const flat = new Float32Array(buffer);
+    if (rows * columns !== flat.length) {
+      throw new Error("Heatmap payload dimensions do not match its data.");
+    }
+    const matrix = Array.from({ length: rows }, (_, row) =>
+      flat.subarray(row * columns, (row + 1) * columns)
+    );
+    return { matrix, flat, rows, columns };
+  }
+
+  function releaseMatricesExcept(resultsByChannel, keptChannel) {
+    Object.entries(resultsByChannel || {}).forEach(([channel, result]) => {
+      if (channel === keptChannel || !result) return;
+      delete result.z;
+      delete result._matrixBuffer;
+    });
+  }
+
+  function numericArray(values) {
+    return Float64Array.from(values || [], (value) =>
+      value === null ? Number.NaN : Number(value)
+    );
   }
 
   function processingSnapshot() {
@@ -260,6 +305,400 @@
       }
     }
     applyProcessingSettings(payload);
+  }
+
+  function defaultProcessingValues(channel = null) {
+    return {
+      trange_start: -2,
+      trange_end: 5,
+      baseline_start: -3,
+      baseline_end: -1,
+      baseline_adjust: -2,
+      downsample_factor: 10,
+      smooth_factor: channel ? defaultSmoothForChannel(channel) : 10,
+      plot_smoothed: true,
+      baseline_correction: true,
+      use_isosbestic: true,
+      polynomial_degree: 1,
+    };
+  }
+
+  function presetSnapshot(trial = false) {
+    if (trial) readTrialSettingsFromForm();
+    else readSettingsFromForm();
+    const settings = trial ? state.trialSettings : state.settings;
+    const smoothing = trial ? state.trialSmoothByChannel : state.smoothByChannel;
+    const channel = trial ? state.trialChannel : state.activeChannel;
+    return {
+      schema_version: 1,
+      processing: {
+        trange_start: settings.trange_start,
+        trange_end: settings.trange_end,
+        baseline_start: settings.baseline_start,
+        baseline_end: settings.baseline_end,
+        baseline_adjust: settings.baseline_adjust,
+        downsample_factor: settings.downsample_factor,
+        smooth_factor:
+          smoothing[channel] ?? defaultSmoothForChannel(channel),
+        plot_smoothed: settings.plot_smoothed,
+        baseline_correction: settings.baseline_correction,
+        use_isosbestic: settings.use_isosbestic,
+        polynomial_degree: settings.polynomial_degree,
+      },
+      channel_smoothing: { ...smoothing },
+    };
+  }
+
+  function normalizePreset(document, fallbackName = "Imported preset") {
+    if (!document || typeof document !== "object" || Array.isArray(document)) {
+      throw new Error("Preset JSON must contain an object.");
+    }
+    const processing = document.processing;
+    if (!processing || typeof processing !== "object" || Array.isArray(processing)) {
+      throw new Error("Preset JSON must contain a processing object.");
+    }
+    const normalized = { ...processing };
+    const numericKeys = [
+      "trange_start",
+      "trange_end",
+      "baseline_start",
+      "baseline_end",
+      "baseline_adjust",
+      "downsample_factor",
+      "smooth_factor",
+      "polynomial_degree",
+    ];
+    numericKeys.forEach((key) => {
+      if (normalized[key] !== undefined && normalized[key] !== null) {
+        normalized[key] = Number(normalized[key]);
+        if (!Number.isFinite(normalized[key])) {
+          throw new Error(`Preset ${key} must be a finite number.`);
+        }
+      } else if (normalized[key] === null) {
+        delete normalized[key];
+      }
+    });
+    for (const key of ["downsample_factor", "smooth_factor", "polynomial_degree"]) {
+      if (
+        normalized[key] !== undefined &&
+        (!Number.isInteger(normalized[key]) || normalized[key] < 1)
+      ) {
+        throw new Error(`Preset ${key} must be an integer of at least 1.`);
+      }
+    }
+    ["plot_smoothed", "baseline_correction", "use_isosbestic"].forEach(
+      (key) => {
+        if (normalized[key] !== undefined && typeof normalized[key] !== "boolean") {
+          throw new Error(`Preset ${key} must be true or false.`);
+        }
+      }
+    );
+    if (
+      normalized.trange_start !== undefined &&
+      normalized.trange_end !== undefined &&
+      normalized.trange_start >= normalized.trange_end
+    ) {
+      throw new Error("Preset TRANGE start must be before TRANGE end.");
+    }
+    if (
+      normalized.baseline_start !== undefined &&
+      normalized.baseline_end !== undefined &&
+      normalized.baseline_start >= normalized.baseline_end
+    ) {
+      throw new Error("Preset baseline start must be before baseline end.");
+    }
+    const channelSmoothing = {};
+    if (
+      document.channel_smoothing !== undefined &&
+      (typeof document.channel_smoothing !== "object" ||
+        document.channel_smoothing === null ||
+        Array.isArray(document.channel_smoothing))
+    ) {
+      throw new Error("Preset channel_smoothing must be an object.");
+    }
+    Object.entries(document.channel_smoothing || {}).forEach(([channel, value]) => {
+      const factor = Number(value);
+      if (!Number.isInteger(factor) || factor < 1) {
+        throw new Error(
+          `Preset smoothing for ${channel} must be an integer of at least 1.`
+        );
+      }
+      channelSmoothing[channel] = factor;
+    });
+    return {
+      name: String(document.name || fallbackName).trim() || fallbackName,
+      preset: {
+        schema_version: 1,
+        processing: normalized,
+        channel_smoothing: channelSmoothing,
+      },
+    };
+  }
+
+  function persistPresets() {
+    try {
+      localStorage.setItem("aurora.analysisPresets", JSON.stringify(state.presets));
+    } catch (_) {
+      /* native persistence remains available */
+    }
+    if (window.auroraBridge?.saveAnalysisPresets) {
+      bridgeCall("saveAnalysisPresets", JSON.stringify(state.presets)).catch(() => {});
+    }
+  }
+
+  async function restorePresets() {
+    let payload = null;
+    if (window.auroraBridge?.savedAnalysisPresets) {
+      try {
+        const raw = await bridgeCall("savedAnalysisPresets");
+        payload = typeof raw === "string" ? JSON.parse(raw) : raw;
+      } catch (_) {
+        payload = null;
+      }
+    }
+    if (!payload) {
+      try {
+        payload = JSON.parse(localStorage.getItem("aurora.analysisPresets") || "{}");
+      } catch (_) {
+        payload = {};
+      }
+    }
+    state.presets = payload && typeof payload === "object" ? payload : {};
+    renderPresetControls();
+  }
+
+  function syncPresetForm(trial = false) {
+    const settings = trial ? state.trialSettings : state.settings;
+    const smoothing = trial ? state.trialSmoothByChannel : state.smoothByChannel;
+    const channel = trial ? state.trialChannel : state.activeChannel;
+    const ids = trial
+      ? {
+          trange_start: "trialTr0",
+          trange_end: "trialTr1",
+          baseline_start: "trialB0",
+          baseline_end: "trialB1",
+          baseline_adjust: "trialBaseAdjust",
+          downsample_factor: "trialDownsample",
+          polynomial_degree: "trialPolynomialDegree",
+          smooth_factor: "trialSmoothFactor",
+        }
+      : {
+          trange_start: "tr0",
+          trange_end: "tr1",
+          baseline_start: "b0",
+          baseline_end: "b1",
+          baseline_adjust: "baseAdjust",
+          downsample_factor: "downsample",
+          polynomial_degree: "polynomialDegree",
+          smooth_factor: "smoothFactor",
+        };
+    Object.entries(ids).forEach(([key, id]) => {
+      const value =
+        key === "smooth_factor"
+          ? smoothing[channel] ?? defaultSmoothForChannel(channel)
+          : settings[key];
+      if ($(id) && value !== undefined) $(id).value = value;
+    });
+    const toggleIds = trial
+      ? ["trialPlotSmooth", "trialApplyBaseline", "trialUseIsosbestic"]
+      : ["plotSmooth", "applyBaseline", "useIsosbestic"];
+    $(toggleIds[0]).checked = !!settings.plot_smoothed;
+    $(toggleIds[1]).checked = !!settings.baseline_correction;
+    $(toggleIds[2]).checked = !!settings.use_isosbestic;
+    syncIsosbesticControls(trial);
+  }
+
+  function applyPreset(name, target) {
+    const trial = target === "trial";
+    const stateKey = trial ? "trialPreset" : "alignPreset";
+    const channel = trial ? state.trialChannel : state.activeChannel;
+    const settings = trial ? state.trialSettings : state.settings;
+    const smoothingKey = trial ? "trialSmoothByChannel" : "smoothByChannel";
+    const preset =
+      name === "Default"
+        ? { processing: defaultProcessingValues(channel), channel_smoothing: {} }
+        : state.presets[name];
+    if (!preset) return;
+    Object.assign(settings, preset.processing || {});
+    if (preset.channel_smoothing) {
+      state[smoothingKey] = { ...preset.channel_smoothing };
+    }
+    if (channel && preset.processing?.smooth_factor != null) {
+      state[smoothingKey][channel] = Math.max(
+        1,
+        Number(preset.processing.smooth_factor)
+      );
+    }
+    state[stateKey] = name;
+    syncPresetForm(trial);
+    persistProcessingSettings();
+    renderPresetControls();
+    if (trial) {
+      trialRequestSequence += 1;
+      scheduleTrialAnalyze(0);
+    } else {
+      alignRequestSequence += 1;
+      scheduleAlignAnalyze(0);
+    }
+    toast(`applied ${name} preset`);
+  }
+
+  function markPresetModified(trial = false) {
+    const key = trial ? "trialPreset" : "alignPreset";
+    if (state[key] !== "Custom") {
+      state[key] = "Custom";
+      renderPresetControls();
+    }
+  }
+
+  function renderPresetControls() {
+    for (const target of ["align", "trial"]) {
+      const select = $(target + "Preset");
+      if (!select) continue;
+      let current = state[target + "Preset"] || "Default";
+      if (
+        !["Default", "Custom"].includes(current) &&
+        !state.presets[current]
+      ) {
+        current = "Custom";
+        state[target + "Preset"] = current;
+      }
+      const names = ["Default", ...Object.keys(state.presets).sort()];
+      if (current === "Custom") names.push("Custom");
+      fillSelect(select, names, (name) => name, (name) => name);
+      select.value = names.includes(current) ? current : "Default";
+      const deleteButton = $(target + "PresetDelete");
+      const exportButton = $(target + "PresetExport");
+      if (deleteButton) {
+        deleteButton.disabled = !state.presets[select.value];
+      }
+      if (exportButton) exportButton.disabled = select.value === "Custom";
+    }
+  }
+
+  function saveCurrentPreset(target) {
+    const trial = target === "trial";
+    const requested = prompt("Preset name:", "");
+    const name = String(requested || "").trim();
+    if (!name) return;
+    if (["Default", "Custom"].includes(name)) {
+      toast("choose a different preset name");
+      return;
+    }
+    const preset = presetSnapshot(trial);
+    preset.name = name;
+    state.presets[name] = preset;
+    state[trial ? "trialPreset" : "alignPreset"] = name;
+    persistPresets();
+    renderPresetControls();
+    toast(`saved ${name} preset`);
+  }
+
+  function deleteCurrentPreset(target) {
+    const select = $(target + "Preset");
+    const name = select?.value;
+    if (!name || !state.presets[name]) return;
+    if (!confirm(`Delete the “${name}” preset?`)) return;
+    delete state.presets[name];
+    state[target + "Preset"] = "Custom";
+    persistPresets();
+    renderPresetControls();
+    toast(`deleted ${name} preset`);
+  }
+
+  async function exportCurrentPreset(target) {
+    const name = $(target + "Preset")?.value || "Default";
+    const preset =
+      name === "Default"
+        ? {
+            schema_version: 1,
+            name,
+            processing: defaultProcessingValues(
+              target === "trial" ? state.trialChannel : state.activeChannel
+            ),
+            channel_smoothing: {},
+          }
+        : state.presets[name];
+    if (!preset) return;
+    const presetDocument = { ...preset, name };
+    if (window.auroraBridge?.saveAnalysisPresetFile) {
+      const path = await bridgeCall(
+        "saveAnalysisPresetFile",
+        JSON.stringify({ name, preset: presetDocument })
+      );
+      if (path) toast(`preset exported to ${path}`);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(presetDocument, null, 2) + "\n"], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${name.replace(/[^A-Za-z0-9._-]+/g, "-") || "preset"}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  function importPresetDocument(document, target, fallbackName = "Imported preset") {
+    const normalized = normalizePreset(document, fallbackName);
+    let name = normalized.name;
+    if (["Default", "Custom"].includes(name)) name = `${name} imported`;
+    normalized.preset.name = name;
+    state.presets[name] = normalized.preset;
+    state[target + "Preset"] = name;
+    persistPresets();
+    renderPresetControls();
+    applyPreset(name, target);
+  }
+
+  async function importPreset(target) {
+    state.presetImportTarget = target;
+    if (window.auroraBridge?.openAnalysisPresetFile) {
+      const raw = await bridgeCall("openAnalysisPresetFile");
+      if (!raw) return;
+      importPresetDocument(JSON.parse(raw), target);
+      return;
+    }
+    const input = $("presetFileInput");
+    if (input) {
+      input.value = "";
+      input.click();
+    }
+  }
+
+  function setupPresetControls() {
+    for (const target of ["align", "trial"]) {
+      $(target + "Preset")?.addEventListener("change", () => {
+        const name = $(target + "Preset").value;
+        if (name !== "Custom") applyPreset(name, target);
+      });
+      $(target + "PresetSave")?.addEventListener("click", () =>
+        saveCurrentPreset(target)
+      );
+      $(target + "PresetDelete")?.addEventListener("click", () =>
+        deleteCurrentPreset(target)
+      );
+      $(target + "PresetImport")?.addEventListener("click", () =>
+        importPreset(target).catch((error) => toast(String(error.message || error)))
+      );
+      $(target + "PresetExport")?.addEventListener("click", () =>
+        exportCurrentPreset(target).catch((error) => toast(String(error.message || error)))
+      );
+    }
+    $("presetFileInput")?.addEventListener("change", async () => {
+      const file = $("presetFileInput").files?.[0];
+      if (!file) return;
+      try {
+        importPresetDocument(
+          JSON.parse(await file.text()),
+          state.presetImportTarget,
+          file.name.replace(/\.json$/i, "") || "Imported preset"
+        );
+      } catch (error) {
+        toast(String(error.message || error));
+      }
+    });
+    renderPresetControls();
   }
 
   function showView(name) {
@@ -475,7 +914,7 @@
     }
     alignAnalyzeTimer = setTimeout(() => {
       alignAnalyzeTimer = null;
-      runLiveAnalyze({ force: true }).catch((error) =>
+      runLiveAnalyze().catch((error) =>
         toast(String(error.message || error))
       );
     }, delay);
@@ -494,13 +933,21 @@
     }
     trialAnalyzeTimer = setTimeout(() => {
       trialAnalyzeTimer = null;
-      runTrialAnalyze({ force: true }).catch((error) =>
+      runTrialAnalyze().catch((error) =>
         toast(String(error.message || error))
       );
     }, delay);
   }
 
   function resetAnalysisState() {
+    alignRequestController?.abort();
+    trialRequestController?.abort();
+    alignMatrixController?.abort();
+    trialMatrixController?.abort();
+    alignRequestController = null;
+    trialRequestController = null;
+    alignMatrixController = null;
+    trialMatrixController = null;
     clearTimeout(alignAnalyzeTimer);
     clearTimeout(trialAnalyzeTimer);
     alignAnalyzeTimer = null;
@@ -522,6 +969,7 @@
     state.trialAnalysisChannels = [];
     state.batchRunning = false;
     state.batchCancelled = false;
+    state.batchJobId = null;
     if ($("trialStream")) $("trialStream").innerHTML = "";
     if ($("outcomeChips")) $("outcomeChips").innerHTML = "";
     clearCanvas($("alignTrace"));
@@ -718,7 +1166,7 @@
       epocs[0] ||
       null;
     state.activeChannel = (session.channels || [])[0] || null;
-    await runLiveAnalyze({ force: true });
+    await runLiveAnalyze();
     renderImportQueue();
     showView("align");
   }
@@ -920,10 +1368,10 @@
     state.path = data.path;
     applySessionSummary(data.session, data.path);
     if (target === "trials") {
-      await runTrialAnalyze({ force: true });
+      await runTrialAnalyze();
       showView("trials");
     } else {
-      await runLiveAnalyze({ force: true });
+      await runLiveAnalyze();
       showView("align");
     }
   }
@@ -1093,6 +1541,7 @@
     ].forEach((id) =>
       $(id)?.addEventListener("input", () => {
         readSettingsFromForm();
+        markPresetModified(false);
         alignRequestSequence += 1;
         scheduleAlignAnalyze();
       })
@@ -1100,6 +1549,7 @@
     ["useIsosbestic", "plotSmooth", "applyBaseline"].forEach((id) =>
       $(id)?.addEventListener("change", () => {
         readSettingsFromForm();
+        markPresetModified(false);
         alignRequestSequence += 1;
         scheduleAlignAnalyze();
       })
@@ -1125,15 +1575,19 @@
     $("alignChannel").addEventListener("change", () => {
       readSettingsFromForm();
       state.activeChannel = $("alignChannel").value;
+      releaseMatricesExcept(state.resultsByChannel, state.activeChannel);
       syncSmoothingControl();
       renderAlign();
+      ensureAlignMatrix(state.activeChannel).catch((error) => {
+        if (error.name !== "AbortError") toast(String(error.message || error));
+      });
     });
     $("alignEpoc").addEventListener("change", async () => {
       state.activeEpoc = $("alignEpoc").value;
       $("alignTag").textContent = state.activeEpoc || "—";
       if (!hasSession()) return;
       try {
-        await runLiveAnalyze({ force: true });
+        await runLiveAnalyze();
       } catch (e) {
         toast(String(e.message || e));
       }
@@ -1177,6 +1631,8 @@
       $("plotSmooth").checked = true;
       $("applyBaseline").checked = true;
       readSettingsFromForm();
+      state.alignPreset = "Default";
+      renderPresetControls();
       alignRequestSequence += 1;
       toast("defaults restored");
       scheduleAlignAnalyze(0);
@@ -1217,24 +1673,67 @@
     const channels = [...state.analysisChannels];
     if (!channels.length) throw new Error("Select at least one channel to analyze");
     const requestId = ++alignRequestSequence;
+    alignRequestController?.abort();
+    alignMatrixController?.abort();
+    alignRequestController = new AbortController();
+    const requestBody = {
+      path: state.path,
+      epoc,
+      channels,
+      settings: settingsPayload(),
+      channel_settings: channelSettingsPayload(),
+      force: !!opts.force,
+      compact: true,
+    };
     let data;
     try {
-      data = await nativeOrFetchAnalyze({
-        path: state.path,
-        epoc,
-        channels,
-        settings: settingsPayload(),
-        channel_settings: channelSettingsPayload(),
-        force: !!opts.force,
+      data = await nativeOrFetchAnalyze(requestBody, {
+        signal: alignRequestController.signal,
       });
     } catch (error) {
+      if (error.name === "AbortError") return null;
       if (requestId !== alignRequestSequence) return null;
       throw error;
     }
     if (requestId !== alignRequestSequence) return null;
     applyAnalyzePayload(data);
+    try {
+      await ensureAlignMatrix(state.activeChannel, requestBody, requestId);
+    } catch (error) {
+      if (error.name === "AbortError") return null;
+      throw error;
+    }
+    if (requestId !== alignRequestSequence) return null;
     toast(`analyzed ${epocDisplayName(epoc)}`);
     return data;
+  }
+
+  async function ensureAlignMatrix(channel, requestBody = null, requestId = null) {
+    const result = state.resultsByChannel[channel];
+    if (!result || result.z) return result;
+    alignMatrixController?.abort();
+    alignMatrixController = new AbortController();
+    const body = requestBody || {
+      path: state.path,
+      epoc: state.activeEpoc,
+      channels: [...state.analysisChannels],
+      settings: settingsPayload(),
+      channel_settings: channelSettingsPayload(),
+      compact: true,
+    };
+    const packed = await fetchPlotMatrix(
+      { ...body, force: false, channel },
+      alignMatrixController.signal
+    );
+    if (requestId !== null && requestId !== alignRequestSequence) return null;
+    if (state.resultsByChannel[channel] !== result) return null;
+    result.z = packed.matrix;
+    result._matrixBuffer = packed.flat;
+    if (state.filteredResultsByChannel[channel] === result) {
+      state.filteredResultsByChannel[channel] = result;
+    }
+    if (state.activeChannel === channel) renderAlign();
+    return result;
   }
 
   function applyAnalyzePayload(data) {
@@ -1279,6 +1778,12 @@
     return `405 fit · degree ${result.settings?.polynomial_degree ?? 1}`;
   }
 
+  function resultQualityWarnings(result) {
+    return Array.isArray(result?.quality?.warnings)
+      ? result.quality.warnings
+      : [];
+  }
+
   function renderAlign() {
     if (!hasResults()) {
       clearCanvas($("alignTrace"));
@@ -1292,10 +1797,10 @@
       state.resultsByChannel[state.activeChannel] ||
       Object.values(state.resultsByChannel)[0];
     if (!result) return;
-    const times = Float64Array.from(result.times || []);
-    const mean = Float64Array.from(result.mean || []);
-    const sem = Float64Array.from(result.sem || []);
-    const z = (result.z || []).map((row) => Float64Array.from(row));
+    const times = numericArray(result.times);
+    const mean = numericArray(result.mean);
+    const sem = numericArray(result.sem);
+    const z = result.z || [];
     const plotIdentity = resultDisplayTitle(result);
     window.AuroraPlots.drawGlowTrace($("alignTrace"), {
       times,
@@ -1313,6 +1818,7 @@
       matrix: z,
       trialNumbers: result.trial_numbers || [],
       title: `${plotIdentity} · Z-score heatmap`,
+      emptyMessage: result.z ? "no trials available" : "loading heatmap…",
     });
     if (mean.length) {
       const pk = window.AuroraPlots.peakLatency(times, mean);
@@ -1325,22 +1831,15 @@
       `${resultDisplayTitle(result)} · ` +
       `${result.num_trials || 0} trials · ${correctionSummary(result)}`;
     $("hudTrials").textContent = String(result.num_trials || 0);
-    const notices = [];
-    const dropped = result.dropped_edge_trials || [];
-    if (dropped.length) {
-      notices.push(
-        `${dropped.length} incomplete edge trial${dropped.length === 1 ? "" : "s"} dropped (${dropped.join(", ")})`
-      );
-    }
-    if (result.num_artifacts) {
-      notices.push(
-        `${result.num_artifacts} artifact trial${result.num_artifacts === 1 ? "" : "s"} removed`
-      );
-    }
+    const qualityWarnings = resultQualityWarnings(result);
+    const notices = qualityWarnings.map((warning) => warning.message);
     $("alignCalloutText").textContent = notices.length
       ? notices.join(" · ")
-      : "Incomplete edge trials are dropped, not clipped (MATLAB-faithful).";
-    $("alignCallout").classList.toggle("callout-warn", notices.length > 0);
+      : "Quality checks passed. Incomplete edge trials are dropped, not clipped.";
+    $("alignCallout").classList.toggle(
+      "callout-warn",
+      qualityWarnings.some((warning) => warning.severity === "warning")
+    );
   }
 
   function trialExportChannels() {
@@ -1361,6 +1860,7 @@
     ].forEach((id) =>
       $(id)?.addEventListener("input", () => {
         readTrialSettingsFromForm();
+        markPresetModified(true);
         trialRequestSequence += 1;
         scheduleTrialAnalyze();
       })
@@ -1369,6 +1869,7 @@
       (id) =>
         $(id)?.addEventListener("change", () => {
           readTrialSettingsFromForm();
+          markPresetModified(true);
           trialRequestSequence += 1;
           scheduleTrialAnalyze();
         })
@@ -1387,7 +1888,7 @@
       state.outcomeFilters = {};
       if (!hasSession()) return;
       try {
-        await runTrialAnalyze({ force: true, resetSelection: true });
+        await runTrialAnalyze({ resetSelection: true });
       } catch (error) {
         toast(String(error.message || error));
       }
@@ -1405,7 +1906,7 @@
     });
     $("trialLoad")?.addEventListener("click", async () => {
       try {
-        await runTrialAnalyze({ force: true, resetSelection: true });
+        await runTrialAnalyze({ resetSelection: true });
       } catch (e) {
         toast(String(e.message || e));
       }
@@ -1417,12 +1918,19 @@
     $("trialChannel").addEventListener("change", () => {
       readTrialSettingsFromForm();
       state.trialChannel = $("trialChannel").value;
+      releaseMatricesExcept(
+        state.trialFilteredResultsByChannel,
+        state.trialChannel
+      );
       const value =
         state.trialSmoothByChannel[state.trialChannel] ??
         defaultSmoothForChannel(state.trialChannel);
       if ($("trialSmoothFactor")) $("trialSmoothFactor").value = value;
       populateTrialStreamFromLive();
       renderTrials();
+      ensureTrialMatrix(state.trialChannel).catch((error) => {
+        if (error.name !== "AbortError") toast(String(error.message || error));
+      });
     });
     $("trialMode").addEventListener("change", renderTrials);
     $("trialExportCsv")?.addEventListener("click", () =>
@@ -1468,21 +1976,29 @@
       state.outcomeFilters = {};
     }
     const requestId = ++trialRequestSequence;
+    trialRequestController?.abort();
+    trialMatrixController?.abort();
+    trialRequestController = new AbortController();
+    const requestBody = {
+      path: state.path,
+      epoc,
+      channels: [...state.trialAnalysisChannels],
+      settings: trialSettingsPayload(),
+      channel_settings: trialChannelSettingsPayload(),
+      force: !!opts.force,
+      compact: true,
+      trial_numbers:
+        state.selectedTrialNumbers === null
+          ? undefined
+          : state.selectedTrialNumbers,
+    };
     let data;
     try {
-      data = await nativeOrFetchAnalyze({
-        path: state.path,
-        epoc,
-        channels: [...state.trialAnalysisChannels],
-        settings: trialSettingsPayload(),
-        channel_settings: trialChannelSettingsPayload(),
-        force: !!opts.force,
-        trial_numbers:
-          state.selectedTrialNumbers === null
-            ? undefined
-            : state.selectedTrialNumbers,
+      data = await nativeOrFetchAnalyze(requestBody, {
+        signal: trialRequestController.signal,
       });
     } catch (error) {
+      if (error.name === "AbortError") return null;
       if (requestId !== trialRequestSequence) return null;
       throw error;
     }
@@ -1510,9 +2026,45 @@
     $("trialChannel").value = state.trialChannel;
     populateTrialStreamFromLive();
     renderTrials();
+    try {
+      await ensureTrialMatrix(state.trialChannel, requestBody, requestId);
+    } catch (error) {
+      if (error.name === "AbortError") return null;
+      throw error;
+    }
+    if (requestId !== trialRequestSequence) return null;
     setBadge();
     toast(`loaded trials for ${epocDisplayName(state.trialEpoc)}`);
     return data;
+  }
+
+  async function ensureTrialMatrix(channel, requestBody = null, requestId = null) {
+    const result = state.trialFilteredResultsByChannel[channel];
+    if (!result || result.z) return result;
+    trialMatrixController?.abort();
+    trialMatrixController = new AbortController();
+    const body = requestBody || {
+      path: state.path,
+      epoc: state.trialEpoc,
+      channels: [...state.trialAnalysisChannels],
+      settings: trialSettingsPayload(),
+      channel_settings: trialChannelSettingsPayload(),
+      compact: true,
+      trial_numbers:
+        state.selectedTrialNumbers === null
+          ? undefined
+          : state.selectedTrialNumbers,
+    };
+    const packed = await fetchPlotMatrix(
+      { ...body, force: false, channel },
+      trialMatrixController.signal
+    );
+    if (requestId !== null && requestId !== trialRequestSequence) return null;
+    if (state.trialFilteredResultsByChannel[channel] !== result) return null;
+    result.z = packed.matrix;
+    result._matrixBuffer = packed.flat;
+    if (state.trialChannel === channel) renderTrials();
+    return result;
   }
 
   function populateTrialStreamFromLive() {
@@ -1711,16 +2263,13 @@
     } else if (allSources.length) {
       notices.push(`classified sources available: ${allSources.join(", ")}`);
     }
-    const dropped = fullResult?.dropped_edge_trials || [];
-    if (dropped.length) {
-      notices.push(`${dropped.length} incomplete edge trial(s) dropped`);
-    }
-    if (fullResult?.num_artifacts) {
-      notices.push(`${fullResult.num_artifacts} artifact trial(s) removed`);
-    }
+    const qualityWarnings = resultQualityWarnings(fullResult);
+    qualityWarnings.forEach((warning) => notices.push(warning.message));
     (source?.warnings || []).forEach((warning) => notices.push(`warning: ${warning}`));
     if ($("trialCalloutText")) $("trialCalloutText").textContent = notices.join(" · ");
-    const warns = dropped.length > 0 || !!fullResult?.num_artifacts || !!source?.warnings?.length;
+    const warns =
+      qualityWarnings.some((warning) => warning.severity === "warning") ||
+      !!source?.warnings?.length;
     $("trialCallout")?.classList.toggle("callout-warn", warns);
   }
 
@@ -1758,10 +2307,10 @@
       return;
     }
     const mode = $("trialMode").value;
-    const times = Float64Array.from(result.times || []);
-    const mean = Float64Array.from(result.mean || []);
-    const sem = Float64Array.from(result.sem || []);
-    const z = (result.z || []).map((row) => Float64Array.from(row));
+    const times = numericArray(result.times);
+    const mean = numericArray(result.mean);
+    const sem = numericArray(result.sem);
+    const z = result.z || [];
     const plotIdentity = resultDisplayTitle(result);
     window.AuroraPlots.drawGlowTrace($("trialTrace"), {
       times,
@@ -1780,6 +2329,7 @@
       matrix: z,
       trialNumbers: result.trial_numbers || [],
       title: `${plotIdentity} · Z-score heatmap`,
+      emptyMessage: result.z ? "no trials selected" : "loading heatmap…",
     });
     $("trialSummary").textContent =
       `${resultDisplayTitle(result)} · ` +
@@ -1859,15 +2409,22 @@
 
   function setupBatch() {
     $("launchBatch").addEventListener("click", exportBatchSelection);
-    $("abortBatch").addEventListener("click", () => {
+    $("abortBatch").addEventListener("click", async () => {
       if (!state.batchRunning) return;
       state.batchCancelled = true;
       $("abortBatch").disabled = true;
       setBatch(
         Number.parseInt($("batchPct").textContent, 10) || 0,
-        "cancelling after current epoc…",
+        "cancelling after the current analysis step…",
         "CANCEL"
       );
+      if (state.batchJobId) {
+        try {
+          await api("POST", `/api/batch-jobs/${state.batchJobId}/cancel`, {});
+        } catch (error) {
+          toast(String(error.message || error));
+        }
+      }
     });
     $("batchAllEpocs").addEventListener("click", () =>
       setBatchChoices("batchEpocs", sessionEpocChoices())
@@ -1906,7 +2463,11 @@
     $("batchAddTank")?.addEventListener("click", () =>
       addBatchSourcesFromDialog("selectTdtTank")
     );
-    $("batchClearSources")?.addEventListener("click", () => {
+    $("batchClearSources")?.addEventListener("click", async () => {
+      const paths = state.sources.map((source) => source.path);
+      if (paths.length) {
+        api("POST", "/api/evict", { paths, keep_current: true }).catch(() => {});
+      }
       state.sources = [];
       state.batchEpocs = [];
       state.batchChannels = [];
@@ -2120,14 +2681,23 @@
 
   function appendBatchOutcomes(data) {
     (data.exports || []).forEach((item) => {
-      const paths = [item.csv, item.figure].filter(Boolean);
-      const kinds = [item.csv ? "CSV" : "", item.figure ? "figure" : ""].filter(Boolean);
+      const paths = [item.csv, item.figure, item.manifest].filter(Boolean);
+      const kinds = [
+        item.csv ? "CSV" : "",
+        item.figure ? "figure" : "",
+        item.manifest ? "analysis manifest" : "",
+      ].filter(Boolean);
+      const qcMessages = (item.quality?.warnings || []).map(
+        (warning) => warning.message
+      );
       state.batchOutcomes.push({
         status: "exported",
         source: item.session,
         epoc: item.epoc,
         channels: item.channel ? [item.channel] : [],
-        detail: `${kinds.join(" + ")} written`,
+        detail:
+          `${kinds.join(" + ")} written` +
+          (qcMessages.length ? ` · QC: ${qcMessages.join(" · ")}` : ""),
         paths,
       });
     });
@@ -2205,36 +2775,44 @@
     try {
       const policy = $("batchEpocPolicy")?.value || "all";
       const selections = batchEpocSelections(epocs, policy);
-      const exports = [];
-      const skipped = [];
-      const errors = [];
-      for (let index = 0; index < selections.length; index += 1) {
-        if (state.batchCancelled) break;
-        const selection = selections[index];
+      const started = await api("POST", "/api/batch-jobs", {
+        paths: state.sources.map((source) => source.path),
+        epoc_selections: selections,
+        channels,
+        settings,
+        channel_settings: channelSettings,
+        output_dir: outputDir,
+        export_csv: exportCsv,
+        export_figure: exportFigure,
+        figure_format: $("figFormat")?.value || "png",
+      });
+      state.batchJobId = started.job.id;
+      let job = started.job;
+      while (!["completed", "cancelled", "failed"].includes(job.status)) {
         setBatch(
-          Math.round((index / selections.length) * 100),
-          `analyzing + exporting ${selection.label}…`,
-          "RUN"
+          job.progress || 0,
+          job.detail || "working…",
+          state.batchCancelled || job.status === "cancelling" ? "CANCEL" : "RUN"
         );
-        const data = await nativeOrFetchBatch({
-          paths: state.sources.map((source) => source.path),
-          epoc_selections: [selection],
-          channels,
-          settings,
-          channel_settings: channelSettings,
-          output_dir: outputDir,
-          export_csv: exportCsv,
-          export_figure: exportFigure,
-          figure_format: $("figFormat")?.value || "png",
-        });
-        exports.push(...(data.exports || []));
-        skipped.push(...(data.skipped || []));
-        errors.push(...(data.errors || []));
-        appendBatchOutcomes(data);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        const snapshot = await api("GET", `/api/batch-jobs/${state.batchJobId}`);
+        job = snapshot.job;
       }
-      if (state.batchCancelled) {
+      const result = job.result || {
+        exports: [],
+        skipped: [],
+        errors: [],
+      };
+      appendBatchOutcomes(result);
+      const exports = result.exports || [];
+      const skipped = result.skipped || [];
+      const errors = result.errors || [];
+      if (job.status === "failed") {
+        throw new Error(job.error || "Batch export failed");
+      }
+      if (job.status === "cancelled") {
         setBatch(
-          Number.parseInt($("batchPct").textContent, 10) || 0,
+          job.progress || Number.parseInt($("batchPct").textContent, 10) || 0,
           `cancelled after ${exports.length} export set(s)`,
           "CANCELLED"
         );
@@ -2266,6 +2844,7 @@
     } finally {
       state.batchRunning = false;
       state.batchCancelled = false;
+      state.batchJobId = null;
       renderBatchSelectors();
       renderBatchPage();
     }
@@ -2411,7 +2990,7 @@
       renderImportQueue();
       renderDataPage();
       if (primary.path) {
-        runLiveAnalyze({ force: true })
+        runLiveAnalyze()
           .then(() => showView("align"))
           .catch((e) => toast(String(e.message || e)));
       }
@@ -2465,6 +3044,7 @@
         .catch(() => {});
     }
     restoreProcessingSettings().catch(() => {});
+    restorePresets().catch(() => {});
   }
 
   function wireChrome() {
@@ -2539,10 +3119,12 @@
     setupAlignControls();
     setupTrials();
     setupBatch();
+    setupPresetControls();
     wireChrome();
     clearSessionUi();
     hydrateBrand();
     restoreProcessingSettings().catch(() => {});
+    restorePresets().catch(() => {});
 
     const params = new URLSearchParams(location.search);
     const page = params.get("page") || "data";

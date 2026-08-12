@@ -15,6 +15,7 @@ from photon_cruncher.gui_aurora.server import (
     _analyze_request,
     _batch_export_request,
     _inspect_paths_request,
+    _plot_matrix_request,
     serve_in_background,
 )
 from photon_cruncher.gui_aurora.session_store import STORE
@@ -144,6 +145,8 @@ class AuroraAppTests(unittest.TestCase):
                 self.assertEqual(exported["exports"][0]["channel"], channels[0])
                 csv_path = Path(exported["exports"][0]["csv"])
                 self.assertTrue(csv_path.exists())
+                manifest_path = Path(exported["exports"][0]["manifest"])
+                self.assertTrue(manifest_path.exists())
                 text = csv_path.read_text(encoding="utf-8").splitlines()
                 self.assertTrue(text[0].startswith("TIME,"))
                 self.assertTrue(text[1].startswith("MEAN,"))
@@ -151,6 +154,9 @@ class AuroraAppTests(unittest.TestCase):
             health = _get(port, "/api/health")
             self.assertEqual(health["backend"], "photon_cruncher.service")
             self.assertEqual(health["current_session"], opened["path"])
+            diagnostics = _get(port, "/api/diagnostics")
+            self.assertEqual(diagnostics["application"]["version"], health["version"])
+            self.assertNotIn("streams", diagnostics)
         finally:
             httpd.shutdown()
             httpd.server_close()
@@ -266,6 +272,10 @@ class AuroraAppTests(unittest.TestCase):
                 "photon_cruncher.gui_aurora.server.service.open_session",
                 return_value=session,
             ) as opened,
+            mock.patch(
+                "photon_cruncher.gui_aurora.server.service.quality_summary",
+                return_value={"warnings": []},
+            ),
         ):
             payload = _batch_export_request(
                 {
@@ -304,6 +314,7 @@ class AuroraAppTests(unittest.TestCase):
         self.assertEqual(payload["input_count"], 2)
         self.assertEqual(len(payload["exports"]), 1)
         self.assertEqual(payload["exports"][0]["channel"], "A_465")
+        self.assertEqual(payload["exports"][0]["quality"], {"warnings": []})
         self.assertEqual(
             payload["exports"][0]["csv"],
             "/exports/a/a_CueA_A_465_heatmap.csv",
@@ -381,6 +392,26 @@ class AuroraAppTests(unittest.TestCase):
             )
         self.assertEqual(payload["results"], [])
         self.assertEqual(payload["all_results"], [{"channel": "A_465"}])
+
+    def test_plot_matrix_request_returns_compact_float32_rows(self) -> None:
+        matrix = np.arange(12, dtype=float).reshape(3, 4)
+        result = SimpleNamespace(
+            channel_key="A_465",
+            processed=SimpleNamespace(zall=matrix, zall_smooth=matrix + 0.5),
+            settings=SimpleNamespace(plot_smooth=True),
+        )
+        with mock.patch(
+            "photon_cruncher.gui_aurora.server._cached_analysis",
+            return_value=(SimpleNamespace(), [result], "Cue"),
+        ):
+            raw, headers = _plot_matrix_request(
+                {"path": "/synthetic.mat", "epoc": "Cue", "channel": "A_465"}
+            )
+
+        decoded = np.frombuffer(raw, dtype="<f4").reshape(3, 4)
+        np.testing.assert_allclose(decoded, matrix + 0.5)
+        self.assertEqual(headers["X-Aurora-Rows"], "3")
+        self.assertEqual(headers["X-Aurora-Columns"], "4")
 
 
 if __name__ == "__main__":

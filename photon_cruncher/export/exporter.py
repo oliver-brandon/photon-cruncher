@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,6 +43,32 @@ def export_channel(
     matrix = np.vstack([processed.ts, mean_trace, z_data])
     _write_labeled_numeric_csv(heatmap_path, labels, matrix)
     return heatmap_path
+
+
+def analysis_manifest_path(
+    output_dir: Path,
+    session_name: str,
+    epoc_name: str,
+    channel_key: str,
+    filename_suffix: str = "",
+) -> Path:
+    prefix = f"{session_name}_{epoc_name}_{channel_key}{filename_suffix}"
+    return output_dir / f"{prefix}_analysis.json"
+
+
+def write_analysis_manifest(path: Path, payload: dict[str, Any]) -> Path:
+    """Write a stable, human-readable provenance sidecar for one analysis."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema_version": 1,
+        "created_utc": datetime.now(UTC).isoformat(),
+        **payload,
+    }
+    path.write_text(
+        json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def export_batch_summary(output_dir: Path, rows: list[dict[str, Any]]) -> None:

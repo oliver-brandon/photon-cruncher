@@ -7,7 +7,9 @@ analysis service. Live sessions only.
 from __future__ import annotations
 
 import json
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -295,6 +297,54 @@ class AuroraBridge(QtCore.QObject):
                         f"processing/channel_smooth/{channel}",
                         value,
                     )
+
+    @QtCore.Slot(result=str)
+    def savedAnalysisPresets(self) -> str:
+        return str(QtCore.QSettings().value("processing/presets_json", "{}") or "{}")
+
+    @QtCore.Slot(str)
+    def saveAnalysisPresets(self, presets_json: str) -> None:
+        try:
+            payload = json.loads(presets_json or "{}")
+        except (TypeError, ValueError):
+            return
+        if isinstance(payload, dict):
+            QtCore.QSettings().setValue(
+                "processing/presets_json",
+                json.dumps(payload, sort_keys=True),
+            )
+
+    @QtCore.Slot(result=str)
+    def openAnalysisPresetFile(self) -> str:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self._window,
+            "Import analysis preset",
+            "",
+            "Photon Cruncher preset (*.json);;JSON files (*.json)",
+        )
+        if not path:
+            return ""
+        return Path(path).read_text(encoding="utf-8")
+
+    @QtCore.Slot(str, result=str)
+    def saveAnalysisPresetFile(self, request_json: str) -> str:
+        request = json.loads(request_json or "{}")
+        name = str(request.get("name") or "analysis-preset").strip()
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-.")
+        suggested = f"{safe_name or 'analysis-preset'}.json"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self._window,
+            "Export analysis preset",
+            suggested,
+            "Photon Cruncher preset (*.json);;JSON files (*.json)",
+        )
+        if not path:
+            return ""
+        Path(path).write_text(
+            json.dumps(request.get("preset") or {}, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return path
 
     @QtCore.Slot(str, result=str)
     def openSession(self, path: str) -> str:
@@ -612,6 +662,8 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         help_menu.addSeparator()
         health = help_menu.addAction("Backend Health")
         health.triggered.connect(self.show_health)
+        diagnostics = help_menu.addAction("Export Diagnostic Report…")
+        diagnostics.triggered.connect(self.export_diagnostic_report)
         about = help_menu.addAction("About Aurora")
         about.triggered.connect(self.show_about)
 
@@ -983,6 +1035,53 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             )
         except URLError as exc:
             QtWidgets.QMessageBox.warning(self, "Backend health", str(exc))
+
+    def export_diagnostic_report(self) -> None:
+        suggested = (
+            f"Photon-Cruncher-Aurora-Diagnostics-"
+            f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+        )
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Export diagnostic report",
+            str(Path.home() / suggested),
+            "JSON report (*.json)",
+        )
+        if not path:
+            return
+        try:
+            report = self.api("GET", "/api/diagnostics")
+            snapshot = self._update_service.snapshot
+            report["updater"] = {
+                "state": snapshot.state.value,
+                "current_version": snapshot.current_version,
+                "channel": snapshot.channel,
+                "available_version": (
+                    snapshot.release.version if snapshot.release else None
+                ),
+                "message": snapshot.message,
+                "runtime_available": velopack_runtime_available(),
+            }
+            Path(path).write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            self._status.showMessage(f"Diagnostic report saved to {path}", 8000)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Diagnostic report saved",
+                (
+                    f"Saved to:\n{path}\n\n"
+                    "The report contains app/runtime details and recent errors, "
+                    "but no raw photometry signal data."
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - user-facing diagnostic action
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Diagnostic export failed",
+                str(exc),
+            )
 
     def show_about(self) -> None:
         QtWidgets.QMessageBox.about(

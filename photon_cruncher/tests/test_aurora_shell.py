@@ -25,6 +25,10 @@ class AuroraShellSpikeTests(unittest.TestCase):
             "selectTdtTank",
             "savedProcessingSettings",
             "saveProcessingSettings",
+            "savedAnalysisPresets",
+            "saveAnalysisPresets",
+            "openAnalysisPresetFile",
+            "saveAnalysisPresetFile",
         ):
             self.assertTrue(hasattr(shell.AuroraBridge, method))
 
@@ -64,6 +68,7 @@ class AuroraShellSpikeTests(unittest.TestCase):
             Path(__file__).resolve().parents[1] / "gui_aurora" / "shell.py"
         ).read_text(encoding="utf-8")
         self.assertIn('addAction("Check for Updates…")', shell_text)
+        self.assertIn('addAction("Export Diagnostic Report…")', shell_text)
         self.assertIn('setObjectName("updateIndicator")', shell_text)
         self.assertIn('"Install and restart"', shell_text)
         self.assertIn("create_update_service()", shell_text)

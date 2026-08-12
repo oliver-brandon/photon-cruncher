@@ -31,6 +31,7 @@ a = Analysis(
         "PySide6.QtWebChannel",
         "photon_cruncher.gui_aurora.shell",
         "photon_cruncher.gui_aurora.server",
+        "photon_cruncher.gui_aurora.batch_jobs",
         "photon_cruncher.gui_aurora.session_store",
         "photon_cruncher.service",
         "photon_cruncher.product",

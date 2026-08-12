@@ -7,6 +7,7 @@ re-implementing load/process/export loops. Backend fixes land here once.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -16,10 +17,17 @@ from photon_cruncher.analysis.trial_classifier import (
     ClassifiedTrialSource,
     classified_trial_sources,
 )
-from photon_cruncher.export.exporter import export_channel, save_result_figure
+from photon_cruncher import __version__
+from photon_cruncher.export.exporter import (
+    analysis_manifest_path,
+    export_channel,
+    save_result_figure,
+    write_analysis_manifest,
+)
 from photon_cruncher.io.loader import load_session
 from photon_cruncher.io.loader import discover_tdt_block_paths
 from photon_cruncher.model import Epoc, PhotometrySession
+from photon_cruncher.product import AURORA_APP_NAME
 from photon_cruncher.processing.pipeline import (
     ProcessedSignal,
     ProcessingSettings,
@@ -168,6 +176,7 @@ def analyze(
     settings_factory: SettingsFactory | None = None,
     settings_overrides: dict[str, Any] | None = None,
     source: ClassifiedTrialSource | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
 ) -> list[AnalysisResult]:
     """Run the shared MATLAB-faithful pipeline for one epoc across channels.
 
@@ -190,6 +199,8 @@ def analyze(
 
     results: list[AnalysisResult] = []
     for channel_key in keys:
+        if cancel_requested is not None and cancel_requested():
+            break
         if channel_key not in channel_map:
             continue
         iso_stream, signal_stream, _ = channel_map[channel_key]
@@ -278,7 +289,7 @@ def export_result(
     filename_suffix: str = "",
 ) -> dict[str, str]:
     output = Path(output_dir)
-    paths: dict[str, str] = {"csv": "", "figure": ""}
+    paths: dict[str, str] = {"csv": "", "figure": "", "manifest": ""}
     if export_csv:
         csv_path = export_channel(
             output_dir=output,
@@ -305,7 +316,207 @@ def export_result(
             figure_format=figure_format,
         )
         paths["figure"] = str(figure_path)
+    if export_csv or export_figure:
+        manifest = write_result_manifest(
+            result,
+            output,
+            paths,
+            filename_suffix=filename_suffix,
+        )
+        paths["manifest"] = str(manifest)
     return paths
+
+
+def write_result_manifest(
+    result: AnalysisResult,
+    output_dir: str | Path,
+    paths: dict[str, str],
+    *,
+    filename_suffix: str = "",
+) -> Path:
+    output = Path(output_dir)
+    manifest = analysis_manifest_path(
+        output,
+        result.session.source_path.stem,
+        result.epoc.name,
+        result.channel_key,
+        filename_suffix,
+    )
+    manifest_outputs = {
+        key: value for key, value in paths.items() if value
+    }
+    manifest_outputs["manifest"] = str(manifest)
+    return write_analysis_manifest(
+        manifest,
+        _strict_json_safe(
+            {
+                "application": {
+                    "name": AURORA_APP_NAME,
+                    "version": __version__,
+                },
+                "source": {
+                    "path": str(result.session.source_path),
+                    "name": result.session.source_path.name,
+                    "metadata": result.session.info,
+                },
+                "analysis": {
+                    "epoc": result.epoc.name,
+                    "channel": result.channel_key,
+                    "iso_stream": result.stream_store[0] or None,
+                    "signal_stream": result.stream_store[1],
+                    "settings": analysis_settings_payload(result.settings),
+                    "exported_trace": (
+                        "smoothed" if result.settings.plot_smooth else "raw"
+                    ),
+                },
+                "trials": {
+                    "kept": int(result.processed.zall.shape[0]),
+                    "numbers": list(result.processed.trial_numbers),
+                    "labels": list(result.processed.trial_labels),
+                    "onsets_seconds": list(result.processed.trial_times),
+                    "baseline_standard_deviations": list(
+                        result.processed.baseline_standard_deviations
+                    ),
+                    "dropped_incomplete": list(
+                        result.processed.dropped_edge_trials
+                    ),
+                    "artifact_removals": int(result.processed.num_artifacts),
+                },
+                "quality": quality_summary(result),
+                "outputs": manifest_outputs,
+            }
+        ),
+    )
+
+
+def analysis_settings_payload(settings: ProcessingSettings) -> dict[str, Any]:
+    def finite_or_none(value: float) -> float | None:
+        return float(value) if math.isfinite(float(value)) else None
+
+    return {
+        "trange_start": float(settings.trange[0]),
+        "trange_end": float(settings.trange[1]),
+        "baseline_start": float(settings.baseline_per[0]),
+        "baseline_end": float(settings.baseline_per[1]),
+        "baseline_adjust": float(settings.base_adjust),
+        "downsample_factor": int(settings.downsample_factor),
+        "smooth_factor": int(settings.smooth_factor),
+        "artifact_405": finite_or_none(settings.artifact_405),
+        "artifact_465": finite_or_none(settings.artifact_465),
+        "plot_smoothed": bool(settings.plot_smooth),
+        "baseline_correction": bool(settings.set_baseline),
+        "use_isosbestic": bool(settings.use_isosbestic),
+        "polynomial_degree": int(settings.polynomial_degree),
+    }
+
+
+def quality_summary(result: AnalysisResult) -> dict[str, Any]:
+    processed = result.processed
+    # Inspect unsmoothed values so smoothing cannot hide a large excursion.
+    data = processed.zall
+    kept = int(data.shape[0])
+    removed_edges = int(processed.num_edge_trials)
+    removed_artifacts = int(processed.num_artifacts)
+    attempted = kept + removed_edges + removed_artifacts
+    finite_mask = np.isfinite(data)
+    nonfinite_values = int(data.size - int(finite_mask.sum()))
+    finite_values = data[finite_mask]
+    max_abs_z = (
+        float(np.max(np.abs(finite_values))) if finite_values.size else None
+    )
+    warnings: list[dict[str, str]] = []
+    baseline_sd = np.asarray(
+        processed.baseline_standard_deviations,
+        dtype=float,
+    )
+    invalid_baseline_trials = int(
+        np.count_nonzero(
+            ~np.isfinite(baseline_sd) | (baseline_sd <= np.finfo(float).eps)
+        )
+    )
+
+    if removed_edges:
+        fraction = removed_edges / attempted if attempted else 0.0
+        warnings.append(
+            {
+                "code": "incomplete_edge_trials",
+                "severity": "warning" if fraction >= 0.10 else "notice",
+                "message": (
+                    f"{removed_edges} incomplete edge trial(s) were dropped "
+                    f"({fraction:.1%} of attempted trials)."
+                ),
+            }
+        )
+    if removed_artifacts:
+        fraction = removed_artifacts / attempted if attempted else 0.0
+        warnings.append(
+            {
+                "code": "artifact_removals",
+                "severity": "warning" if fraction >= 0.10 else "notice",
+                "message": (
+                    f"{removed_artifacts} artifact trial(s) were removed "
+                    f"({fraction:.1%} of attempted trials)."
+                ),
+            }
+        )
+    if not result.settings.use_isosbestic:
+        missing_control = not bool(result.stream_store[0])
+        warnings.append(
+            {
+                "code": "signal_only",
+                "severity": "warning" if missing_control else "notice",
+                "message": (
+                    "No paired 405 control was available; signal-only analysis was used."
+                    if missing_control
+                    else "Signal-only analysis was selected; no 405 control fit was applied."
+                ),
+            }
+        )
+    if invalid_baseline_trials:
+        warnings.append(
+            {
+                "code": "low_baseline_variance",
+                "severity": "warning",
+                "message": (
+                    f"{invalid_baseline_trials} trial(s) have zero or undefined "
+                    "baseline variance; their z-scores may be unstable."
+                ),
+            }
+        )
+    if nonfinite_values:
+        warnings.append(
+            {
+                "code": "nonfinite_zscores",
+                "severity": "warning",
+                "message": (
+                    f"The result contains {nonfinite_values} non-finite z-score value(s); "
+                    "check baseline variance and input signal quality."
+                ),
+            }
+        )
+    if max_abs_z is not None and max_abs_z > 20:
+        warnings.append(
+            {
+                "code": "extreme_zscores",
+                "severity": "warning",
+                "message": (
+                    f"Extreme z-scores were detected (maximum absolute z = {max_abs_z:.2f}); "
+                    "inspect baseline variance, artifacts, and edge trials."
+                ),
+            }
+        )
+
+    return {
+        "attempted_trials": attempted,
+        "kept_trials": kept,
+        "dropped_incomplete_trials": removed_edges,
+        "artifact_removals": removed_artifacts,
+        "nonfinite_values": nonfinite_values,
+        "invalid_baseline_trials": invalid_baseline_trials,
+        "maximum_absolute_z": max_abs_z,
+        "evaluated_trace": "raw_zscore",
+        "warnings": warnings,
+    }
 
 
 def session_summary(session: PhotometrySession) -> dict[str, Any]:
@@ -365,14 +576,18 @@ def session_summary(session: PhotometrySession) -> dict[str, Any]:
     }
 
 
-def result_plot_payload(result: AnalysisResult) -> dict[str, Any]:
+def result_plot_payload(
+    result: AnalysisResult,
+    *,
+    include_matrix: bool = True,
+) -> dict[str, Any]:
     """JSON-friendly plot payload for Aurora / web clients."""
     processed = result.processed
     use_smooth = result.settings.plot_smooth
     z = processed.zall_smooth if use_smooth else processed.zall
     mean = processed.mean_z_smooth if use_smooth else processed.mean_z
     sem = processed.sem_z_smooth if use_smooth else processed.sem_z
-    return {
+    payload = {
         "session_name": result.session.source_path.stem,
         "source_path": str(result.session.source_path),
         "epoc": result.epoc.name,
@@ -397,11 +612,16 @@ def result_plot_payload(result: AnalysisResult) -> dict[str, Any]:
             "use_isosbestic": bool(result.settings.use_isosbestic),
             "polynomial_degree": int(result.settings.polynomial_degree),
         },
+        "quality": quality_summary(result),
         "times": _json_safe(processed.ts),
         "mean": _json_safe(mean),
         "sem": _json_safe(sem),
-        "z": _json_safe(z),
+        "matrix_shape": [int(z.shape[0]), int(z.shape[1])],
+        "matrix_dtype": "float32",
     }
+    if include_matrix:
+        payload["z"] = _json_safe(z)
+    return payload
 
 
 def _json_safe(value: Any) -> Any:
@@ -414,7 +634,23 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, np.integer):
         return int(value)
     if isinstance(value, np.floating):
-        return float(value)
+        converted = float(value)
+        return converted if math.isfinite(converted) else None
     if isinstance(value, np.bool_):
         return bool(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     return value
+
+
+def _strict_json_safe(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    safe = _json_safe(value)
+    if isinstance(safe, dict):
+        return {str(key): _strict_json_safe(item) for key, item in safe.items()}
+    if isinstance(safe, list | tuple):
+        return [_strict_json_safe(item) for item in safe]
+    if isinstance(safe, float) and not math.isfinite(safe):
+        return None
+    return safe

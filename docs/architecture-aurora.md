@@ -70,14 +70,41 @@ Module: `photon_cruncher/service.py`
 - `analyze(session, epoc, …)`
 - `annotate_trials` / `filter_trials`
 - `export_result`
-- `session_summary` / `result_plot_payload`
+- `session_summary` / `result_plot_payload` / `quality_summary`
 
-Aurora local API: `/api/open`, `/api/inspect-paths`, `/api/analyze`,
-`/api/export`, `/api/batch-export`, `/api/health`.
+Aurora local API includes:
+
+- session and inspection: `/api/open`, `/api/inspect-paths`, `/api/health`
+- analysis summaries: `/api/analyze`
+- displayed heatmap data: compact float32 `/api/plot-matrix`
+- export: `/api/export` and legacy synchronous `/api/batch-export`
+- responsive batch jobs: `/api/batch-jobs`, job status, and cancellation
+- support: `/api/diagnostics` and `/api/evict`
+
+The frontend requests JSON summaries for all analyzed channels, then fetches the
+full matrix only for the displayed channel. Stale Align and Trial Explorer
+requests are aborted and ignored. The in-process session/analysis cache is LRU
+bounded by session count and estimated NumPy bytes; a result larger than the
+configured cache budget is used for the current request but not retained.
 
 Multi-source Batch Export delegates to `analysis.runner.run_batch_custom`.
 Align, Trial Explorer, single-result export, and batch settings all resolve
 through the shared `photon_cruncher.service` processing and export contracts.
+Only one background batch job runs at a time. It loads each source once, reports
+progress, and checks for cancellation between sources, epocs, and channels.
+
+## Scientific UX Contracts
+
+- Named processing presets are persisted locally and can be exchanged as JSON.
+  Align and Trial Explorer show `Custom` as soon as a visible setting diverges.
+- Every CSV or figure result has a neighboring `_analysis.json` manifest with
+  source identity, app version, settings, trial provenance, exclusions, QC, and
+  output paths.
+- Result summaries surface incomplete-edge loss, artifact removal, missing 405
+  control, unstable baseline variance, non-finite z-scores, and raw absolute
+  z-scores above 20 as a visible heuristic warning.
+- **Help -> Export Diagnostic Report...** records runtime, updater, bounded-cache,
+  and recent error state, but never raw samples or trial matrices.
 
 ## Packaging
 
@@ -118,6 +145,7 @@ env -u PYTHONPATH -u PYTHONHOME .build-venv/bin/python -m unittest \
   photon_cruncher.tests.test_service \
   photon_cruncher.tests.test_pipeline_equivalence \
   photon_cruncher.tests.test_gui_aurora \
+  photon_cruncher.tests.test_aurora_jobs \
   photon_cruncher.tests.test_aurora_shell \
   photon_cruncher.tests.test_aurora_app \
   photon_cruncher.tests.test_updates \

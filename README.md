@@ -216,12 +216,15 @@ In the shell:
 - **File → Open MAT / TDT** uses native dialogs
 - Analysis runs through the local API → `photon_cruncher.service`
 - Align exposes explicit channel controls, reactive processing updates, and separate CSV/figure exports
+- Named analysis presets can be saved, imported, exported, and applied in Align or Trial Explorer; edited settings are marked as **Custom**
 - Trial Explorer shows original trial numbers, onset times, classified outcomes, and selected-trial plots/exports
 - Displayed plots include file, epoc, channel, labeled axes, and integer trial-aligned heatmap ticks
-- Batch Export accepts multiple MAT files, mixed-data folders, and TDT tanks, with detailed exported/skipped/failed results
+- Batch Export runs as a responsive background job with live progress, real cancellation between analysis steps, and detailed exported/skipped/failed results
+- Result callouts report incomplete-trial loss, artifact removal, unstable baselines, extreme/non-finite z-scores, and signal-only processing
 - Processing and export-folder settings persist between launches
 - A lower-right update indicator shows the dev version and release notes
 - **Help → Check for Updates…** runs an immediate manual update check
+- **Help → Export Diagnostic Report…** saves app/runtime, cache, updater, and recent-error details without raw photometry samples
 
 ### Browser mode (optional)
 
@@ -241,11 +244,15 @@ API (same backend as lab/CLI):
 - `GET /api/health`
 - `POST /api/open` or `/api/inspect` with `{"path": "..."}`
 - `POST /api/analyze` with `{"path": "...", "epoc": "Cue", "channels": ["A_465"]}`
+- `POST /api/plot-matrix` returns the requested displayed channel as compact float32 data
 - `POST /api/export` with path, epoc, output_dir, and export flags
 - `POST /api/inspect-paths` with a list of batch source paths
 - `POST /api/upload?upload_id=...&relative_path=...&final=0|1` with the raw file
   bytes; set `final=1` on the last file to receive discovered MAT/TDT paths
 - `POST /api/batch-export` with source paths, epoc selections, channels, and export flags
+- `POST /api/batch-jobs`, then `GET /api/batch-jobs/<id>` for responsive batch progress
+- `POST /api/batch-jobs/<id>/cancel` to stop after the current analysis step
+- `GET /api/diagnostics` for a data-free troubleshooting report
 
 Architecture: `docs/architecture-aurora.md`.
 Current performance measurements: `docs/backend-performance.md`.
@@ -263,13 +270,20 @@ set the processing window and smoothing, then click **Load Trials**. The trial
 list can be checked or unchecked by hand, and the plot updates to show only the
 selected trials.
 
+Use the **Analysis preset** controls to save a named processing recipe, exchange
+it as JSON, or apply the same recipe in Align and Trial Explorer. **Default**
+restores the app defaults; **Custom** means at least one visible setting has
+changed since the selected preset was applied.
+
 ## Batch Export
 
 Use **Add files**, **Add folder**, or **Add TDT tank** to build a multi-recording
 batch. Select the epocs and channels to export, then choose exact suffixes or
 prefer the `A / 1_` or `C / 2_` member when paired epocs are available. Each
 recording is written to its own output subfolder. CSV is enabled by default;
-figures can be added in PNG, PDF, or TIFF format.
+figures can be added in PNG, PDF, or TIFF format. The batch runs in the
+background, loads each recording once for all selected epocs, reports live
+progress, and can be cancelled without waiting for every remaining file.
 
 For recordings with compatible behavior epocs, Photon Cruncher can add
 in-memory classified trial sources in Trial Explorer. These sources do not
@@ -285,6 +299,9 @@ exports include those trial labels in the row names.
   fits signal from the paired 405 control before subtraction.
 * Export outputs include heatmap CSVs with the time vector in the first row,
   followed by per-trial z-score rows.
+* Every GUI, CLI, and batch result also includes an `_analysis.json` provenance
+  sidecar with the Photon Cruncher version, source, epoc/channel, processing
+  settings, trial labels/onsets, exclusions, QC findings, and written files.
 
 ## License
 

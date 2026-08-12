@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import atexit
+from collections import deque
 import hashlib
 import json
 import http.server
 import os
+import platform
 import re
 import shutil
 import socketserver
+import sys
 import tempfile
 import threading
 import time
@@ -17,9 +20,10 @@ import traceback
 import urllib.parse
 import webbrowser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from photon_cruncher import __version__
+from photon_cruncher.gui_aurora.batch_jobs import BATCH_JOBS
 from photon_cruncher.gui_aurora import STATIC_DIR
 from photon_cruncher.gui_aurora.session_store import STORE
 from photon_cruncher.product import (
@@ -29,6 +33,7 @@ from photon_cruncher.product import (
     aurora_app_title,
     aurora_brand_label,
 )
+from photon_cruncher.version import UPDATE_CHANNEL_PREFIX
 from photon_cruncher import service
 from photon_cruncher.analysis.runner import (
     BatchEpocSelection,
@@ -43,6 +48,8 @@ _UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _UPLOAD_ROOT = Path(tempfile.mkdtemp(prefix="photon-cruncher-aurora-upload-"))
 _UPLOAD_DIRS: dict[str, Path] = {}
 _UPLOAD_LOCK = threading.Lock()
+_DIAGNOSTIC_EVENTS: deque[dict[str, Any]] = deque(maxlen=200)
+_DIAGNOSTIC_LOCK = threading.Lock()
 
 
 def _cleanup_uploads() -> None:
@@ -52,8 +59,60 @@ def _cleanup_uploads() -> None:
 atexit.register(_cleanup_uploads)
 
 
-class _ReusableTCPServer(socketserver.TCPServer):
+class _ReusableTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
+
+
+def _record_diagnostic(
+    level: str,
+    event: str,
+    message: str,
+    **context: Any,
+) -> None:
+    entry = {
+        "time": time.time(),
+        "level": str(level),
+        "event": str(event),
+        "message": str(message),
+        "context": context,
+    }
+    with _DIAGNOSTIC_LOCK:
+        _DIAGNOSTIC_EVENTS.append(entry)
+
+
+def _diagnostics_payload() -> dict[str, Any]:
+    current_name = ""
+    try:
+        current_name = STORE.get().session.source_path.name
+    except ValueError:
+        pass
+    with _DIAGNOSTIC_LOCK:
+        events = list(_DIAGNOSTIC_EVENTS)
+    return {
+        "ok": True,
+        "application": {
+            "name": AURORA_APP_NAME,
+            "version": __version__,
+            "channel": UPDATE_CHANNEL_PREFIX,
+        },
+        "runtime": {
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "architecture": platform.machine(),
+            "executable": Path(sys.executable).name,
+        },
+        "session": {
+            "open": bool(current_name),
+            "source_name": current_name,
+        },
+        "cache": STORE.stats(),
+        "recent_events": events,
+        "privacy": (
+            "This report contains filenames and error messages, but no raw signal "
+            "samples or trial matrices."
+        ),
+    }
 
 
 def _json_response(
@@ -61,14 +120,17 @@ def _json_response(
     payload: dict[str, Any],
     status: int = 200,
 ) -> None:
-    body = json.dumps(payload).encode("utf-8")
+    body = json.dumps(payload, allow_nan=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionResetError):
+        pass
 
 
 def _read_json(handler: http.server.BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -87,7 +149,9 @@ def _settings_fingerprint(overrides: dict[str, Any] | None) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
+def _cached_analysis(
+    body: dict[str, Any],
+) -> tuple[Any, list[service.AnalysisResult], str]:
     path = body.get("path") or STORE.current_path()
     epoc = body.get("epoc")
     if not path:
@@ -123,46 +187,137 @@ def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
         )
         STORE.put_analysis(cached.path, cache_key, results)
 
+    return cached, results, str(epoc)
+
+
+def _plot_payload(
+    result: service.AnalysisResult,
+    *,
+    compact: bool,
+) -> dict[str, Any]:
+    if compact:
+        return service.result_plot_payload(result, include_matrix=False)
+    return service.result_plot_payload(result)
+
+
+def _filtered_result(
+    result: service.AnalysisResult,
+    *,
+    trial_numbers: Any,
+    trial_types: Any,
+) -> service.AnalysisResult:
+    processed = service.filter_trials(
+        result.processed,
+        trial_numbers=trial_numbers,
+        trial_types=trial_types,
+    )
+    return service.AnalysisResult(
+        session=result.session,
+        epoc=result.epoc,
+        channel_key=result.channel_key,
+        processed=processed,
+        settings=result.settings,
+        stream_store=result.stream_store,
+    )
+
+
+def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
+    cached, results, epoc = _cached_analysis(body)
+    compact = bool(body.get("compact", False))
+
     trial_numbers = body.get("trial_numbers")
     trial_types = body.get("trial_types")
     filter_requested = trial_numbers is not None or trial_types is not None
     all_payloads = (
-        [service.result_plot_payload(result) for result in results]
+        [_plot_payload(result, compact=compact) for result in results]
         if filter_requested
         else None
     )
     payloads = []
     for result in results:
-        processed = result.processed
         if filter_requested:
             if trial_numbers == [] and not trial_types:
                 continue
-            processed = service.filter_trials(
-                processed,
+            filtered = _filtered_result(
+                result,
                 trial_numbers=trial_numbers,
                 trial_types=trial_types,
             )
-            # shallow copy result with filtered processed
-            filtered = service.AnalysisResult(
-                session=result.session,
-                epoc=result.epoc,
-                channel_key=result.channel_key,
-                processed=processed,
-                settings=result.settings,
-                stream_store=result.stream_store,
-            )
-            payloads.append(service.result_plot_payload(filtered))
+            payloads.append(_plot_payload(filtered, compact=compact))
         else:
-            payloads.append(service.result_plot_payload(result))
+            payloads.append(_plot_payload(result, compact=compact))
+
+    _record_diagnostic(
+        "info",
+        "analysis",
+        f"Analyzed {Path(cached.path).name} · {epoc}",
+        channels=[result.channel_key for result in results],
+        compact=compact,
+    )
 
     return {
         "ok": True,
         "path": cached.path,
         "session": cached.summary,
-        "epoc": str(epoc),
+        "epoc": epoc,
         "results": payloads,
         **({"all_results": all_payloads} if all_payloads is not None else {}),
     }
+
+
+def _plot_matrix_request(body: dict[str, Any]) -> tuple[bytes, dict[str, str]]:
+    compact_body = dict(body)
+    compact_body["force"] = False
+    _cached, results, _epoc = _cached_analysis(compact_body)
+    channel = str(body.get("channel") or "")
+    if not channel:
+        raise ValueError("channel is required")
+    result = next(
+        (item for item in results if item.channel_key == channel),
+        None,
+    )
+    if result is None:
+        raise ValueError(f"channel '{channel}' was not analyzed")
+
+    trial_numbers = body.get("trial_numbers")
+    trial_types = body.get("trial_types")
+    if trial_numbers is not None or trial_types is not None:
+        if trial_numbers == [] and not trial_types:
+            raise ValueError("Select at least one trial to draw the plot.")
+        result = _filtered_result(
+            result,
+            trial_numbers=trial_numbers,
+            trial_types=trial_types,
+        )
+
+    processed = result.processed
+    matrix = processed.zall_smooth if result.settings.plot_smooth else processed.zall
+    packed = matrix.astype("<f4", copy=False).tobytes(order="C")
+    return packed, {
+        "X-Aurora-Rows": str(int(matrix.shape[0])),
+        "X-Aurora-Columns": str(int(matrix.shape[1])),
+        "X-Aurora-Dtype": "float32-le",
+        "X-Aurora-Channel": result.channel_key,
+    }
+
+
+def _matrix_response(
+    handler: http.server.BaseHTTPRequestHandler,
+    body: bytes,
+    headers: dict[str, str],
+) -> None:
+    handler.send_response(200)
+    handler.send_header("Content-Type", "application/octet-stream")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    for key, value in headers.items():
+        handler.send_header(key, value)
+    handler.end_headers()
+    try:
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionResetError):
+        pass
 
 
 def _export_request(body: dict[str, Any]) -> dict[str, Any]:
@@ -219,7 +374,7 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Choose CSV and/or figure export.")
     if figure_format not in {"png", "pdf", "tiff"}:
         raise ValueError("figure_format must be png, pdf, or tiff")
-    written: list[dict[str, str]] = []
+    written: list[dict[str, Any]] = []
     for result in results:
         paths = service.export_result(
             result,
@@ -236,6 +391,8 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
                 "channel": result.channel_key,
                 "csv": paths.get("csv", ""),
                 "figure": paths.get("figure", ""),
+                "manifest": paths.get("manifest", ""),
+                "quality": service.quality_summary(result),
             }
         )
     return {
@@ -276,7 +433,12 @@ def _batch_selection(raw: dict[str, Any]) -> BatchEpocSelection:
     return (label, members, mode)
 
 
-def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
+def _batch_export_request(
+    body: dict[str, Any],
+    *,
+    cancel_requested: Callable[[], bool] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Any]:
     raw_paths = body.get("paths") or []
     raw_selections = body.get("epoc_selections") or []
     output_dir = body.get("output_dir")
@@ -321,19 +483,20 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
         per_session_subdir=True,
         export_csv=export_csv,
         outcomes=outcomes,
+        export_figure=export_figure,
+        figure_format=figure_format,
+        cancel_requested=cancel_requested,
+        progress_callback=progress_callback,
+        session_loader=lambda path: STORE.open(
+            path,
+            make_current=False,
+        ).session,
     )
-    written: list[dict[str, str]] = []
+    written: list[dict[str, Any]] = []
     for item in exported:
-        figure_path = ""
-        if export_figure:
-            figure_path = service.export_result(
-                item.result,
-                item.output_dir,
-                export_csv=False,
-                export_figure=True,
-                figure_format=figure_format,
-            )["figure"]
         csv_path = str(getattr(item, "csv_path", None) or "")
+        figure_path = str(getattr(item, "figure_path", None) or "")
+        manifest_path = str(getattr(item, "manifest_path", None) or "")
         if csv_path or figure_path:
             written.append(
                 {
@@ -342,6 +505,8 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
                     "channel": item.result.channel_key,
                     "csv": csv_path,
                     "figure": figure_path,
+                    "manifest": manifest_path,
+                    "quality": service.quality_summary(item.result),
                 }
             )
 
@@ -354,7 +519,7 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
             "reason": outcome.reason,
         }
 
-    return {
+    payload = {
         "ok": True,
         "output_dir": str(destination),
         "input_count": len(input_paths),
@@ -369,7 +534,18 @@ def _batch_export_request(body: dict[str, Any]) -> dict[str, Any]:
             for outcome in outcomes
             if outcome.status == "error"
         ],
+        "cancelled": bool(cancel_requested and cancel_requested()),
     }
+    _record_diagnostic(
+        "info",
+        "batch_export",
+        "Batch export cancelled" if payload["cancelled"] else "Batch export finished",
+        input_count=len(input_paths),
+        export_count=len(written),
+        skipped_count=len(payload["skipped"]),
+        error_count=len(payload["errors"]),
+    )
+    return payload
 
 
 def _upload_destination(upload_id: str, relative_path: str) -> tuple[Path, Path]:
@@ -508,6 +684,17 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                     },
                 )
                 return
+            if parsed.path == "/api/diagnostics":
+                _json_response(self, _diagnostics_payload())
+                return
+            job_match = re.fullmatch(r"/api/batch-jobs/([a-f0-9]+)", parsed.path)
+            if job_match:
+                try:
+                    snapshot = BATCH_JOBS.snapshot(job_match.group(1))
+                    _json_response(self, {"ok": True, "job": snapshot})
+                except KeyError as exc:
+                    _json_response(self, {"ok": False, "error": str(exc)}, status=404)
+                return
             if parsed.path == "/api/current":
                 try:
                     cached = STORE.get()
@@ -544,6 +731,11 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                     body = _read_json(self)
                     _json_response(self, _analyze_request(body))
                     return
+                if parsed.path == "/api/plot-matrix":
+                    body = _read_json(self)
+                    matrix, headers = _plot_matrix_request(body)
+                    _matrix_response(self, matrix, headers)
+                    return
                 if parsed.path == "/api/export":
                     body = _read_json(self)
                     _json_response(self, _export_request(body))
@@ -556,6 +748,45 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                     body = _read_json(self)
                     _json_response(self, _batch_export_request(body))
                     return
+                if parsed.path == "/api/batch-jobs":
+                    body = _read_json(self)
+                    snapshot = BATCH_JOBS.start(
+                        lambda cancelled, progress: _batch_export_request(
+                            body,
+                            cancel_requested=cancelled,
+                            progress_callback=progress,
+                        )
+                    )
+                    _record_diagnostic(
+                        "info",
+                        "batch_job_started",
+                        "Started background batch export",
+                        job_id=snapshot["id"],
+                    )
+                    _json_response(self, {"ok": True, "job": snapshot}, status=202)
+                    return
+                cancel_match = re.fullmatch(
+                    r"/api/batch-jobs/([a-f0-9]+)/cancel",
+                    parsed.path,
+                )
+                if cancel_match:
+                    snapshot = BATCH_JOBS.cancel(cancel_match.group(1))
+                    _json_response(self, {"ok": True, "job": snapshot})
+                    return
+                if parsed.path == "/api/evict":
+                    body = _read_json(self)
+                    paths = body.get("paths") or []
+                    if not isinstance(paths, list):
+                        raise ValueError("paths must be a list")
+                    removed = STORE.evict_paths(
+                        paths,
+                        keep_current=bool(body.get("keep_current", False)),
+                    )
+                    _json_response(
+                        self,
+                        {"ok": True, "removed": removed, "cache": STORE.stats()},
+                    )
+                    return
                 if parsed.path == "/api/close":
                     STORE.clear()
                     with _UPLOAD_LOCK:
@@ -567,6 +798,13 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                     return
                 _json_response(self, {"ok": False, "error": "not found"}, status=404)
             except Exception as exc:  # noqa: BLE001 - API boundary
+                _record_diagnostic(
+                    "error",
+                    "api_error",
+                    str(exc),
+                    endpoint=parsed.path,
+                    error_type=type(exc).__name__,
+                )
                 _json_response(
                     self,
                     {

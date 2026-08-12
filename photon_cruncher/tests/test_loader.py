@@ -516,6 +516,82 @@ class LoaderTests(unittest.TestCase):
         self.assertIn("no events", outcomes[1].reason.lower())
         self.assertIn("unreadable source", outcomes[2].reason)
 
+    def test_batch_custom_loads_each_source_once_for_multiple_epocs(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = self._synthetic_cli_session()
+        session.epocs["Second"] = session.epocs["Cue"]
+        load_calls: list[Path] = []
+        progress: list[tuple[int, int, str]] = []
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exported = runner.run_batch_custom(
+                input_paths=[Path("synthetic.mat")],
+                epoc_selections=[
+                    ("Cue", ("Cue",)),
+                    ("Second", ("Second",)),
+                ],
+                output_dir=Path(tmp),
+                channel_keys=["A_465"],
+                settings_factory=lambda _: settings,
+                export_csv=False,
+                session_loader=lambda path: (
+                    load_calls.append(Path(path)) or session
+                ),
+                progress_callback=lambda completed, total, detail: progress.append(
+                    (completed, total, detail)
+                ),
+            )
+
+        self.assertEqual(load_calls, [Path("synthetic.mat")])
+        self.assertEqual(len(exported), 2)
+        self.assertEqual(progress[-1][:2], (2, 2))
+
+    def test_batch_custom_stops_before_the_next_selection_when_cancelled(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = self._synthetic_cli_session()
+        session.epocs["Second"] = session.epocs["Cue"]
+        cancelled = False
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+
+        def progress(_completed: int, _total: int, detail: str) -> None:
+            nonlocal cancelled
+            if detail.startswith("Finished"):
+                cancelled = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exported = runner.run_batch_custom(
+                input_paths=[Path("synthetic.mat")],
+                epoc_selections=[
+                    ("Cue", ("Cue",)),
+                    ("Second", ("Second",)),
+                ],
+                output_dir=Path(tmp),
+                channel_keys=["A_465"],
+                settings_factory=lambda _: settings,
+                export_csv=False,
+                session_loader=lambda _path: session,
+                cancel_requested=lambda: cancelled,
+                progress_callback=progress,
+            )
+
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].result.epoc.name, "Cue")
+
     def test_batch_custom_retains_result_when_csv_export_fails(self) -> None:
         from photon_cruncher.analysis import runner
 
@@ -734,8 +810,10 @@ class LoaderTests(unittest.TestCase):
                 payload = json.loads(stdout)
                 csv_path = Path(payload["results"][0]["exported_csv"])
                 figure_path = Path(payload["results"][0]["exported_figure"])
+                manifest_path = Path(payload["results"][0]["analysis_manifest"])
                 self.assertTrue(csv_path.exists())
                 self.assertTrue(figure_path.exists())
+                self.assertTrue(manifest_path.exists())
         finally:
             cli.discover_input_paths = original_discover
             cli.load_session = original_load_session
@@ -744,6 +822,10 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["results"][0]["num_trials"], 2)
         self.assertEqual(payload["results"][0]["settings"]["baseline_adjust"], -2.0)
+        self.assertEqual(
+            payload["results"][0]["quality"]["evaluated_trace"],
+            "raw_zscore",
+        )
 
     def test_cli_analyze_accepts_signal_only_and_polynomial_flags(self) -> None:
         from photon_cruncher import cli

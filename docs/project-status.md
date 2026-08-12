@@ -63,6 +63,17 @@ packaging, or analysis-pipeline work.
 - Displayed and saved figures include source file, epoc, channel, labeled axes,
   and whole-numbered trial ticks aligned to heatmap rows.
 - Processing settings and export destinations persist between app launches.
+- Named processing presets persist locally, show an explicit `Custom` state
+  after edits, and can be imported/exported as portable JSON.
+- Scientific QC callouts flag incomplete-edge and artifact loss, missing 405
+  controls, unstable baselines, non-finite values, and extreme z-scores.
+- Plot summaries use compact JSON and fetch only the displayed heatmap as
+  float32 data; stale requests are aborted and the analysis cache is bounded.
+- Batch Export runs as one background job, loads each source once, reports live
+  progress, and can be cancelled between analysis steps.
+- Every result export includes an `_analysis.json` provenance/QC manifest.
+- **Help -> Export Diagnostic Report...** saves data-free runtime, updater,
+  cache, and recent-error details for troubleshooting.
 - The native window restores its last size, position, and maximized state.
 
 ### CLI And Automation
@@ -117,6 +128,8 @@ flowchart LR
   files to add them.
 - Direct single-result exports always ask for a destination. Batch Export may
   reuse its selected destination.
+- CSV and figure exports must retain their neighboring `_analysis.json`
+  provenance manifest. Diagnostic reports must not include raw signal arrays.
 - Aurora sessions are live and ephemeral; the application does not maintain a
   project database or import library.
 - Browser uploads are temporary, limited to 4 GiB per file, and cleaned when the
@@ -130,7 +143,7 @@ flowchart LR
 
 The following checks passed on 2026-08-11:
 
-- Full 86-test suite covering loader, CLI, service, pipeline equivalence, Aurora
+- Full 98-test suite covering loader, CLI, service, pipeline equivalence, Aurora
   frontend wiring, shell, browser upload, API, batch behavior, and centralized
   version/update metadata.
 - Python compilation, PyInstaller spec compilation, JavaScript syntax checks,
@@ -142,6 +155,13 @@ The following checks passed on 2026-08-11:
   using the dynamic setuptools version.
 - A live browser check showed the API-derived `Aurora v2.0.0` rail label and the
   canonical `Photon Cruncher Aurora` document title.
+- A live browser workflow imported a MAT fixture, saved and reapplied a named
+  preset across Align and Trial Explorer, switched display channels, rendered a
+  nonblank selected-trial heatmap, and completed a three-channel background
+  batch with CSV plus analysis manifests.
+- The dense `1996_FR1-4_NA.mat` / `Tick` transport stress check reduced the
+  displayed-view payload from 141.444 MiB of all-channel JSON to 0.174 MiB of
+  summaries plus a 9.599 MiB displayed-channel matrix.
 - Updater tests cover numeric version ordering, dev platform-channel isolation,
   unavailable-network behavior, and failed downloads that preserve the current
   installation. The GitHub workflow passes `actionlint`.
@@ -184,9 +204,10 @@ pipeline in clean checkouts.
    ordering, channel isolation, offline checks, and failed downloads. The full
    installed path still needs a `2.0.0` to newer-version update on real Windows
    and macOS machines after the first feeds are published.
-7. **Batch sources are processed sequentially.** Current single-session timings
-   are good, but very large multi-file batches still scale roughly with recording
-   count. Profile a representative batch before adding parallel execution.
+7. **Batch sources are processed sequentially.** The worker is responsive,
+   cancellable, and loads each source once, but very large multi-file batches
+   still scale roughly with recording count. Profile a representative lab batch
+   before adding process-level parallelism.
 
 ## Recommended Next Work
 

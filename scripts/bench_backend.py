@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import statistics
 import tempfile
@@ -17,7 +18,7 @@ from photon_cruncher.processing.pipeline import (
     default_settings_for_channel,
     process_channel,
 )
-from photon_cruncher.service import AnalysisResult
+from photon_cruncher.service import AnalysisResult, result_plot_payload
 
 
 def _pick_epoc(session, preferred: str | None):
@@ -46,6 +47,7 @@ def bench_path(
     export_figure: bool,
     epoc_name: str | None,
     repeats: int,
+    measure_transport: bool,
 ) -> None:
     print(f"\n== {path}")
     t_load, session = _median_call(lambda: load_session(path), repeats)
@@ -82,6 +84,67 @@ def bench_path(
 
     if not results:
         return
+
+    analysis_results = [
+        AnalysisResult(
+            session=session,
+            epoc=epoc,
+            channel_key=channel_key,
+            processed=processed,
+            settings=settings,
+            stream_store=(iso or "", signal),
+        )
+        for channel_key, iso, signal, settings, processed in results
+    ]
+
+    if measure_transport:
+        def serialize_legacy() -> bytes:
+            return json.dumps(
+                {
+                    "results": [
+                        result_plot_payload(result)
+                        for result in analysis_results
+                    ]
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+
+        def serialize_compact() -> bytes:
+            return json.dumps(
+                {
+                    "results": [
+                        result_plot_payload(result, include_matrix=False)
+                        for result in analysis_results
+                    ]
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+
+        first_result = analysis_results[0]
+        first_matrix = (
+            first_result.processed.zall_smooth
+            if first_result.settings.plot_smooth
+            else first_result.processed.zall
+        )
+
+        def pack_displayed_matrix() -> bytes:
+            return first_matrix.astype("<f4", copy=False).tobytes(order="C")
+
+        t_legacy, legacy = _median_call(serialize_legacy, repeats)
+        t_compact, compact = _median_call(serialize_compact, repeats)
+        t_matrix, matrix = _median_call(pack_displayed_matrix, repeats)
+        print(
+            f"legacy all-channel JSON       {t_legacy:8.3f}s  "
+            f"{len(legacy) / (1024 * 1024):8.3f} MiB"
+        )
+        print(
+            f"compact summary JSON          {t_compact:8.3f}s  "
+            f"{len(compact) / (1024 * 1024):8.3f} MiB"
+        )
+        print(
+            f"displayed float32 matrix      {t_matrix:8.3f}s  "
+            f"{len(matrix) / (1024 * 1024):8.3f} MiB"
+        )
 
     channel_key, iso, signal, settings, processed = results[0]
     print(f"first channel matrix         {processed.zall.shape}")
@@ -125,6 +188,11 @@ def main() -> None:
     parser.add_argument("--epoc", default=None, help="Preferred epoc name")
     parser.add_argument("--figure", action="store_true", help="Also time figure export")
     parser.add_argument(
+        "--transport",
+        action="store_true",
+        help="Measure legacy JSON versus Aurora compact plot transport.",
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=3,
@@ -149,6 +217,7 @@ def main() -> None:
             export_figure=args.figure,
             epoc_name=args.epoc,
             repeats=args.repeat,
+            measure_transport=args.transport,
         )
 
 

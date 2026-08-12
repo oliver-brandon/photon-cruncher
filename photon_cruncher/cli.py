@@ -14,7 +14,6 @@ from photon_cruncher.analysis.trial_classifier import (
     ClassifiedTrialSource,
     classified_trial_sources,
 )
-from photon_cruncher.export.exporter import export_channel, save_result_figure
 from photon_cruncher.io.loader import (
     discover_tdt_block_paths,
     is_tdt_block_path,
@@ -27,6 +26,10 @@ from photon_cruncher.processing.pipeline import (
     default_settings_for_channel,
     process_channel,
     subset_processed_signal,
+)
+from photon_cruncher.service import (
+    export_result as service_export_result,
+    quality_summary,
 )
 
 
@@ -835,27 +838,13 @@ def export_result(
     export_csv: bool,
     export_figures: bool,
 ) -> dict[str, Any]:
-    csv_path = None
-    figure_path = None
-    if export_csv:
-        csv_path = export_channel(
-            output_dir=output_dir,
-            session_name=result.session.source_path.stem,
-            epoc_name=result.epoc.name,
-            channel_key=result.channel_key,
-            processed=result.processed,
-            settings=result.settings,
-            dropped_trials=result.processed.dropped_edge_trials,
-            stream_store=result.stream_store,
-            metadata={"source_path": str(result.session.source_path), **result.session.info},
-            export_smoothed=result.settings.plot_smooth,
-        )
-    if export_figures:
-        figure_path = save_result_figure(
-            output_dir,
-            result,
-            figure_format=config["exports"]["figure_format"],
-        )
+    paths = service_export_result(
+        result,
+        output_dir,
+        export_csv=export_csv,
+        export_figure=export_figures,
+        figure_format=config["exports"]["figure_format"],
+    )
 
     processed = result.processed
     return {
@@ -873,8 +862,10 @@ def export_result(
         "iso_stream": result.stream_store[0],
         "signal_stream": result.stream_store[1],
         "settings": settings_summary(result.settings),
-        "exported_csv": str(csv_path) if csv_path else "",
-        "exported_figure": str(figure_path) if figure_path else "",
+        "quality": quality_summary(result),
+        "exported_csv": paths.get("csv", ""),
+        "exported_figure": paths.get("figure", ""),
+        "analysis_manifest": paths.get("manifest", ""),
     }
 
 

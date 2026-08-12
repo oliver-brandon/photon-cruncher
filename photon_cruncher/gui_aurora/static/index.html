@@ -141,6 +141,7 @@
                   multiple
                   hidden
                 />
+                <input id="presetFileInput" type="file" accept=".json,application/json" hidden />
               </div>
             </div>
 
@@ -234,6 +235,19 @@
                     <span class="quiet">Open a session to choose channels.</span>
                   </div>
                 </div>
+                <div class="card preset-card">
+                  <div class="card-title">Analysis preset</div>
+                  <label class="field">
+                    <span>Active preset</span>
+                    <select id="alignPreset"><option>Default</option></select>
+                  </label>
+                  <div class="preset-actions">
+                    <button class="btn btn-sm" type="button" id="alignPresetSave">Save</button>
+                    <button class="btn btn-sm" type="button" id="alignPresetImport">Import</button>
+                    <button class="btn btn-sm" type="button" id="alignPresetExport">Export</button>
+                    <button class="btn btn-sm" type="button" id="alignPresetDelete" disabled>Delete</button>
+                  </div>
+                </div>
                 <div class="card">
                   <div class="card-title">Processing window</div>
                   <div class="field-grid">
@@ -316,6 +330,18 @@
                 </div>
                 <div class="selector-list" id="trialChannelSelectors">
                   <span class="quiet">Open a session to choose channels.</span>
+                </div>
+                <div class="preset-block">
+                  <label class="field">
+                    <span>Analysis preset</span>
+                    <select id="trialPreset"><option>Default</option></select>
+                  </label>
+                  <div class="preset-actions">
+                    <button class="btn btn-sm" type="button" id="trialPresetSave">Save</button>
+                    <button class="btn btn-sm" type="button" id="trialPresetImport">Import</button>
+                    <button class="btn btn-sm" type="button" id="trialPresetExport">Export</button>
+                    <button class="btn btn-sm" type="button" id="trialPresetDelete" disabled>Delete</button>
+                  </div>
                 </div>
                 <details class="processing-details">
                   <summary>Trial processing settings</summary>
