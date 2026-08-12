@@ -72,10 +72,18 @@ mv "${staged_versioned_executable}" "${staged_main_executable}"
   "${staged_app}/Contents/Info.plist"
 if [[ -f "${project_root}/dist/photon-cruncher-cli" ]]; then
   mkdir -p "${staged_app}/Contents/Resources/bin"
+  staged_cli="${staged_app}/Contents/Resources/bin/photon-cruncher-cli"
   cp \
     "${project_root}/dist/photon-cruncher-cli" \
-    "${staged_app}/Contents/Resources/bin/photon-cruncher-cli"
-  chmod +x "${staged_app}/Contents/Resources/bin/photon-cruncher-cli"
+    "${staged_cli}"
+  chmod +x "${staged_cli}"
+  codesign \
+    --force \
+    --options runtime \
+    --timestamp \
+    --sign "${MACOS_DEVELOPER_ID_APPLICATION}" \
+    --keychain "${MACOS_SIGNING_KEYCHAIN}" \
+    "${staged_cli}"
 fi
 
 set +e
