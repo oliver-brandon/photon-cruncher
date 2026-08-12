@@ -15,15 +15,6 @@ UPDATE_REPOSITORY_URL = "https://github.com/oliver-brandon/photon-cruncher"
 UPDATE_TAG_PREFIX = "aurora-dev-v"
 VELOPACK_VERSION = "1.2.0"
 
-
-def major_minor(version: str = __version__) -> str:
-    """Return the display version used in app and archive names."""
-    parts = version.split(".")
-    if len(parts) < 2 or not all(part.isdigit() for part in parts):
-        raise ValueError(f"Expected a numeric semantic version, got {version!r}")
-    return ".".join(parts[:2])
-
-
 def update_target(
     system_name: str | None = None,
     machine: str | None = None,
@@ -50,7 +41,7 @@ def update_target(
     return f"{UPDATE_CHANNEL_PREFIX}-{runtime}", runtime
 
 
-AURORA_UI_VERSION = major_minor()
+AURORA_UI_VERSION = __version__
 BUNDLE_APP_NAME = f"{APP_NAME} v{__version__}"
 ARCHIVE_STEM = f"Photon-Cruncher-Aurora-v{__version__}"
 UPDATE_RELEASE_TAG = f"{UPDATE_TAG_PREFIX}{__version__}"

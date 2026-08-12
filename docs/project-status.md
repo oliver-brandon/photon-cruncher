@@ -10,10 +10,11 @@ packaging, or analysis-pipeline work.
 
 - Repository: `oliver-brandon/photon-cruncher` (public; default branch `main`).
 - Public stable line: `main` at `4bd14a7`, tagged and released as `v1.1.4`.
-- Development line: `dev` at `a1ea450`, synchronized with `origin/dev` when this
+- Development line: `dev` includes the committed Aurora updater and release
+  packaging at `ffb5ff7`; the local branch was ahead of `origin/dev` when this
   audit was performed.
 - Development product: Photon Cruncher Aurora, package version `2.0.0`, with
-  in-app label `Aurora v2.0`.
+  in-app label `Aurora v2.0.0`.
 - Aurora v2 is not yet tagged or published as a GitHub release. The newest
   public downloads are still the v1.1.4 macOS and Windows bundles.
 - GitHub currently has no open issues, so the remaining work listed below is
@@ -62,6 +63,7 @@ packaging, or analysis-pipeline work.
 - Displayed and saved figures include source file, epoc, channel, labeled axes,
   and whole-numbered trial ticks aligned to heatmap rows.
 - Processing settings and export destinations persist between app launches.
+- The native window restores its last size, position, and maximized state.
 
 ### CLI And Automation
 
@@ -121,9 +123,8 @@ flowchart LR
   server exits.
 - `main` is the currently released v1.1.4 PySide line. `dev` is the Aurora-only
   2.0 development line until an explicit merge and release.
-- The Aurora window title has no version suffix. The UI rail uses major/minor,
-  while bundle and archive names use the full semantic version; both derive from
-  `photon_cruncher/version.py`.
+- The Aurora window title has no version suffix. The UI rail, bundle, and archive
+  names use the full semantic version from `photon_cruncher/version.py`.
 
 ## Verification Evidence
 
@@ -139,7 +140,7 @@ The following checks passed on 2026-08-11:
   `2.0.0`, and the app passed `codesign --verify --deep --strict`.
 - A source wheel built successfully as `photon_cruncher-2.0.0-py3-none-any.whl`
   using the dynamic setuptools version.
-- A live browser check showed the API-derived `Aurora v2.0` rail label and the
+- A live browser check showed the API-derived `Aurora v2.0.0` rail label and the
   canonical `Photon Cruncher Aurora` document title.
 - Updater tests cover numeric version ordering, dev platform-channel isolation,
   unavailable-network behavior, and failed downloads that preserve the current

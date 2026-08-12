@@ -84,7 +84,7 @@ def aurora_app_title(version: str | None = None) -> str:
 
 
 def aurora_brand_label(version: str | None = None) -> str:
-    """Return the versioned label shown in the Aurora rail."""
+    """Return the full semantic version label shown in the Aurora rail."""
     return f"Aurora v{version or AURORA_UI_VERSION}"
 
 

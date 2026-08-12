@@ -174,10 +174,10 @@ class ServiceFacadeTests(unittest.TestCase):
         # Window title has no version suffix; version lives in the UI rail.
         self.assertEqual(aurora_app_title(), AURORA_APP_NAME)
         from photon_cruncher.product import AURORA_UI_VERSION, aurora_brand_label
-        from photon_cruncher.version import __version__, major_minor
+        from photon_cruncher.version import __version__
 
-        self.assertEqual(AURORA_UI_VERSION, major_minor(__version__))
-        self.assertEqual(aurora_brand_label(), f"Aurora v{major_minor(__version__)}")
+        self.assertEqual(AURORA_UI_VERSION, __version__)
+        self.assertEqual(aurora_brand_label(), f"Aurora v{__version__}")
 
 
 if __name__ == "__main__":

@@ -43,9 +43,8 @@ def validate_repo(values: dict[str, str]) -> list[str]:
     if not re.fullmatch(r"\d+\.\d+\.\d+", values["version"]):
         errors.append("version must use numeric MAJOR.MINOR.PATCH format")
 
-    expected_ui = ".".join(values["version"].split(".")[:2])
-    if values["ui_version"] != expected_ui:
-        errors.append("ui_version must be derived from version major/minor")
+    if values["ui_version"] != values["version"]:
+        errors.append("ui_version must match the full canonical version")
     if values["bundle_app_name"] != f"{values['app_name']} v{values['version']}":
         errors.append("bundle_app_name does not match app_name and full version")
     if values["update_package_id"] != values["bundle_identifier"]:

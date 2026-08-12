@@ -14,7 +14,6 @@ from photon_cruncher.version import (
     UPDATE_CHANNEL_PREFIX,
     UPDATE_PACKAGE_ID,
     UPDATE_RELEASE_TAG,
-    major_minor,
     update_target,
 )
 
@@ -24,8 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class VersionMetadataTests(unittest.TestCase):
     def test_runtime_names_derive_from_canonical_version(self) -> None:
-        ui_version = major_minor(__version__)
-        self.assertEqual(AURORA_UI_VERSION, ui_version)
+        self.assertEqual(AURORA_UI_VERSION, __version__)
         self.assertEqual(bundle_app_name(), f"{APP_NAME} v{__version__}")
         self.assertEqual(ARCHIVE_STEM, f"Photon-Cruncher-Aurora-v{__version__}")
 

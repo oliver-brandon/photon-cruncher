@@ -32,6 +32,33 @@ from photon_cruncher.updates import (
 )
 
 
+WINDOW_GEOMETRY_KEY = "window/geometry"
+
+
+def restore_window_geometry(
+    window: QtWidgets.QWidget,
+    settings: QtCore.QSettings | None = None,
+) -> bool:
+    """Restore the last native window size, position, and maximized state."""
+    saved = (settings or QtCore.QSettings()).value(WINDOW_GEOMETRY_KEY)
+    if not saved:
+        return False
+    try:
+        return bool(window.restoreGeometry(saved))
+    except (TypeError, ValueError):
+        return False
+
+
+def save_window_geometry(
+    window: QtWidgets.QWidget,
+    settings: QtCore.QSettings | None = None,
+) -> None:
+    """Persist native window geometry for the next launch."""
+    target = settings or QtCore.QSettings()
+    target.setValue(WINDOW_GEOMETRY_KEY, window.saveGeometry())
+    target.sync()
+
+
 def _paths_from_tdt_selection(folders: list[str] | list[Path] | list[str | Path]) -> list[str]:
     """Expand selected tanks/blocks into unique TDT block paths."""
     resolved: list[str] = []
@@ -456,6 +483,7 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(aurora_app_title())
         self.resize(1480, 940)
         self.setMinimumSize(1180, 760)
+        restore_window_geometry(self)
         self.setStyleSheet("QMainWindow { background: #05060c; }")
 
         self._host = host
@@ -776,6 +804,7 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             )
 
     def _apply_downloaded_update(self, dialog: UpdateDialog) -> None:
+        save_window_geometry(self)
         snapshot = self._update_service.install_and_restart()
         dialog.set_snapshot(snapshot)
         self._sync_update_indicator(snapshot)
@@ -969,6 +998,7 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         )
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # noqa: N802
+        save_window_geometry(self)
         try:
             self._httpd.shutdown()
             self._httpd.server_close()

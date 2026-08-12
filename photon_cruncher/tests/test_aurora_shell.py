@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from urllib.request import urlopen
+
+from PySide6 import QtCore, QtWidgets
 
 from photon_cruncher.gui_aurora.server import find_free_port, serve_in_background, static_files
 from photon_cruncher.gui_aurora import STATIC_DIR
@@ -64,6 +67,29 @@ class AuroraShellSpikeTests(unittest.TestCase):
         self.assertIn('setObjectName("updateIndicator")', shell_text)
         self.assertIn('"Install and restart"', shell_text)
         self.assertIn("create_update_service()", shell_text)
+        self.assertIn("restore_window_geometry(self)", shell_text)
+        self.assertIn("save_window_geometry(self)", shell_text)
+
+    def test_window_geometry_round_trip(self) -> None:
+        from photon_cruncher.gui_aurora.shell import (
+            restore_window_geometry,
+            save_window_geometry,
+        )
+
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.assertIsNotNone(app)
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = QtCore.QSettings(
+                str(Path(tmp) / "window.ini"),
+                QtCore.QSettings.Format.IniFormat,
+            )
+            original = QtWidgets.QMainWindow()
+            original.setGeometry(90, 110, 600, 500)
+            save_window_geometry(original, settings)
+
+            restored = QtWidgets.QMainWindow()
+            self.assertTrue(restore_window_geometry(restored, settings))
+            self.assertEqual(restored.geometry(), original.geometry())
 
 
 if __name__ == "__main__":
