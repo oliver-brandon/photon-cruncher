@@ -10,11 +10,12 @@ import argparse
 
 from photon_cruncher import __version__
 from photon_cruncher.product import aurora_app_title, aurora_brand_label
-from photon_cruncher.updates import run_velopack_startup
+from photon_cruncher.updates import development_mode_enabled, run_velopack_startup
 
 
 def main(argv: list[str] | None = None) -> int:
-    run_velopack_startup()
+    if not development_mode_enabled():
+        run_velopack_startup()
     parser = argparse.ArgumentParser(
         prog="photon-cruncher",
         description=(

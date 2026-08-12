@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import contextlib
+import io
+import os
+import sys
 import unittest
+from unittest import mock
 
+from photon_cruncher.aurora_main import main as aurora_main
 from photon_cruncher.updates import (
     UpdateRelease,
     UpdateService,
     UpdateState,
+    development_mode_enabled,
     is_newer_version,
     update_channel,
+    velopack_runtime_available,
 )
 from photon_cruncher.version import UPDATE_PACKAGE_ID, update_target
 
@@ -45,6 +53,44 @@ class FakeBackend:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_development_mode_disables_velopack_runtime(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"PHOTON_CRUNCHER_DEV": "1"}, clear=True),
+            mock.patch.object(sys, "frozen", True, create=True),
+        ):
+            self.assertTrue(development_mode_enabled())
+            self.assertFalse(velopack_runtime_available())
+
+    def test_packaged_non_development_runtime_remains_enabled(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(sys, "frozen", True, create=True),
+        ):
+            self.assertFalse(development_mode_enabled())
+            self.assertTrue(velopack_runtime_available())
+
+    def test_developer_entry_skips_velopack_startup(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"PHOTON_CRUNCHER_DEV": "1"}, clear=True),
+            mock.patch("photon_cruncher.aurora_main.run_velopack_startup") as startup,
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            aurora_main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        startup.assert_not_called()
+
+    def test_non_development_entry_runs_velopack_startup(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("photon_cruncher.aurora_main.run_velopack_startup") as startup,
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            aurora_main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        startup.assert_called_once_with()
+
     def test_version_comparison_uses_numeric_components(self) -> None:
         self.assertTrue(is_newer_version("2.0.10", "2.0.9"))
         self.assertTrue(is_newer_version("v2.1.0", "2.0.99"))

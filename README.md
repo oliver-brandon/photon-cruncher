@@ -23,10 +23,13 @@ preprocessing, supports MAT exports and raw TDT blocks, and exports CSV/figures.
 * Live sessions only (MAT/TDT open → analyze → export)
 
 ```bash
-.build-venv/bin/python -m photon_cruncher.aurora_main
-# or
-photon-cruncher
+./dev-aurora
 ```
+
+On Windows PowerShell, run `.\dev-aurora.ps1`. These commands launch Aurora
+directly from the working tree for rapid testing after local or Codex changes.
+They use the existing `.build-venv`, skip automatic updates for that session,
+and do not build or publish a release.
 
 ## Downloads And Release Status
 
@@ -212,9 +215,16 @@ Codename **Aurora**. Separate from the lab PySide GUI. Live analysis only via
 Opens a real desktop window (PySide6 + Qt WebEngine) wrapping the Aurora web UI:
 
 ```bash
-.build-venv/bin/python -m photon_cruncher.aurora_main
-# or: photon-cruncher-aurora
+# macOS / Linux
+./dev-aurora
+
+# Windows PowerShell
+.\dev-aurora.ps1
 ```
+
+Both launchers run the canonical `photon_cruncher.aurora_main` entry point
+directly from the working tree using `.build-venv`. Use them for the fast local
+edit-and-test loop; the release-quality Velopack workflow remains separate.
 
 In the shell:
 - **File → Open MAT / TDT** uses native dialogs

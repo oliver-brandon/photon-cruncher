@@ -22,6 +22,7 @@ from photon_cruncher.version import (
 
 
 LOG = logging.getLogger(__name__)
+DEVELOPMENT_MODE_ENV = "PHOTON_CRUNCHER_DEV"
 
 
 class UpdateState(str, Enum):
@@ -85,6 +86,17 @@ class UpdateBackend(Protocol):
     def apply_and_restart(self, release: UpdateRelease) -> None: ...
 
 
+def development_mode_enabled(environ: dict[str, str] | None = None) -> bool:
+    """Return whether this source launch explicitly disabled app updates."""
+    source = os.environ if environ is None else environ
+    return source.get(DEVELOPMENT_MODE_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def update_channel() -> str:
     return update_target()[0]
 
@@ -129,6 +141,8 @@ def run_velopack_startup() -> bool:
 
 def velopack_runtime_available() -> bool:
     """Return whether this process can be managed by a Velopack installation."""
+    if development_mode_enabled():
+        return False
     return bool(
         getattr(sys, "frozen", False)
         or os.environ.get("PHOTON_CRUNCHER_FORCE_VELOPACK")
