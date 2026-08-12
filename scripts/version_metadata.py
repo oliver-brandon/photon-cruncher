@@ -86,6 +86,7 @@ def validate_repo(values: dict[str, str]) -> list[str]:
         ),
         PROJECT_ROOT / "scripts" / "package_macos_update.sh": (
             "--field update_channel",
+            "--mainExe",
             "--signAppIdentity",
             "--notaryProfile",
         ),

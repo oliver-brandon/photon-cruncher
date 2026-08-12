@@ -60,6 +60,16 @@ fi
 rm -rf "${stage_root}"
 mkdir -p "${stage_root}" "${output_dir}"
 ditto "${source_app}" "${staged_app}"
+staged_versioned_executable="${staged_app}/Contents/MacOS/${bundle_app_name}"
+staged_main_executable="${staged_app}/Contents/MacOS/${app_name}"
+if [[ ! -f "${staged_versioned_executable}" ]]; then
+  echo "Staged macOS executable not found: ${staged_versioned_executable}" >&2
+  exit 1
+fi
+mv "${staged_versioned_executable}" "${staged_main_executable}"
+/usr/libexec/PlistBuddy \
+  -c "Set :CFBundleExecutable ${app_name}" \
+  "${staged_app}/Contents/Info.plist"
 if [[ -f "${project_root}/dist/photon-cruncher-cli" ]]; then
   mkdir -p "${staged_app}/Contents/Resources/bin"
   cp \
@@ -75,6 +85,7 @@ fi
   --packId "${package_id}" \
   --packVersion "${version}" \
   --packDir "${staged_app}" \
+  --mainExe "${app_name}" \
   --packTitle "${app_name} Dev" \
   --packAuthors "Brandon Oliver" \
   --releaseNotes "${release_notes}" \
