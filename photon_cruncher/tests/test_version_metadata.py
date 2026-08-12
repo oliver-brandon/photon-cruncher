@@ -47,6 +47,24 @@ class VersionMetadataTests(unittest.TestCase):
         self.assertEqual(UPDATE_PACKAGE_ID, "com.photoncruncher.aurora.dev")
         self.assertEqual(UPDATE_RELEASE_TAG, f"aurora-dev-v{__version__}")
 
+    def test_friendly_names_do_not_change_dev_update_identity(self) -> None:
+        mac_script = (PROJECT_ROOT / "scripts" / "package_macos_update.sh").read_text(
+            encoding="utf-8"
+        )
+        windows_script = (
+            PROJECT_ROOT / "scripts" / "package_windows_update.ps1"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            PROJECT_ROOT / ".github" / "workflows" / "build-desktop-apps.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('--packTitle "${app_name}"', mac_script)
+        self.assertNotIn('--packTitle "${app_name} Dev"', mac_script)
+        self.assertIn('--packTitle "$AppName"', windows_script)
+        self.assertNotIn('--packTitle "$AppName Dev"', windows_script)
+        self.assertIn("${INSTALLER_STEM}-Windows.exe", workflow)
+        self.assertIn("${INSTALLER_STEM}-macOS.pkg", workflow)
+
     def test_repository_version_metadata_is_consistent(self) -> None:
         completed = subprocess.run(
             [

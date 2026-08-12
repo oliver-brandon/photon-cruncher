@@ -42,7 +42,8 @@ but source launches are not managed by the automatic updater.
 ### Windows
 
 1. Open **Releases** on the GitHub repo.
-2. Open the Aurora dev prerelease and download the Windows `Setup.exe` asset.
+2. Open the Aurora dev prerelease and download
+   `Photon-Cruncher-Aurora-v<version>-Windows.exe`.
 3. Double-click the installer and follow its prompts.
 4. Launch **Photon Cruncher Aurora** from the shortcut it creates.
 
@@ -52,7 +53,8 @@ If Windows SmartScreen warns about an unknown publisher, choose **More info** â†
 ### macOS
 
 1. Open **Releases** on the GitHub repo.
-2. Open the Aurora dev prerelease and download the macOS `.pkg` asset.
+2. Open the Aurora dev prerelease and download
+   `Photon-Cruncher-Aurora-v<version>-macOS.pkg`.
 3. Open the installer and choose **Applications** or your user Applications folder.
 4. Launch **Photon Cruncher Aurora**.
 
@@ -75,8 +77,10 @@ scripts/build_macos_app.sh
 ```
 
 GitHub Actions (`.github/workflows/build-desktop-apps.yml`) builds the same Aurora
-PyInstaller bundles, then packages and publishes them with Velopack. For local
-Velopack packaging, use `scripts/package_windows_update.ps1` or
+PyInstaller bundles, then packages and publishes them with Velopack. Installed
+apps and shortcuts use the friendly name **Photon Cruncher Aurora**; the internal
+dev package ID and platform-specific channels remain stable across updates. For
+local Velopack packaging, use `scripts/package_windows_update.ps1` or
 `scripts/package_macos_update.sh`; the macOS command requires Developer ID and
 notary credentials.
 
@@ -101,9 +105,9 @@ own feed.
 3. If a download fails, leave the app open and choose **Try again** later. The
    current installation is not changed by an incomplete download.
 
-If the updater itself cannot be used, download the newest Windows `Setup.exe`
-from the Aurora dev prerelease and run it again. Windows builds are not yet
-Authenticode signed, so SmartScreen may still appear.
+If the updater itself cannot be used, download the newest versioned Windows
+`.exe` installer from the Aurora dev prerelease and run it again. Windows builds
+are not yet Authenticode signed, so SmartScreen may still appear.
 
 ### Update on macOS
 
@@ -112,8 +116,8 @@ Authenticode signed, so SmartScreen may still appear.
 3. macOS may request an administrator password when updating an app in the
    system Applications folder. Choose **Later** if you do not want to restart.
 
-If the updater itself cannot be used, run the newest signed `.pkg` from the
-Aurora dev prerelease. A correctly published build is Developer ID signed and
+If the updater itself cannot be used, run the newest versioned macOS `.pkg`
+installer from the Aurora dev prerelease. A correctly published build is Developer ID signed and
 notarized, so it should identify the developer instead of showing an
 unverified-developer warning.
 

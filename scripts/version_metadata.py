@@ -83,10 +83,13 @@ def validate_repo(values: dict[str, str]) -> list[str]:
             "vpk upload github",
             "--pre true",
             "MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64",
+            "${INSTALLER_STEM}-Windows.exe",
+            "${INSTALLER_STEM}-macOS.pkg",
         ),
         PROJECT_ROOT / "scripts" / "package_macos_update.sh": (
             "--field update_channel",
             "--mainExe",
+            '--packTitle "${app_name}"',
             "--signAppIdentity",
             "--notaryProfile",
             "codesign",
@@ -97,6 +100,7 @@ def validate_repo(values: dict[str, str]) -> list[str]:
         PROJECT_ROOT / "scripts" / "package_windows_update.ps1": (
             "--field update_channel",
             "--mainExe",
+            '--packTitle "$AppName"',
             "*-full.nupkg",
         ),
         PROJECT_ROOT / "packaging" / "velopack" / "release-notes.md": (

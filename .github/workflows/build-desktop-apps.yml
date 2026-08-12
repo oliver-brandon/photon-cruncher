@@ -20,6 +20,7 @@ jobs:
     outputs:
       release_tag: ${{ steps.metadata.outputs.release_tag }}
       version: ${{ steps.metadata.outputs.version }}
+      archive_stem: ${{ steps.metadata.outputs.archive_stem }}
       velopack_version: ${{ steps.metadata.outputs.velopack_version }}
 
     steps:
@@ -43,6 +44,7 @@ jobs:
           set -euo pipefail
           python scripts/version_metadata.py --check
           echo "version=$(python scripts/version_metadata.py --field version)" >> "$GITHUB_OUTPUT"
+          echo "archive_stem=$(python scripts/version_metadata.py --field archive_stem)" >> "$GITHUB_OUTPUT"
           echo "release_tag=$(python scripts/version_metadata.py --field update_release_tag)" >> "$GITHUB_OUTPUT"
           echo "velopack_version=$(python scripts/version_metadata.py --field velopack_version)" >> "$GITHUB_OUTPUT"
 
@@ -287,6 +289,27 @@ jobs:
             --tag "${{ needs.validate-source.outputs.release_tag }}" \
             --targetCommitish "${{ github.sha }}"
 
+      - name: Use readable Windows installer name
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate-source.outputs.release_tag }}
+          INSTALLER_STEM: ${{ needs.validate-source.outputs.archive_stem }}
+        run: |
+          set -euo pipefail
+          installer="$(find release-windows -maxdepth 1 -name '*-Setup.exe' -print -quit)"
+          [[ -n "${installer}" ]] || {
+            echo "Windows installer was not found in the release payload." >&2
+            exit 1
+          }
+          friendly="release-windows/${INSTALLER_STEM}-Windows.exe"
+          cp "${installer}" "${friendly}"
+          gh release upload \
+            "${RELEASE_TAG}" "${friendly}" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release delete-asset \
+            "${RELEASE_TAG}" "$(basename "${installer}")" \
+            --repo "${GITHUB_REPOSITORY}" --yes
+
   publish-macos:
     name: Publish signed macOS installer, packages, and feed
     needs:
@@ -325,3 +348,24 @@ jobs:
             --releaseName "Photon Cruncher Aurora Dev v${{ needs.validate-source.outputs.version }}" \
             --tag "${{ needs.validate-source.outputs.release_tag }}" \
             --targetCommitish "${{ github.sha }}"
+
+      - name: Use readable macOS installer name
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate-source.outputs.release_tag }}
+          INSTALLER_STEM: ${{ needs.validate-source.outputs.archive_stem }}
+        run: |
+          set -euo pipefail
+          installer="$(find release-macos -maxdepth 1 -name '*-Setup.pkg' -print -quit)"
+          [[ -n "${installer}" ]] || {
+            echo "macOS installer was not found in the release payload." >&2
+            exit 1
+          }
+          friendly="release-macos/${INSTALLER_STEM}-macOS.pkg"
+          cp "${installer}" "${friendly}"
+          gh release upload \
+            "${RELEASE_TAG}" "${friendly}" \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+          gh release delete-asset \
+            "${RELEASE_TAG}" "$(basename "${installer}")" \
+            --repo "${GITHUB_REPOSITORY}" --yes

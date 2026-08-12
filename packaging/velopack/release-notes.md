@@ -1,6 +1,5 @@
-# Photon Cruncher Aurora 2.0.0
+# Photon Cruncher Aurora 2.0.1
 
-- Introduces the Aurora desktop interface for MAT and raw TDT workflows.
-- Keeps Align, Trial Explorer, Batch Export, and the agentic CLI on one shared analysis backend.
-- Adds a dev-only automatic updater with release notes and install-on-restart controls.
-- Preserves MATLAB-faithful alignment, incomplete-edge filtering, and original trial labels.
+- Uses **Photon Cruncher Aurora** as the installed app and shortcut name.
+- Adds shorter, versioned installer filenames on GitHub Releases.
+- Preserves the existing Aurora dev update channel so 2.0.0 installations can update in place.

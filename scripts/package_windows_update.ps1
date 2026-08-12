@@ -53,7 +53,7 @@ Rename-Item (Join-Path $StageDir "$BundleAppName.exe") "$AppName.exe"
     --packVersion $Version `
     --packDir $StageDir `
     --mainExe "$AppName.exe" `
-    --packTitle "$AppName Dev" `
+    --packTitle "$AppName" `
     --packAuthors "Brandon Oliver" `
     --releaseNotes $ReleaseNotes `
     --icon $IconPath

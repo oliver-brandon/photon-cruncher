@@ -95,7 +95,7 @@ set +e
   --packVersion "${version}" \
   --packDir "${staged_app}" \
   --mainExe "${app_name}" \
-  --packTitle "${app_name} Dev" \
+  --packTitle "${app_name}" \
   --packAuthors "Brandon Oliver" \
   --releaseNotes "${release_notes}" \
   --signAppIdentity "${MACOS_DEVELOPER_ID_APPLICATION}" \
