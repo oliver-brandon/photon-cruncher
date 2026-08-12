@@ -10,7 +10,8 @@ packaging, or analysis-pipeline work.
 
 - Repository: `oliver-brandon/photon-cruncher` (public; default branch `main`).
 - Public stable line: `main` at `4bd14a7`, tagged and released as `v1.1.4`.
-- Development line: `dev` is synchronized with `origin/dev` at `10b2014`.
+- Development line: local `dev` is synchronized with `origin/dev`; the
+  `aurora-dev-v2.0.1` release tag targets implementation commit `10b2014`.
 - Development product: Photon Cruncher Aurora, package version `2.0.1`, with
   in-app label `Aurora v2.0.1`.
 - Signed Aurora dev prereleases `aurora-dev-v2.0.0` and
