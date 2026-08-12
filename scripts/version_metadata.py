@@ -89,6 +89,7 @@ def validate_repo(values: dict[str, str]) -> list[str]:
             "--mainExe",
             "--signAppIdentity",
             "--notaryProfile",
+            "notarytool log",
         ),
         PROJECT_ROOT / "scripts" / "package_windows_update.ps1": (
             "--field update_channel",

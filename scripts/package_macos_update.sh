@@ -78,6 +78,7 @@ if [[ -f "${project_root}/dist/photon-cruncher-cli" ]]; then
   chmod +x "${staged_app}/Contents/Resources/bin/photon-cruncher-cli"
 fi
 
+set +e
 "${vpk_bin}" pack \
   --outputDir "${output_dir}" \
   --channel "${channel}" \
@@ -94,6 +95,35 @@ fi
   --notaryProfile "${MACOS_NOTARY_PROFILE}" \
   --keychain "${MACOS_SIGNING_KEYCHAIN}" \
   --signEntitlements "${entitlements}"
+vpk_status=$?
+set -e
+
+if [[ "${vpk_status}" -ne 0 ]]; then
+  notary_history="$(mktemp)"
+  if xcrun notarytool history \
+    --keychain-profile "${MACOS_NOTARY_PROFILE}" \
+    --keychain "${MACOS_SIGNING_KEYCHAIN}" \
+    --output-format json > "${notary_history}"; then
+    notary_job_id="$("${metadata_python}" -c '
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    history = json.load(handle).get("history", [])
+if history:
+    print(max(history, key=lambda item: item.get("createdDate", ""))["id"])
+' "${notary_history}")"
+    if [[ -n "${notary_job_id}" ]]; then
+      echo "Latest Apple notarization log (${notary_job_id}):" >&2
+      xcrun notarytool log \
+        "${notary_job_id}" \
+        --keychain-profile "${MACOS_NOTARY_PROFILE}" \
+        --keychain "${MACOS_SIGNING_KEYCHAIN}" >&2 || true
+    fi
+  fi
+  rm -f "${notary_history}"
+  exit "${vpk_status}"
+fi
 
 feed="${output_dir}/releases.${channel}.json"
 if [[ ! -f "${feed}" ]]; then
