@@ -1,6 +1,6 @@
 # Photon Cruncher Project Status
 
-Last verified: 2026-08-11
+Last verified: 2026-08-12
 
 This is the handoff document for continuing Photon Cruncher development. Read it
 with `docs/architecture-aurora.md` and the root `AGENTS.md` before release,
@@ -10,13 +10,12 @@ packaging, or analysis-pipeline work.
 
 - Repository: `oliver-brandon/photon-cruncher` (public; default branch `main`).
 - Public stable line: `main` at `4bd14a7`, tagged and released as `v1.1.4`.
-- Development line: `dev` includes the committed Aurora updater and release
-  packaging at `ffb5ff7`; the local branch was ahead of `origin/dev` when this
-  audit was performed.
-- Development product: Photon Cruncher Aurora, package version `2.0.0`, with
-  in-app label `Aurora v2.0.0`.
-- Aurora v2 is not yet tagged or published as a GitHub release. The newest
-  public downloads are still the v1.1.4 macOS and Windows bundles.
+- Development line: `dev` is synchronized with `origin/dev` at `10b2014`.
+- Development product: Photon Cruncher Aurora, package version `2.0.1`, with
+  in-app label `Aurora v2.0.1`.
+- Signed Aurora dev prereleases `aurora-dev-v2.0.0` and
+  `aurora-dev-v2.0.1` are published for updater testing. They remain isolated
+  from the stable product; the newest public lab release is still v1.1.4.
 - GitHub currently has no open issues, so the remaining work listed below is
   not otherwise tracked.
 
@@ -103,6 +102,9 @@ packaging, or analysis-pipeline work.
   present release notes, download updates, and install on restart.
 - The release workflow produces Windows/macOS installers, full/delta packages,
   and version feeds; it requires Developer ID signing and notarization on macOS.
+- Installed apps and shortcuts use the friendly name **Photon Cruncher Aurora**.
+  Downloadable installers use short versioned names while technical package and
+  feed filenames retain the stable dev updater identity.
 - The README covers installation, updates, Gatekeeper/SmartScreen warnings,
   browser mode, the CLI, Trial Explorer, and Batch Export.
 - The project uses the MIT License.
@@ -136,12 +138,24 @@ flowchart LR
   server exits.
 - `main` is the currently released v1.1.4 PySide line. `dev` is the Aurora-only
   2.0 development line until an explicit merge and release.
-- The Aurora window title has no version suffix. The UI rail, bundle, and archive
-  names use the full semantic version from `photon_cruncher/version.py`.
+- The Aurora window title and installed-app display name have no version or Dev
+  suffix. The UI rail and downloadable installer names use the full semantic
+  version from `photon_cruncher/version.py`.
 
 ## Verification Evidence
 
-The following checks passed on 2026-08-11:
+The following checks passed through 2026-08-12:
+
+- The v2.0.1 regression suite passed all 92 tests, along with Python
+  compilation, shell syntax, YAML parsing, centralized version consistency,
+  and `git diff --check`.
+- GitHub Actions run `31624933363` built both platforms successfully. The
+  macOS application and installer passed Developer ID signing, notarization,
+  and stapling before publication.
+- The `aurora-dev-v2.0.1` prerelease contains readable macOS and Windows
+  installer names, full and delta packages for both platforms, and isolated
+  public feeds. Both feeds advertise package ID
+  `com.photoncruncher.aurora.dev` at version `2.0.1`.
 
 - Full 98-test suite covering loader, CLI, service, pipeline equivalence, Aurora
   frontend wiring, shell, browser upload, API, batch behavior, and centralized
@@ -181,30 +195,26 @@ pipeline in clean checkouts.
 
 ## Unresolved Issues And Risks
 
-1. **Aurora is unreleased.** `dev` contains the 2.0 implementation, but public
-   users still receive v1.1.4 from `main`. Do not tell lab users that Aurora v2
-   is downloadable from Releases until a v2 tag and successful release exist.
+1. **Aurora is not a stable release.** Signed dev prereleases are available for
+   testing, but public lab users still receive v1.1.4 from `main`. Do not
+   present Aurora v2 as stable until the separate stable release gate passes.
 2. **No continuous test workflow.** GitHub Actions currently builds only on
    manual dispatch or tags. Pull requests and ordinary pushes do not
    automatically run the scientific regression suite, Python compilation, or
    JavaScript syntax checks.
-3. **Current Windows Aurora bundle is unverified.** The historical v1.1.4
-   Windows build succeeded, but the current Aurora code has not yet been proven
-   through a recorded GitHub Actions run and hands-on Windows smoke test.
-4. **Signed updater release is not yet verified.** The dev workflow now requires
-   Developer ID signing/notarization and validates the resulting `.pkg`, but the
-   repository secrets still need to be configured and the first successful
-   signed run recorded. Windows is not Authenticode signed, so SmartScreen may
-   remain expected.
-5. **Private-fixture coverage is local.** Real MAT/TDT parity and behavioral
+3. **Windows still needs a hands-on smoke test.** The Aurora Windows installer,
+   packages, and feed now build and publish successfully, but launch, analysis,
+   export, and in-place update behavior have not been recorded on real Windows
+   hardware. Windows is not Authenticode signed, so SmartScreen may appear.
+4. **Private-fixture coverage is local.** Real MAT/TDT parity and behavioral
    classification checks depend partly on ignored lab data and will skip in a
    clean GitHub runner. More synthetic, de-identified fixtures are needed for
    full CI coverage.
-6. **Updater bootstrap needs a two-version smoke test.** Unit tests cover version
-   ordering, channel isolation, offline checks, and failed downloads. The full
-   installed path still needs a `2.0.0` to newer-version update on real Windows
-   and macOS machines after the first feeds are published.
-7. **Batch sources are processed sequentially.** The worker is responsive,
+5. **Updater bootstrap needs a two-version smoke test.** Unit tests cover version
+   ordering, channel isolation, offline checks, and failed downloads. The
+   published v2.0.0 to v2.0.1 update still needs to be installed and restarted
+   on real macOS and Windows machines, including a Dock/shortcut check.
+6. **Batch sources are processed sequentially.** The worker is responsive,
    cancellable, and loads each source once, but very large multi-file batches
    still scale roughly with recording count. Profile a representative lab batch
    before adding process-level parallelism.
@@ -214,16 +224,14 @@ pipeline in clean checkouts.
 1. Add a lightweight CI workflow for pushes and pull requests to `main` and
    `dev`: run the tracked tests, Python compilation, `node --check`, and
    `git diff --check`.
-2. Configure the documented Apple Developer ID/notary GitHub secrets, manually
-   run `Publish Aurora dev updates` from `dev`, and verify the signed `.pkg`,
-   Windows installer, update packages, and both feed files in the prerelease.
-3. Publish a newer dev patch and test the indicator, notes, failed-download
-   retry, install, restart, and retained settings on real Windows and macOS.
-4. Fix any platform packaging defects, then plan the separate stable Aurora
+2. Test the published v2.0.0 to v2.0.1 update through the in-app indicator and
+   **Help -> Check for Updates** on real macOS and Windows installations. Verify
+   release notes, restart, retained settings, and the existing Dock/shortcut.
+3. Fix any platform packaging defects, then plan the separate stable Aurora
    package ID/channels before merging `dev` into `main`.
-5. Add small generated/synthetic MAT and TDT fixtures that exercise loader and
+4. Add small generated/synthetic MAT and TDT fixtures that exercise loader and
    classifier behavior without committing lab recordings.
-6. Create GitHub issues or a v2 milestone for the unresolved items above so the
+5. Create GitHub issues or a v2 milestone for the unresolved items above so the
    public tracker reflects actual project work.
 
 ## Release Gate For Aurora v2
