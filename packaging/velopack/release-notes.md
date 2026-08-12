@@ -1,4 +1,4 @@
-# Photon Cruncher Aurora 2.0.1
+# Photon Cruncher Aurora 2.0.2
 
 - Uses **Photon Cruncher Aurora** as the installed app and shortcut name.
 - Adds shorter, versioned installer filenames on GitHub Releases.
