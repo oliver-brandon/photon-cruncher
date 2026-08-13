@@ -18,6 +18,7 @@ from photon_cruncher.analysis.trial_classifier import (
     classified_trial_sources,
 )
 from photon_cruncher.export.exporter import export_channel
+from photon_cruncher.gui.updater import UpdateController
 from photon_cruncher.io.loader import discover_tdt_block_paths, load_session
 from photon_cruncher.model import Epoc
 from photon_cruncher.processing.pipeline import (
@@ -109,6 +110,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_worker: Worker | None = None
 
         self._set_run_state(is_running=False)
+        self._update_controller = UpdateController(self)
 
     def _build_import(self) -> None:
         layout = QtWidgets.QVBoxLayout()

@@ -15,20 +15,14 @@ need Python, Conda, Terminal, Automator, or the project source folder.
 1. Open the GitHub repository page.
 2. Click **Releases** on the right side of the page.
 3. Open the newest release.
-4. Download the newest Windows zip, such as
-   `Photon-Cruncher-v1.1.4-Windows.zip`.
-5. Right-click the zip file and choose **Extract All...**.
-6. Open the extracted `Photon Cruncher v1.1.4` folder.
-7. Double-click `Photon Cruncher v1.1.4.exe`.
-
-Keep the extracted `Photon Cruncher v1.1.4` folder together. The `.exe`
-depends on the files beside it in that folder, but the whole folder can be
-moved anywhere on the computer, including the Desktop, Downloads, Documents, or
-a lab software folder.
+4. Download the Windows installer, such as
+   `Photon-Cruncher-v1.2.0-Windows.exe`.
+5. Double-click the installer and follow its prompts.
+6. Launch **Photon Cruncher** from the shortcut it creates.
 
 If Windows SmartScreen warns that the app is from an unknown publisher, choose
 **More info** and then **Run anyway** if you trust the downloaded file. This can
-happen because the app is not currently signed with a Windows code-signing
+still happen because the Windows installer is not Authenticode signed with a
 certificate.
 
 ### macOS
@@ -36,86 +30,47 @@ certificate.
 1. Open the GitHub repository page.
 2. Click **Releases** on the right side of the page.
 3. Open the newest release.
-4. Download the newest macOS zip, such as
-   `Photon-Cruncher-v1.1.4-macOS.zip`.
-5. Double-click the zip file to expand it.
-6. Drag `Photon Cruncher v1.1.4.app` to **Applications** or any other folder.
-7. Double-click `Photon Cruncher v1.1.4.app`.
+4. Download the macOS installer, such as
+   `Photon-Cruncher-v1.2.0-macOS.pkg`.
+5. Open the installer and follow its prompts.
+6. Launch **Photon Cruncher** from Applications.
 
-The macOS app bundle contains its own Python runtime, dependencies, and icons,
-so it can be moved without depending on the original project folder path.
-
-If macOS says the app cannot be opened because Apple cannot verify it, this is
-expected for an unsigned lab build. Open it once using this path:
-
-1. Control-click or right-click `Photon Cruncher v1.1.4.app`.
-2. Choose **Open**.
-3. In the warning dialog, choose **Open** again.
-
-If macOS blocks the app without showing an **Open** button, go to **System
-Settings** > **Privacy & Security**, scroll to the security message about
-`Photon Cruncher v1.1.4.app`, and choose **Open Anyway**. Only do this for
-app files downloaded from the lab's GitHub release page.
+The release workflow requires the macOS app and installer to be Developer ID
+signed and notarized. It fails instead of publishing an unsigned macOS build.
 
 ## Update the App
 
-The app does not update itself automatically. When a new version is posted on
-GitHub, download the new zip and replace the old app copy. Your data files and
-exported results are not stored inside the app, so replacing the app should not
-delete your recordings or exports.
+Installed v1.2.0 and newer apps check their own Windows or macOS stable channel
+after launch and every six hours while open. When an update is available, an
+**Update x.y.z** button appears in the lower-right corner. Click it to review
+the release notes, then choose **Install and restart** or **Later**. You can
+also choose **Help → Check for Updates…** at any time. A network failure does
+not interrupt analysis.
+
+The old v1.1.4 zip build is not managed by Velopack and cannot receive v1.2.0
+automatically. Install v1.2.0 once using the new installer; later releases can
+then update in place. Recordings and exports stay outside the app installation
+and are not deleted by an update.
 
 ### Update on Windows
 
-1. Quit `Photon Cruncher` if it is open.
-2. Open the GitHub repository page.
-3. Click **Releases** on the right side of the page.
-4. Open the newest release.
-5. Download the newest Windows zip, such as
-   `Photon-Cruncher-v1.1.4-Windows.zip`.
-6. Right-click the zip file and choose **Extract All...**.
-7. Open the extracted folder.
-8. You should see a folder with the version in its name, such as
-   `Photon Cruncher v1.1.4`.
-9. Go to the place where your old `Photon Cruncher` folder lives.
-10. Rename the old folder to `Photon Cruncher old`.
-11. Move the new versioned `Photon Cruncher v1.1.4` folder into that same
-    place.
-12. Double-click `Photon Cruncher v1.1.4.exe` inside the new folder.
-13. After the new version opens correctly, delete `Photon Cruncher old`.
+1. Click the update button or choose **Help → Check for Updates…**.
+2. Review the release notes and choose **Install and restart**.
+3. If a download fails, choose **Try again** later. The current installation is
+   not changed by an incomplete download.
 
-Keep the whole `Photon Cruncher` folder together. Do not move only
-`Photon Cruncher v1.1.4.exe` by itself, because the `.exe` needs the files
-beside it.
-
-If Windows says files with the same name already exist, choose **Replace** only
-if you are replacing the entire old `Photon Cruncher` folder with the newly
-extracted one. The rename-first method above is safer because it keeps the old
-copy available until you confirm the new one opens.
+If the updater itself cannot be used, download the newest versioned Windows
+`.exe` installer from the stable GitHub release and run it again.
 
 ### Update on macOS
 
-1. Quit `Photon Cruncher` if it is open.
-2. Open the GitHub repository page.
-3. Click **Releases** on the right side of the page.
-4. Open the newest release.
-5. Download the newest macOS zip, such as
-   `Photon-Cruncher-v1.1.4-macOS.zip`.
-6. Double-click the zip file to expand it.
-7. You should see a versioned app, such as `Photon Cruncher v1.1.4.app`.
-8. Go to the place where your old `Photon Cruncher.app` lives, usually
-   **Applications**.
-9. Rename the old app to `Photon Cruncher old.app`.
-10. Drag the new `Photon Cruncher v1.1.4.app` into that same place.
-11. Double-click the new `Photon Cruncher v1.1.4.app`.
-12. After the new version opens correctly, delete `Photon Cruncher old.app`.
+1. Click the update button or choose **Help → Check for Updates…**.
+2. Review the release notes and choose **Install and restart**.
+3. macOS may request an administrator password when updating an app installed
+   for all users. Choose **Later** if you do not want to restart.
 
-If macOS asks whether to replace the existing app, you can choose **Replace**,
-but the rename-first method above is safer because it keeps the old copy
-available until you confirm the new one opens.
-
-If macOS shows the Apple verification warning again after an update, repeat the
-same first-open steps: Control-click or right-click the new versioned app,
-choose **Open**, then choose **Open** again.
+If the updater itself cannot be used, run the newest versioned macOS `.pkg`
+installer from the stable GitHub release.
 
 ## Data Expectations
 
@@ -153,6 +108,41 @@ exports include those trial labels in the row names.
   downsampling, regression, baseline logic, and smoothing.
 * Export outputs include heatmap CSVs with the time vector in the first row,
   followed by per-trial z-score rows.
+
+## Building and Publishing Stable Updates
+
+The existing platform build scripts still create local PyInstaller bundles and
+zip files:
+
+```bash
+# macOS
+scripts/build_macos_app.sh
+
+# Windows PowerShell
+.\scripts\build_windows_app.ps1
+```
+
+Source launches and these portable zip files are not managed by the automatic
+updater. The `Publish stable desktop updates` GitHub Actions workflow packages
+the bundles as Velopack installers and publishes separate `stable-win-x64` and
+`stable-osx-arm64` feeds.
+
+To publish a stable update:
+
+1. Change only `__version__` in `photon_cruncher/version.py`.
+2. Update `packaging/velopack/release-notes.md`.
+3. Commit and push the change to `main`.
+4. Run **Actions → Publish stable desktop updates → Run workflow** from `main`,
+   or push the matching `v<version>` tag.
+5. Confirm the release contains the readable Windows `.exe` installer, the
+   signed macOS `.pkg`, full packages, both stable JSON feeds, and delta
+   packages when a prior Velopack release exists.
+
+The macOS job requires the Developer ID certificate, keychain, Apple ID, and
+notarization secrets already used by the Aurora updater workflow. It validates,
+signs, notarizes, and assesses the installer before either platform is
+published. Windows packages are update-enabled but remain unsigned unless an
+Authenticode certificate is added separately.
 
 ## License
 

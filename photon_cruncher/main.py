@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from PySide6 import QtGui, QtWidgets
+from photon_cruncher.updates import run_velopack_startup
 
-from photon_cruncher.gui.main_window import MainWindow
+if TYPE_CHECKING:
+    from PySide6 import QtWidgets
 
 
 def _assets_dir() -> Path:
@@ -29,7 +31,9 @@ def _assets_dir() -> Path:
     return source_assets
 
 
-def _set_app_icon(app: QtWidgets.QApplication) -> None:
+def _set_app_icon(app: "QtWidgets.QApplication") -> None:
+    from PySide6 import QtGui
+
     icons_dir = _assets_dir() / "icons"
     icns_path = icons_dir / "photon-cruncher.icns"
     ico_path = icons_dir / "photon-cruncher.ico"
@@ -56,13 +60,19 @@ def _set_app_icon(app: QtWidgets.QApplication) -> None:
         app.setWindowIcon(icon)
 
 
-def main() -> None:
+def main() -> int:
+    run_velopack_startup()
+
+    from PySide6 import QtWidgets
+
+    from photon_cruncher.gui.main_window import MainWindow
+
     app = QtWidgets.QApplication(sys.argv)
     _set_app_icon(app)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

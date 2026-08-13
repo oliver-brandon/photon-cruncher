@@ -1,21 +1,32 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import runpy
+
+from PyInstaller.utils.hooks import collect_all
 
 
 project_root = Path(SPECPATH).parents[1]
 package_root = project_root / "photon_cruncher"
+version_meta = runpy.run_path(str(package_root / "version.py"))
 icon_path = package_root / "assets" / "icons" / "photon-cruncher.ico"
+app_name = version_meta["BUNDLE_APP_NAME"]
+velopack_datas, velopack_binaries, velopack_hiddenimports = collect_all("velopack")
 
 
 a = Analysis(
     [str(package_root / "main.py")],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=velopack_binaries,
     datas=[
         (str(package_root / "assets"), "photon_cruncher/assets"),
-    ],
-    hiddenimports=["tdt"],
+    ] + velopack_datas,
+    hiddenimports=[
+        "tdt",
+        "photon_cruncher.gui.updater",
+        "photon_cruncher.updates",
+        "velopack",
+    ] + velopack_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -34,7 +45,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Photon Cruncher v1.1.4",
+    name=app_name,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -53,5 +64,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="Photon Cruncher v1.1.4",
+    name=app_name,
 )
