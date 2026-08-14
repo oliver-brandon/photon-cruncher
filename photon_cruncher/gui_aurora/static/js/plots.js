@@ -27,9 +27,25 @@
 
   function formatTick(value) {
     const absolute = Math.abs(value);
+    if (absolute < 1e-10) return "0";
     if (absolute >= 100) return value.toFixed(0);
     if (absolute >= 10) return value.toFixed(1);
     return value.toFixed(2).replace(/\.00$/, "");
+  }
+
+  function ticksIncludingZero(min, max, intervals) {
+    const span = max - min;
+    const values = [];
+    for (let i = 0; i <= intervals; i += 1) {
+      values.push(min + (span * i) / intervals);
+    }
+    if (min <= 0 && max >= 0) values.push(0);
+    values.sort((a, b) => a - b);
+    const tolerance = Math.max(Math.abs(span), 1) * 1e-9;
+    return values.filter(
+      (value, index) =>
+        index === 0 || Math.abs(value - values[index - 1]) > tolerance
+    );
   }
 
   function clippedText(ctx, value, maxWidth) {
@@ -53,14 +69,14 @@
   function drawTitle(ctx, title, w) {
     if (!title) return;
     ctx.fillStyle = "rgba(231,248,255,0.92)";
-    ctx.font = "600 11px Inter, sans-serif";
+    ctx.font = "600 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     ctx.textAlign = "left";
     ctx.fillText(clippedText(ctx, title, Math.max(40, w - 24)), 12, 18);
   }
 
   function drawEmpty(ctx, w, h, message) {
     ctx.fillStyle = "rgba(139,163,184,0.9)";
-    ctx.font = "12px JetBrains Mono, monospace";
+    ctx.font = "12px 'SFMono-Regular', Consolas, monospace";
     ctx.textAlign = "center";
     ctx.fillText(message || "no data", w / 2, h / 2);
     ctx.textAlign = "left";
@@ -106,16 +122,17 @@
       }
     }
     const yb = bounds(ys);
+    yb.min = Math.min(yb.min, 0);
+    yb.max = Math.max(yb.max, 0);
 
     const X = (t) => plot.l + ((t - x0) / xSpan) * plot.w;
     const Y = (v) => plot.t + ((yb.max - v) / (yb.max - yb.min)) * plot.h;
 
-    ctx.font = "10px JetBrains Mono, monospace";
+    ctx.font = "10px 'SFMono-Regular', Consolas, monospace";
     ctx.fillStyle = "rgba(139,163,184,0.88)";
     ctx.strokeStyle = "rgba(100,140,180,0.08)";
-    for (let i = 0; i <= 4; i += 1) {
-      const y = plot.t + (plot.h * i) / 4;
-      const value = yb.max - ((yb.max - yb.min) * i) / 4;
+    for (const value of ticksIncludingZero(yb.min, yb.max, 4)) {
+      const y = Y(value);
       ctx.beginPath();
       ctx.moveTo(plot.l, y);
       ctx.lineTo(plot.l + plot.w, y);
@@ -123,9 +140,8 @@
       ctx.textAlign = "right";
       ctx.fillText(formatTick(value), plot.l - 7, y + 3);
     }
-    for (let i = 0; i <= 4; i += 1) {
-      const x = plot.l + (plot.w * i) / 4;
-      const value = x0 + (xSpan * i) / 4;
+    for (const value of ticksIncludingZero(x0, x1, 4)) {
+      const x = X(value);
       ctx.textAlign = "center";
       ctx.fillText(formatTick(value), x, plot.t + plot.h + 16);
     }
@@ -138,17 +154,26 @@
       ctx.fillRect(Math.min(a, b), plot.t, Math.max(1, Math.abs(b - a)), plot.h);
     }
 
-    // zero
-    if (x0 < 0 && x1 > 0) {
+    // zero references
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,45,149,0.55)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    if (x0 <= 0 && x1 >= 0) {
       const zx = X(0);
-      ctx.strokeStyle = "rgba(255,45,149,0.55)";
-      ctx.setLineDash([5, 5]);
       ctx.beginPath();
       ctx.moveTo(zx, plot.t);
       ctx.lineTo(zx, plot.t + plot.h);
       ctx.stroke();
-      ctx.setLineDash([]);
     }
+    if (yb.min <= 0 && yb.max >= 0) {
+      const zy = Y(0);
+      ctx.beginPath();
+      ctx.moveTo(plot.l, zy);
+      ctx.lineTo(plot.l + plot.w, zy);
+      ctx.stroke();
+    }
+    ctx.restore();
 
     if (opts.individuals) {
       ctx.globalAlpha = Math.min(0.28, 10 / Math.max(opts.individuals.length, 1));
@@ -215,7 +240,7 @@
     ctx.globalAlpha = 1;
 
     ctx.fillStyle = "rgba(139,163,184,0.95)";
-    ctx.font = "11px Inter, sans-serif";
+    ctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("Time (s)", plot.l + plot.w / 2, h - 8);
     ctx.save();
@@ -227,14 +252,13 @@
   }
 
   function heatColor(t) {
-    // cyan -> violet -> magenta fire
+    // Zero-centered blue-dark-red scale for signed z-scores.
     const stops = [
-      [8, 12, 28],
-      [0, 80, 90],
-      [0, 245, 212],
-      [139, 92, 255],
-      [255, 45, 149],
-      [255, 230, 120],
+      [44, 91, 160],
+      [73, 154, 181],
+      [20, 27, 42],
+      [214, 104, 82],
+      [178, 24, 43],
     ];
     const x = Math.min(1, Math.max(0, t)) * (stops.length - 1);
     const i = Math.floor(x);
@@ -252,13 +276,19 @@
     const matrix = opts.matrix || [];
     if (!matrix.length || !matrix[0]?.length) {
       drawEmpty(ctx, w, h, opts.emptyMessage || "no trials selected");
-      return;
+      return {
+        limit:
+          opts.scaleMode === "locked" && Number(opts.colorLimit) > 0
+            ? Number(opts.colorLimit)
+            : null,
+        mode: opts.scaleMode === "locked" ? "locked" : "auto",
+      };
     }
     const plot = {
       l: 46,
       t: opts.title ? 32 : 14,
       w: Math.max(1, w - 58),
-      h: Math.max(1, h - (opts.title ? 72 : 54)),
+      h: Math.max(1, h - (opts.title ? 104 : 86)),
     };
     let min = Infinity;
     let max = -Infinity;
@@ -269,13 +299,17 @@
         if (v > max) max = v;
       }
     }
-    if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      min = -1;
-      max = 1;
-    } else if (min === max) {
-      min -= 1;
-      max += 1;
-    }
+    const observedLimit =
+      Number.isFinite(min) && Number.isFinite(max)
+        ? Math.max(Math.abs(min), Math.abs(max))
+        : 1;
+    const requestedLimit = Number(opts.colorLimit);
+    const limit =
+      opts.scaleMode === "locked" && Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? requestedLimit
+        : Math.max(observedLimit, Number.EPSILON);
+    min = -limit;
+    max = limit;
     const rows = matrix.length;
     const cols = matrix[0].length;
     const cw = plot.w / cols;
@@ -296,23 +330,31 @@
     }
     // zero marker
     const times = Array.from(opts.times || []);
-    if (times && times[0] < 0 && times[times.length - 1] > 0) {
+    if (
+      times.length &&
+      times[0] <= 0 &&
+      times[times.length - 1] >= 0 &&
+      times[times.length - 1] !== times[0]
+    ) {
       const zx = plot.l + ((0 - times[0]) / (times[times.length - 1] - times[0])) * plot.w;
-      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.save();
+      ctx.strokeStyle = "rgba(3,7,15,0.92)";
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(zx, plot.t);
       ctx.lineTo(zx, plot.t + plot.h);
       ctx.stroke();
+      ctx.restore();
     }
 
     ctx.fillStyle = "rgba(139,163,184,0.9)";
-    ctx.font = "10px JetBrains Mono, monospace";
+    ctx.font = "10px 'SFMono-Regular', Consolas, monospace";
     if (times.length) {
       const x0 = times[0];
       const x1 = times[times.length - 1];
-      for (let i = 0; i <= 2; i += 1) {
-        const x = plot.l + (plot.w * i) / 2;
-        const value = x0 + ((x1 - x0) * i) / 2;
+      const xSpan = x1 === x0 ? 1 : x1 - x0;
+      for (const value of ticksIncludingZero(x0, x1, 2)) {
+        const x = plot.l + ((value - x0) / xSpan) * plot.w;
         ctx.textAlign = "center";
         ctx.fillText(formatTick(value), x, plot.t + plot.h + 15);
       }
@@ -334,15 +376,41 @@
       ctx.textAlign = "right";
       ctx.fillText(label, plot.l - 6, y + 3);
     });
-    ctx.font = "11px Inter, sans-serif";
+    const plotBottom = plot.t + plot.h;
+    ctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("Time (s)", plot.l + plot.w / 2, h - 8);
+    ctx.fillText("Time (s)", plot.l + plot.w / 2, plotBottom + 30);
+    const barY = plotBottom + 38;
+    const barHeight = 7;
+    const gradient = ctx.createLinearGradient(plot.l, 0, plot.l + plot.w, 0);
+    for (let index = 0; index <= 100; index += 1) {
+      const t = index / 100;
+      gradient.addColorStop(t, heatColor(t));
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(plot.l, barY, plot.w, barHeight);
+    ctx.strokeStyle = "rgba(255,255,255,0.24)";
+    ctx.strokeRect(plot.l, barY, plot.w, barHeight);
+    ctx.fillStyle = "rgba(139,163,184,0.95)";
+    ctx.font = "9px 'SFMono-Regular', Consolas, monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(formatTick(-limit), plot.l, barY + 18);
+    ctx.textAlign = "center";
+    ctx.fillText("0 z", plot.l + plot.w / 2, barY + 18);
+    ctx.textAlign = "right";
+    ctx.fillText(formatTick(limit), plot.l + plot.w, barY + 18);
     ctx.save();
     ctx.translate(12, plot.t + plot.h / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText("Trial", 0, 0);
     ctx.restore();
     ctx.textAlign = "left";
+    return {
+      min,
+      max,
+      limit,
+      mode: opts.scaleMode === "locked" ? "locked" : "auto",
+    };
   }
 
   function subset(channel, indices) {

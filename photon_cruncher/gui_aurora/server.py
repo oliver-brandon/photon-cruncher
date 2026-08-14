@@ -374,11 +374,14 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Choose CSV and/or figure export.")
     if figure_format not in {"png", "pdf", "tiff"}:
         raise ValueError("figure_format must be png, pdf, or tiff")
+    destination = Path(output_dir).expanduser().resolve()
+    if export_figure:
+        destination /= cached.session.source_path.stem
     written: list[dict[str, Any]] = []
     for result in results:
         paths = service.export_result(
             result,
-            output_dir,
+            destination,
             export_csv=export_csv,
             export_figure=export_figure,
             figure_format=figure_format,
@@ -397,7 +400,7 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
         )
     return {
         "ok": True,
-        "output_dir": str(Path(output_dir).expanduser().resolve()),
+        "output_dir": str(destination),
         "exports": written,
     }
 
@@ -818,11 +821,12 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
     return AuroraHandler
 
 
-def run_server(
+def run_development_server(
     host: str = "127.0.0.1",
     port: int = 8766,
     open_browser: bool = True,
 ) -> None:
+    """Serve Aurora in an external browser for development and UI testing."""
     if not STATIC_DIR.exists():
         raise FileNotFoundError(f"Missing Aurora assets: {STATIC_DIR}")
 

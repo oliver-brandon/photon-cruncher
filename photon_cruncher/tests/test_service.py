@@ -218,6 +218,35 @@ class ServiceFacadeTests(unittest.TestCase):
             self.assertEqual(manifest["trials"]["kept"], 3)
             self.assertEqual(manifest["outputs"]["csv"], paths["csv"])
 
+    def test_export_result_keeps_figure_and_manifest_together(self) -> None:
+        session = self._session()
+        result = service.analyze(
+            session,
+            "Cue",
+            settings_overrides={
+                "trange": (-2.0, 5.0),
+                "baseline_per": (-2.0, -0.5),
+                "downsample_factor": 1,
+                "smooth_factor": 3,
+                "set_baseline": False,
+            },
+        )[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = service.export_result(
+                result,
+                tmp,
+                export_csv=False,
+                export_figure=True,
+            )
+            figure_path = Path(paths["figure"])
+            manifest_path = Path(paths["manifest"])
+            self.assertTrue(figure_path.exists())
+            self.assertTrue(manifest_path.exists())
+            self.assertEqual(figure_path.parent, manifest_path.parent)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["outputs"]["figure"], paths["figure"])
+            self.assertEqual(manifest["outputs"]["manifest"], paths["manifest"])
+
     def test_aurora_product_title(self) -> None:
         self.assertIn("Aurora", AURORA_APP_NAME)
         # Window title has no version suffix; version lives in the UI rail.

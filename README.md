@@ -205,12 +205,13 @@ photon-cruncher-cli analyze --config analysis-config.json
 
 Packaged downloads include the CLI beside the desktop app. CLI output is JSON.
 
-## Aurora GUI (Developer Surface)
+## Aurora Desktop GUI
 
-Codename **Aurora**. Separate from the lab PySide GUI. Live analysis only via
-`photon_cruncher.service` (no synthetic demo feed).
+Codename **Aurora**. Live analysis only via `photon_cruncher.service` (no
+synthetic demo feed). Aurora is supported as a desktop application, not as a
+website or normal-browser application.
 
-### Native shell (default)
+### Desktop app
 
 Opens a real desktop window (PySide6 + Qt WebEngine) wrapping the Aurora web UI:
 
@@ -239,34 +240,6 @@ In the shell:
 - A lower-right update indicator shows the dev version and release notes
 - **Help → Check for Updates…** runs an immediate manual update check
 - **Help → Export Diagnostic Report…** saves app/runtime, cache, updater, and recent-error details without raw photometry samples
-
-### Browser mode (optional)
-
-```bash
-.build-venv/bin/python -m photon_cruncher.aurora_main --browser
-```
-
-Default URL: `http://127.0.0.1:8766/`
-
-Browser mode can import files directly from the browser: **Open MAT files**
-uploads selected `.mat` files, while **Open TDT tanks** and the Batch Export
-pickers upload a selected folder and preserve its relative layout. Uploaded
-data is kept in a temporary server folder for the current session and removed
-when the session is closed or the server exits.
-
-API (same backend as lab/CLI):
-- `GET /api/health`
-- `POST /api/open` or `/api/inspect` with `{"path": "..."}`
-- `POST /api/analyze` with `{"path": "...", "epoc": "Cue", "channels": ["A_465"]}`
-- `POST /api/plot-matrix` returns the requested displayed channel as compact float32 data
-- `POST /api/export` with path, epoc, output_dir, and export flags
-- `POST /api/inspect-paths` with a list of batch source paths
-- `POST /api/upload?upload_id=...&relative_path=...&final=0|1` with the raw file
-  bytes; set `final=1` on the last file to receive discovered MAT/TDT paths
-- `POST /api/batch-export` with source paths, epoc selections, channels, and export flags
-- `POST /api/batch-jobs`, then `GET /api/batch-jobs/<id>` for responsive batch progress
-- `POST /api/batch-jobs/<id>/cancel` to stop after the current analysis step
-- `GET /api/diagnostics` for a data-free troubleshooting report
 
 Architecture: `docs/architecture-aurora.md`.
 Current performance measurements: `docs/backend-performance.md`.

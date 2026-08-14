@@ -1258,7 +1258,7 @@ class LoaderTests(unittest.TestCase):
             "example_recording.mat | Epoc: CueA",
         )
 
-    def test_heatmap_trial_ticks_are_integer_trial_labels(self) -> None:
+    def test_heatmap_trial_ticks_use_stable_ordinal_odd_rows(self) -> None:
         from photon_cruncher.export.exporter import heatmap_trial_ticks
 
         processed = ProcessedSignal(
@@ -1273,12 +1273,75 @@ class LoaderTests(unittest.TestCase):
             trial_numbers=list(range(101, 141)),
         )
         positions, labels = heatmap_trial_ticks(processed, 40)
-        self.assertLessEqual(len(positions), 12)
-        self.assertTrue(all(isinstance(position, int) for position in positions))
-        self.assertTrue(all(float(position).is_integer() for position in positions))
-        self.assertTrue(all(label.isdigit() for label in labels))
-        self.assertEqual(labels[0], "101")
-        self.assertEqual(labels[-1], "140")
+        self.assertEqual(positions, list(range(1, 41, 2)))
+        self.assertEqual(labels, [str(position) for position in positions])
+
+    def test_result_figure_includes_zero_references_and_fixed_ticks(self) -> None:
+        from matplotlib.figure import Figure
+
+        from photon_cruncher.export.exporter import populate_result_figure
+        from photon_cruncher.service import AnalysisResult
+
+        ts = np.array([-2.0, -1.0, 1.0, 5.0])
+        rows = np.tile(np.array([-1.0, 0.5, 2.0, 1.0]), (15, 1))
+        processed = ProcessedSignal(
+            ts=ts,
+            zall=rows,
+            zall_smooth=rows,
+            mean_z=rows.mean(axis=0),
+            sem_z=np.full(ts.shape, 0.2),
+            mean_z_smooth=rows.mean(axis=0),
+            sem_z_smooth=np.full(ts.shape, 0.2),
+            num_artifacts=0,
+            trial_numbers=list(range(101, 116)),
+        )
+        result = AnalysisResult(
+            session=PhotometrySession(
+                streams={},
+                epocs={},
+                info={},
+                source_path=Path("example_recording.mat"),
+            ),
+            epoc=Epoc(name="CueA", onset=np.array([1.0])),
+            channel_key="A_465",
+            processed=processed,
+            settings=ProcessingSettings(plot_smooth=False),
+            stream_store=("x405A", "x465A"),
+        )
+        figure = Figure(figsize=(10, 4.5))
+        try:
+            populate_result_figure(figure, result)
+            line_axis, heatmap_axis = figure.axes[:2]
+            self.assertIn(0.0, line_axis.get_xticks())
+            self.assertIn(0.0, line_axis.get_yticks())
+            self.assertIn(0.0, heatmap_axis.get_xticks())
+            self.assertEqual(
+                [int(tick) for tick in heatmap_axis.get_yticks()],
+                list(range(1, 16, 2)),
+            )
+            self.assertEqual(
+                [label.get_text() for label in heatmap_axis.get_yticklabels()],
+                [str(tick) for tick in range(1, 16, 2)],
+            )
+            dashed_references = [
+                line
+                for line in line_axis.lines
+                if line.get_linestyle() == "--" and line.get_color() == "#222222"
+            ]
+            self.assertTrue(
+                any(
+                    np.allclose(line.get_xdata(), [0.0, 0.0])
+                    for line in dashed_references
+                )
+            )
+            self.assertTrue(
+                any(
+                    np.allclose(line.get_ydata(), [0.0, 0.0])
+                    for line in dashed_references
+                )
+            )
+        finally:
+            figure.clear()
 
     def _trial_type_counts(self, source) -> dict[str, int]:
         counts: dict[str, int] = {}

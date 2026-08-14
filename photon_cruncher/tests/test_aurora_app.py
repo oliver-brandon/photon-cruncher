@@ -11,9 +11,11 @@ from urllib.request import Request, urlopen
 
 import numpy as np
 
+from photon_cruncher import service
 from photon_cruncher.gui_aurora.server import (
     _analyze_request,
     _batch_export_request,
+    _export_request,
     _inspect_paths_request,
     _plot_matrix_request,
     serve_in_background,
@@ -80,6 +82,49 @@ class AuroraAppTests(unittest.TestCase):
         if fixture.exists():
             return fixture.resolve()
         self.skipTest("local mat fixture unavailable")
+
+    def test_figure_export_uses_source_named_directory(self) -> None:
+        cached = SimpleNamespace(
+            session=SimpleNamespace(source_path=Path("/recordings/mouse-01.mat"))
+        )
+        result = SimpleNamespace(channel_key="A_465")
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp).resolve() / "mouse-01"
+            paths = {
+                "csv": "",
+                "figure": str(destination / "mouse-01_Cue_A_465_summary.png"),
+                "manifest": str(destination / "mouse-01_Cue_A_465_analysis.json"),
+            }
+            with (
+                mock.patch.object(STORE, "open", return_value=cached),
+                mock.patch.object(service, "analyze", return_value=[result]),
+                mock.patch.object(
+                    service,
+                    "export_result",
+                    return_value=paths,
+                ) as export_result,
+                mock.patch.object(
+                    service,
+                    "quality_summary",
+                    return_value={"warnings": []},
+                ),
+            ):
+                payload = _export_request(
+                    {
+                        "path": "/recordings/mouse-01.mat",
+                        "epoc": "Cue",
+                        "channels": ["A_465"],
+                        "output_dir": tmp,
+                        "export_csv": False,
+                        "export_figure": True,
+                    }
+                )
+
+        self.assertEqual(export_result.call_args.args[1], destination)
+        self.assertTrue(export_result.call_args.kwargs["export_figure"])
+        self.assertEqual(payload["output_dir"], str(destination))
+        self.assertEqual(payload["exports"][0]["figure"], paths["figure"])
+        self.assertEqual(payload["exports"][0]["manifest"], paths["manifest"])
 
     def test_open_analyze_export_roundtrip(self) -> None:
         mat = self._synthetic_mat(Path("."))

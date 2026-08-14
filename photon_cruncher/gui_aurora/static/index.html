@@ -5,12 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Photon Cruncher</title>
     <link rel="icon" href="img/aurora-mark-64.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@600;700;800&display=swap"
-      rel="stylesheet"
-    />
     <link rel="stylesheet" href="css/aurora.css" />
   </head>
   <body>
@@ -68,7 +62,7 @@
         </nav>
 
         <div class="rail-footer">
-          <div class="rail-meta" id="railMeta">developer surface · live</div>
+          <div class="rail-meta" id="railMeta">desktop workspace</div>
         </div>
       </aside>
 
@@ -83,10 +77,17 @@
           </div>
           <div class="topbar-right">
             <div class="mode-pill"><span id="hudMode">DATA</span></div>
-            <div class="toast" id="toast">open a MAT file or TDT block</div>
+            <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true">open a MAT file or TDT block</div>
             <span class="badge" id="stateBadge">IDLE</span>
           </div>
         </header>
+
+        <nav class="mobile-nav" aria-label="Workspace">
+          <button class="nav-item active" data-page="data" type="button"><span class="nav-ico" aria-hidden="true">☰</span><span>Data</span></button>
+          <button class="nav-item" data-page="align" type="button"><span class="nav-ico" aria-hidden="true">∿</span><span>Align</span></button>
+          <button class="nav-item" data-page="trials" type="button"><span class="nav-ico" aria-hidden="true">▦</span><span>Trials</span></button>
+          <button class="nav-item" data-page="batch" type="button"><span class="nav-ico" aria-hidden="true">⧉</span><span>Batch</span></button>
+        </nav>
 
         <main class="content">
           <!-- DATA -->
@@ -96,7 +97,7 @@
                 <p class="eyebrow">01 · DATA</p>
                 <h1>Session intake</h1>
                 <p class="lede" id="dataLede">
-                  Open a MATLAB export, TDT tank, or block folders, then analyze with the shared backend.
+                  Open MATLAB exports, TDT tanks, or block folders, then choose an event to analyze.
                 </p>
               </div>
               <div class="page-actions">
@@ -158,7 +159,10 @@
                   <div class="card-title" style="margin-bottom: 0">Imported sessions</div>
                   <div class="quiet" id="importQueueMeta">No files loaded yet</div>
                 </div>
-                <span class="chip" id="importQueueCount">0</span>
+                <div class="queue-actions">
+                  <span class="chip" id="importQueueCount">0</span>
+                  <button class="btn btn-sm btn-primary" type="button" id="dataContinueAlign" disabled>Continue to Align</button>
+                </div>
               </div>
               <div class="trial-list" id="importQueue" role="list"></div>
             </div>
@@ -194,19 +198,28 @@
                 <h1>Align + visualize</h1>
                 <p class="lede">Tune the event window and inspect linked mean±SEM + trial heatmap.</p>
               </div>
-              <div class="page-actions">
-                <button class="btn" type="button" id="alignExportCsv">Export CSV</button>
-                <button class="btn" type="button" id="alignExportFig">Export figure</button>
-                <button class="btn btn-primary" type="button" id="alignPulse">Analyze</button>
+            </div>
+
+            <div class="align-action-bar" aria-label="Align analysis actions">
+              <div>
+                <div class="run-status" id="alignRunStatus" data-status="idle" role="status" aria-live="polite">
+                  <span class="run-status-dot" aria-hidden="true"></span>
+                  <span id="alignRunStatusText">Open a session</span>
+                </div>
+              </div>
+              <div class="align-action-buttons">
+                <button class="btn btn-primary" type="button" id="alignApply" disabled>Apply + analyze</button>
+                <button class="btn" type="button" id="alignExportCsv" disabled>Export CSV</button>
+                <button class="btn" type="button" id="alignExportFig" disabled>Export figure</button>
               </div>
             </div>
 
-            <div class="callout callout-warn" id="alignCallout">
-              <span class="callout-mark">!</span>
-              <span id="alignCalloutText">Incomplete edge trials are dropped, not clipped (MATLAB-faithful).</span>
+            <div class="callout" id="alignCallout">
+              <span class="callout-mark">i</span>
+              <span id="alignCalloutText">Quality findings will appear here after analysis. Incomplete edge trials are dropped, not clipped.</span>
             </div>
 
-            <div class="split">
+            <div class="split align-layout">
               <aside class="panel-stack">
                 <div class="card">
                   <div class="card-title">Analysis source</div>
@@ -266,11 +279,10 @@
                 </div>
                 <div class="inline-actions">
                   <button class="btn" type="button" id="alignDefaults">Defaults</button>
-                  <button class="btn btn-primary" type="button" id="alignApply">Apply + analyze</button>
                 </div>
               </aside>
 
-              <div class="plot-card card">
+              <div class="plot-card card align-plot-card">
                 <div class="plot-head">
                   <div>
                     <div class="card-title">Event-aligned response</div>
@@ -283,9 +295,30 @@
                     <div class="pill"><span>epoc</span><b id="alignTag">—</b></div>
                   </div>
                 </div>
+                <div class="plot-toolbar" aria-label="Heatmap display controls">
+                  <span class="toolbar-label">Heatmap scale</span>
+                  <select id="alignHeatScaleMode" aria-label="Align heatmap scale mode">
+                    <option value="auto">Auto symmetric</option>
+                    <option value="locked">Locked range</option>
+                  </select>
+                  <label class="scale-limit-field"><span>±</span><input id="alignHeatScaleLimit" type="number" min="0.1" step="0.1" value="3" aria-label="Align heatmap locked z-score limit" /></label>
+                  <span class="scale-readout" id="alignScaleReadout">auto</span>
+                </div>
                 <div class="plot-grid">
-                  <canvas id="alignTrace" width="900" height="340"></canvas>
-                  <canvas id="alignHeat" width="360" height="340"></canvas>
+                  <canvas id="alignTrace" width="900" height="340" role="img" aria-label="Event-aligned mean response plot"></canvas>
+                  <canvas id="alignHeat" width="360" height="340" role="img" aria-label="Event-aligned trial heatmap"></canvas>
+                </div>
+                <div class="qc-section" aria-label="Active channel quality control">
+                  <div class="qc-title-row">
+                    <span class="card-title">Active channel QC</span>
+                    <span class="quiet" id="qcChannel">—</span>
+                  </div>
+                  <div class="qc-grid">
+                    <div class="qc-item"><span>Kept</span><strong id="qcKept">—</strong></div>
+                    <div class="qc-item"><span>Edge drops</span><strong id="qcEdges">—</strong></div>
+                    <div class="qc-item"><span>Artifacts</span><strong id="qcArtifacts">—</strong></div>
+                    <div class="qc-item"><span>Max |z|</span><strong id="qcMaxZ">—</strong></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -300,11 +333,11 @@
                 <p class="lede">Filter trial labels and inspect how selected trials shape the response.</p>
               </div>
               <div class="page-actions">
-                <button class="btn" type="button" id="trialExportCsv">Export CSV</button>
-                <button class="btn btn-primary" type="button" id="trialExportFig">Export figure</button>
+                <button class="btn" type="button" id="trialExportCsv" disabled>Export CSV</button>
+                <button class="btn btn-primary" type="button" id="trialExportFig" disabled>Export figure</button>
               </div>
             </div>
-            <div class="split">
+            <div class="split trial-layout">
               <aside class="card trial-panel">
                 <div class="field-label-row">
                   <div>
@@ -359,7 +392,7 @@
                   <label class="check"><input type="checkbox" id="trialPlotSmooth" checked /><span>Plot smoothed traces</span></label>
                   <label class="check"><input type="checkbox" id="trialApplyBaseline" checked /><span>Apply baseline correction</span></label>
                 </details>
-                <button class="btn btn-primary" type="button" id="trialLoad">Load trials</button>
+                <button class="btn btn-primary" type="button" id="trialLoad">Analyze trials</button>
                 <input class="search" id="trialSearch" type="search" placeholder="Search trial or label…" />
                 <div class="filter-grid" id="outcomeChips"></div>
                 <div class="inline-actions tight">
@@ -372,7 +405,7 @@
               <div class="plot-stack">
                 <div class="callout" id="trialCallout">
                   <span class="callout-mark">i</span>
-                  <span id="trialCalloutText">Selections re-filter the displayed mean / heatmap using the shared service.</span>
+                  <span id="trialCalloutText">Analyze trials, then use labels and checkboxes to refine the plots.</span>
                 </div>
                 <div class="plot-card card grow">
                   <div class="plot-head">
@@ -381,16 +414,25 @@
                       <div class="quiet" id="trialSummary">—</div>
                     </div>
                     <div class="plot-tools">
-                      <select id="trialChannel"></select>
-                      <select id="trialMode">
+                      <select id="trialChannel" aria-label="Displayed trial channel"></select>
+                      <select id="trialMode" aria-label="Trial plot mode">
                         <option value="mean">Mean ± SEM</option>
                         <option value="individual">Individual overlay</option>
                       </select>
                     </div>
                   </div>
+                  <div class="plot-toolbar" aria-label="Trial heatmap display controls">
+                    <span class="toolbar-label">Heatmap scale</span>
+                    <select id="trialHeatScaleMode" aria-label="Trial heatmap scale mode">
+                      <option value="auto">Auto symmetric</option>
+                      <option value="locked">Locked range</option>
+                    </select>
+                    <label class="scale-limit-field"><span>±</span><input id="trialHeatScaleLimit" type="number" min="0.1" step="0.1" value="3" aria-label="Trial heatmap locked z-score limit" /></label>
+                    <span class="scale-readout" id="trialScaleReadout">auto</span>
+                  </div>
                   <div class="plot-grid">
-                    <canvas id="trialTrace" width="900" height="320"></canvas>
-                    <canvas id="trialHeat" width="360" height="320"></canvas>
+                    <canvas id="trialTrace" width="900" height="320" role="img" aria-label="Selected-trial response plot"></canvas>
+                    <canvas id="trialHeat" width="360" height="320" role="img" aria-label="Selected-trial heatmap"></canvas>
                   </div>
                 </div>
               </div>
@@ -494,6 +536,18 @@
                 </div>
               </div>
               <div class="stack">
+                <div class="card batch-config-card">
+                  <div class="field-label-row">
+                    <div>
+                      <div class="card-title" style="margin-bottom: 0">Analysis configuration</div>
+                      <div class="quiet">Uses the last applied Align settings</div>
+                    </div>
+                    <button class="btn btn-sm" type="button" id="batchEditConfig">Edit in Align</button>
+                  </div>
+                  <div class="config-state" id="batchConfigState" data-status="idle">Open a session to configure analysis</div>
+                  <div class="config-preset"><span>Preset</span><strong id="batchConfigPreset">Default</strong></div>
+                  <p class="config-summary" id="batchConfigSummary">No applied configuration yet.</p>
+                </div>
                 <div class="card metrics-card">
                   <div class="card-title">Summary</div>
                   <div class="metric-grid">
@@ -506,7 +560,7 @@
                 <div class="card">
                   <div class="card-title">Progress</div>
                   <div class="field-label-row">
-                    <span class="chip" id="batchStatus">Ready</span>
+                    <span class="chip" id="batchStatus" role="status" aria-live="polite">Ready</span>
                     <span class="quiet" id="batchDetail">idle</span>
                     <strong id="batchPct">0%</strong>
                   </div>

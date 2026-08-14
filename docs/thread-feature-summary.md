@@ -50,8 +50,9 @@ original desktop application through the current Aurora v2 development branch.
 - Made the plot update immediately when the selected epoc or relevant
   processing setting changes.
 - Added source file and epoc names to displayed and saved figures.
-- Fixed heatmap y-axis ticks so they align with actual trials and show only
-  whole-numbered trial labels.
+- Fixed exported heatmap y-axis ticks to start at trial row 1 and label every
+  other row consistently (`1, 3, 5, ...`). Original trial identities remain in
+  CSV and JSON provenance.
 - Added original trial numbers to exported and plotted trial identities instead
   of renumbering filtered rows sequentially.
 - Moved single-file CSV and figure export destinations to native folder
@@ -155,9 +156,19 @@ original desktop application through the current Aurora v2 development branch.
   export, processing controls, smoothing, settings persistence, and exports.
 - Added native MAT/TDT open dialogs in the desktop shell.
 - Added multi-select MAT import and multi-tank TDT import.
-- Added browser-native MAT/TDT folder uploads using relative paths, avoiding a
-  pasted-path-only workflow in optional browser mode.
+- Retained upload-capable external-browser preview tooling for development and
+  UI testing; the supported Aurora product surface is the desktop app only.
 - Added responsive layouts for long file/epoc names and compact controls.
+- Added minimum-window workspace tabs, plot-first sticky layouts, explicit
+  pending/current Align state with an always-reachable sticky apply bar, visible
+  Batch configuration, symmetric heatmap scaling with colorbars, and compact
+  per-channel QC summaries. Trace and heatmap panels now share a responsive
+  height, and the desktop navigation rail remains fixed while results scroll.
+- Added explicit zero ticks to time and trace axes, matching dashed horizontal
+  and vertical zero-reference lines, and a professional blue-dark-red Aurora
+  heatmap palette with a dark neutral midpoint and darker event marker.
+- Grouped direct Align and Trial figure exports into source-named folders with
+  their analysis JSON manifests.
 - Added Aurora-specific desktop icons and a restrained animated starfield visual
   treatment.
 - Added a shared local API for open, inspect, analyze, export, batch export, and

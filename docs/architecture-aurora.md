@@ -29,6 +29,20 @@
 | Desktop | `python -m photon_cruncher.aurora_main` / `photon-cruncher` | Window: `Photon Cruncher Aurora`; rail from `aurora_brand_label()` |
 | CLI | `photon-cruncher-cli` | version from `photon_cruncher.version` |
 
+Aurora is an app-only supported product surface. The desktop shell starts a
+loopback HTTP server on an ephemeral port and embeds the HTML/CSS/JavaScript UI
+inside Qt WebEngine. That local server is an implementation detail, not a
+normal-browser user mode.
+
+For external-browser visual debugging only, developers can run:
+
+```bash
+.build-venv/bin/python scripts/dev_aurora_browser.py
+```
+
+This preview is not packaged, documented as a user workflow, or supported as a
+separate product surface.
+
 ## Version Metadata
 
 `photon_cruncher/version.py` is the canonical source for the full semantic
@@ -80,6 +94,7 @@ Aurora local API includes:
 - export: `/api/export` and legacy synchronous `/api/batch-export`
 - responsive batch jobs: `/api/batch-jobs`, job status, and cancellation
 - support: `/api/diagnostics` and `/api/evict`
+- developer browser preview only: `/api/upload` for temporary MAT/TDT transfer
 
 The frontend requests JSON summaries for all analyzed channels, then fetches the
 full matrix only for the displayed channel. Stale Align and Trial Explorer
@@ -97,6 +112,13 @@ progress, and checks for cancellation between sources, epocs, and channels.
 
 - Named processing presets are persisted locally and can be exchanged as JSON.
   Align and Trial Explorer show `Custom` as soon as a visible setting diverges.
+- Align processing edits are explicit: the last analyzed plots remain visible,
+  but exports and Batch are disabled until **Apply + analyze** succeeds. Batch
+  shows the captured last-applied settings rather than silently reading pending
+  form values.
+- Heatmaps use a symmetric zero-centered diverging z-score scale with a visible
+  colorbar. Users can keep automatic per-result limits or lock a shared limit
+  while comparing Align and Trial Explorer plots.
 - Every CSV or figure result has a neighboring `_analysis.json` manifest with
   source identity, app version, settings, trial provenance, exclusions, QC, and
   output paths.

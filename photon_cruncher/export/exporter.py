@@ -82,29 +82,45 @@ def heatmap_trial_ticks(
     num_rows: int,
     max_ticks: int = 12,
 ) -> tuple[list[int], list[str]]:
+    """Return stable ordinal heatmap ticks at rows 1, 3, 5, and so on."""
+    _ = (processed, max_ticks)
     if num_rows <= 0:
         return [], []
-    trial_numbers = (
-        processed.trial_numbers
-        if len(processed.trial_numbers) == num_rows
-        else list(range(1, num_rows + 1))
-    )
-    if num_rows <= max_ticks:
-        tick_positions = list(range(1, num_rows + 1))
-    else:
-        tick_positions = sorted(
-            {
-                1 + round(index * (num_rows - 1) / (max_ticks - 1))
-                for index in range(max_ticks)
-            }
-        )
-    tick_labels = [str(int(trial_numbers[position - 1])) for position in tick_positions]
+    tick_positions = list(range(1, num_rows + 1, 2))
+    tick_labels = [str(position) for position in tick_positions]
     return tick_positions, tick_labels
 
 
 def result_figure_title(result: Any) -> str:
     file_name = result.session.source_path.name or "Untitled session"
     return f"{file_name} | Epoc: {result.epoc.name}"
+
+
+def _include_zero_tick(axis: Any, coordinate: str) -> None:
+    """Keep zero visible and explicitly labeled on a Matplotlib axis."""
+    if coordinate == "x":
+        get_limits = axis.get_xlim
+        set_limits = axis.set_xlim
+        get_ticks = axis.get_xticks
+        set_ticks = axis.set_xticks
+    elif coordinate == "y":
+        get_limits = axis.get_ylim
+        set_limits = axis.set_ylim
+        get_ticks = axis.get_yticks
+        set_ticks = axis.set_yticks
+    else:
+        raise ValueError("coordinate must be 'x' or 'y'")
+
+    lower, upper = get_limits()
+    lower, upper = min(lower, upper, 0.0), max(lower, upper, 0.0)
+    set_limits(lower, upper)
+    ticks = [
+        float(tick)
+        for tick in get_ticks()
+        if lower - 1e-12 <= float(tick) <= upper + 1e-12
+    ]
+    ticks.append(0.0)
+    set_ticks(sorted({0.0 if abs(tick) < 1e-12 else tick for tick in ticks}))
 
 
 def populate_result_figure(figure: "Figure", result: Any) -> None:
@@ -138,6 +154,7 @@ def populate_result_figure(figure: "Figure", result: Any) -> None:
     )
     ax_heatmap.set_yticks(trial_tick_positions)
     ax_heatmap.set_yticklabels(trial_tick_labels)
+    _include_zero_tick(ax_heatmap, "x")
     figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
 
     ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
@@ -145,9 +162,12 @@ def populate_result_figure(figure: "Figure", result: Any) -> None:
         ts, mean - sem, mean + sem, color="#1f77b4", alpha=0.2, label="SEM"
     )
     ax_line.axvline(0, color="#222222", linestyle="--", linewidth=1)
+    ax_line.axhline(0, color="#222222", linestyle="--", linewidth=1)
     ax_line.set_xlabel("Time (s)")
     ax_line.set_ylabel("Z-score")
     ax_line.set_title("Mean \u00b1 SEM")
+    _include_zero_tick(ax_line, "x")
+    _include_zero_tick(ax_line, "y")
     ax_line.legend(loc="upper right")
 
     figure.suptitle(result_figure_title(result), fontsize=12, fontweight="bold")

@@ -1,6 +1,6 @@
 # Photon Cruncher Project Status
 
-Last verified: 2026-08-12
+Last verified: 2026-08-14
 
 This is the handoff document for continuing Photon Cruncher development. Read it
 with `docs/architecture-aurora.md` and the root `AGENTS.md` before release,
@@ -12,8 +12,8 @@ packaging, or analysis-pipeline work.
 - Public stable line: `main` at `4bd14a7`, tagged and released as `v1.1.4`.
 - Development line: local `dev` is synchronized with `origin/dev`; the
   `aurora-dev-v2.0.1` release tag targets implementation commit `10b2014`.
-- Development product: Photon Cruncher Aurora, package version `2.0.1`, with
-  in-app label `Aurora v2.0.1`.
+- Development product: Photon Cruncher Aurora, package version `2.0.3`, with
+  in-app label `Aurora v2.0.3`.
 - Signed Aurora dev prereleases `aurora-dev-v2.0.0` and
   `aurora-dev-v2.0.1` are published for updater testing. They remain isolated
   from the stable product; the newest public lab release is still v1.1.4.
@@ -27,8 +27,8 @@ packaging, or analysis-pipeline work.
 - Loads TDT-generated MATLAB `.mat` files.
 - Loads raw TDT block folders and discovers blocks inside TDT tanks.
 - Supports multiple MAT files, multiple TDT tanks, and mixed-source batch work.
-- Browser mode uses real file/folder upload controls and preserves relative TDT
-  folder layouts in a temporary session directory.
+- The desktop app uses native file/folder dialogs. Its embedded web UI and
+  loopback API remain internal implementation details.
 - Local lab fixtures live under `local-test-data/` and remain ignored by Git.
 
 ### Scientific Pipeline
@@ -51,8 +51,10 @@ packaging, or analysis-pipeline work.
 
 - Aurora is the only GUI on `dev`: a Qt WebEngine desktop shell around a local
   web interface and HTTP API.
-- Align + Visualize supports reactive epoc, channel, smoothing, and processing
-  changes while preserving the selected display channel.
+- Align + Visualize keeps display-channel switching reactive, while epoc,
+  channel-selection, smoothing, and processing edits enter an explicit pending
+  state until **Apply + analyze** succeeds. The single apply action stays in a
+  sticky Align action bar while the settings column scrolls.
 - Trial Explorer supports per-trial selection, independent settings, live
   redraws, selected-trial exports, and clear empty-selection behavior.
 - Compatible behavioral epocs generate in-memory classified trial sources with
@@ -61,17 +63,31 @@ packaging, or analysis-pipeline work.
   selection, CSV and/or figure output, PNG/PDF/TIFF figures, and structured
   exported/skipped/failed reporting.
 - Displayed and saved figures include source file, epoc, channel, labeled axes,
-  and whole-numbered trial ticks aligned to heatmap rows.
+  explicit zero ticks on time and trace axes, and matching dashed zero-reference
+  lines. Exported heatmaps use stable ordinal trial labels `1, 3, 5, ...` while
+  CSV and JSON provenance preserve the original trial identities.
 - Processing settings and export destinations persist between app launches.
 - Named processing presets persist locally, show an explicit `Custom` state
   after edits, and can be imported/exported as portable JSON.
 - Scientific QC callouts flag incomplete-edge and artifact loss, missing 405
   controls, unstable baselines, non-finite values, and extreme z-scores.
+- The plot workspace stays visible beside long settings panels, shows compact
+  per-channel QC counts, and uses zero-centered heatmaps with a dark neutral
+  midpoint, dark event marker, visible colorbar, and automatic or locked
+  symmetric z-score scaling. Trace and heatmap panels share one responsive
+  height, and the desktop navigation rail stays fixed while the workspace
+  scrolls.
+- Batch Export displays the exact last-applied Align preset and processing
+  summary and blocks export while Align has pending or failed settings.
+- At the supported 1180×760 minimum window, a compact workspace tab bar replaces
+  the hidden rail without collapsing the primary plot layout.
 - Plot summaries use compact JSON and fetch only the displayed heatmap as
   float32 data; stale requests are aborted and the analysis cache is bounded.
 - Batch Export runs as one background job, loads each source once, reports live
   progress, and can be cancelled between analysis steps.
 - Every result export includes an `_analysis.json` provenance/QC manifest.
+- Direct Align and Trial figure exports are grouped in a source-named folder
+  with their neighboring `_analysis.json` provenance manifests.
 - **Help -> Export Diagnostic Report...** saves data-free runtime, updater,
   cache, and recent-error details for troubleshooting.
 - The native window restores its last size, position, and maximized state.
@@ -107,7 +123,7 @@ packaging, or analysis-pipeline work.
   Downloadable installers use short versioned names while technical package and
   feed filenames retain the stable dev updater identity.
 - The README covers installation, updates, Gatekeeper/SmartScreen warnings,
-  browser mode, the CLI, Trial Explorer, and Batch Export.
+  the desktop app, CLI, Trial Explorer, and Batch Export.
 - The project uses the MIT License.
 
 ## Architecture Decisions And Invariants
@@ -145,7 +161,7 @@ flowchart LR
 
 ## Verification Evidence
 
-The following checks passed through 2026-08-12:
+The following checks passed through 2026-08-14:
 
 - The v2.0.1 regression suite passed all 92 tests, along with Python
   compilation, shell syntax, YAML parsing, centralized version consistency,
@@ -158,7 +174,7 @@ The following checks passed through 2026-08-12:
   public feeds. Both feeds advertise package ID
   `com.photoncruncher.aurora.dev` at version `2.0.1`.
 
-- Full 98-test suite covering loader, CLI, service, pipeline equivalence, Aurora
+- Full 113-test suite covering loader, CLI, service, pipeline equivalence, Aurora
   frontend wiring, shell, browser upload, API, batch behavior, and centralized
   version/update metadata.
 - Python compilation, PyInstaller spec compilation, JavaScript syntax checks,
@@ -168,8 +184,10 @@ The following checks passed through 2026-08-12:
   `2.0.0`, and the app passed `codesign --verify --deep --strict`.
 - A source wheel built successfully as `photon_cruncher-2.0.0-py3-none-any.whl`
   using the dynamic setuptools version.
-- A live browser check showed the API-derived `Aurora v2.0.0` rail label and the
-  canonical `Photon Cruncher Aurora` document title.
+- A live developer-preview check at 1440×900 and the supported 1180×760 minimum
+  verified desktop/compact navigation, sticky plot layouts, explicit pending and
+  current analysis states, Batch configuration gating, Trial export gating,
+  synchronized heatmap scale locking, and a clean browser console.
 - A live browser workflow imported a MAT fixture, saved and reapplied a named
   preset across Align and Trial Explorer, switched display channels, rendered a
   nonblank selected-trial heatmap, and completed a three-channel background

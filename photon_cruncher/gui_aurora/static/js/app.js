@@ -33,6 +33,11 @@
     alignPreset: "Default",
     trialPreset: "Default",
     presetImportTarget: "align",
+    alignDirty: false,
+    alignRunState: "idle",
+    appliedConfiguration: null,
+    heatScaleMode: "auto",
+    heatScaleLimit: 3,
     settings: {
       trange_start: -2,
       trange_end: 5,
@@ -61,7 +66,6 @@
     apiBase: "",
   };
 
-  let alignAnalyzeTimer = null;
   let trialAnalyzeTimer = null;
   let alignRequestSequence = 0;
   let trialRequestSequence = 0;
@@ -100,7 +104,7 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => {
       el.textContent = hasSession()
-        ? "live session · photon_cruncher.service"
+        ? "session ready"
         : "open a MAT file or TDT block";
     }, 4200);
   }
@@ -108,7 +112,20 @@
   function setBadge() {
     const b = $("stateBadge");
     if (!b) return;
-    if (hasResults() || Object.keys(state.trialResultsByChannel).length) {
+    b.classList.remove("live", "dirty", "updating", "error");
+    if (state.batchRunning) {
+      b.textContent = "EXPORTING";
+      b.classList.add("updating");
+    } else if (state.alignRunState === "updating") {
+      b.textContent = "UPDATING";
+      b.classList.add("updating");
+    } else if (state.alignRunState === "failed") {
+      b.textContent = "ERROR";
+      b.classList.add("error");
+    } else if (state.alignDirty) {
+      b.textContent = "CHANGES";
+      b.classList.add("dirty");
+    } else if (hasResults() || Object.keys(state.trialResultsByChannel).length) {
       b.textContent = "ANALYZED";
       b.classList.add("live");
     } else if (hasSession()) {
@@ -116,8 +133,39 @@
       b.classList.add("live");
     } else {
       b.textContent = "IDLE";
-      b.classList.remove("live");
     }
+  }
+
+  function setAlignRunState(status, message) {
+    state.alignRunState = status;
+    const statusEl = $("alignRunStatus");
+    const textEl = $("alignRunStatusText");
+    const defaultText = {
+      idle: hasSession() ? "Ready to analyze" : "Open a session",
+      dirty: "Changes not applied",
+      updating: "Updating analysis…",
+      current: "Analysis current",
+      failed: "Analysis failed",
+    }[status] || status;
+    if (statusEl) statusEl.dataset.status = status;
+    if (textEl) textEl.textContent = message || defaultText;
+    const current = status === "current" && hasResults() && !state.alignDirty;
+    if ($("alignExportCsv")) $("alignExportCsv").disabled = !current;
+    if ($("alignExportFig")) $("alignExportFig").disabled = !current;
+    if ($("alignApply")) {
+      $("alignApply").disabled = !hasSession() || status === "updating";
+      $("alignApply").textContent = status === "updating" ? "Analyzing…" : "Apply + analyze";
+    }
+    setBadge();
+    renderBatchPage();
+  }
+
+  function markAlignDirty(message = "Changes not applied") {
+    alignRequestController?.abort();
+    alignMatrixController?.abort();
+    alignRequestSequence += 1;
+    state.alignDirty = true;
+    setAlignRunState(hasSession() ? "dirty" : "idle", message);
   }
 
   function api(method, path, body, options = {}) {
@@ -537,10 +585,9 @@
       trialRequestSequence += 1;
       scheduleTrialAnalyze(0);
     } else {
-      alignRequestSequence += 1;
-      scheduleAlignAnalyze(0);
+      markAlignDirty(`${name} preset ready to apply`);
     }
-    toast(`applied ${name} preset`);
+    toast(trial ? `applied ${name} preset` : `${name} preset ready to apply`);
   }
 
   function markPresetModified(trial = false) {
@@ -855,6 +902,128 @@
     };
   }
 
+  function conciseNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "—";
+    return Number.isInteger(number) ? String(number) : number.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  function processingSummary(configuration = null) {
+    const s = configuration?.settings || state.settings;
+    let channelNames = state.session?.channels || [];
+    if (state.analysisChannels.length) channelNames = state.analysisChannels;
+    if (configuration?.channels?.length) channelNames = configuration.channels;
+    const smoothByChannel = configuration?.smoothing || state.smoothByChannel;
+    const smoothing = channelNames
+      .map(
+        (channel) =>
+          `${channel} ${conciseNumber(
+            smoothByChannel[channel] ?? defaultSmoothForChannel(channel)
+          )}`
+      )
+      .join(", ") || "default";
+    const correction = s.use_isosbestic
+      ? `405 fit, degree ${conciseNumber(s.polynomial_degree)}`
+      : "signal only";
+    return [
+      `TRANGE ${conciseNumber(s.trange_start)} to ${conciseNumber(s.trange_end)} s`,
+      `baseline ${conciseNumber(s.baseline_start)} to ${conciseNumber(s.baseline_end)} s`,
+      `downsample ${conciseNumber(s.downsample_factor)}×`,
+      `smoothing ${smoothing}`,
+      correction,
+      s.baseline_correction ? "baseline correction on" : "baseline correction off",
+      s.plot_smoothed ? "smoothed plots" : "unsmoothed plots",
+    ].join(" · ");
+  }
+
+  function captureAppliedConfiguration() {
+    const defaults = defaultProcessingValues(null);
+    const fixedKeys = [
+      "trange_start",
+      "trange_end",
+      "baseline_start",
+      "baseline_end",
+      "baseline_adjust",
+      "downsample_factor",
+      "plot_smoothed",
+      "baseline_correction",
+      "use_isosbestic",
+      "polynomial_degree",
+    ];
+    const fixedDefaultsMatch = fixedKeys.every(
+      (key) => state.settings[key] === defaults[key]
+    );
+    const smoothingDefaultsMatch = state.analysisChannels.every(
+      (channel) =>
+        Number(state.smoothByChannel[channel] ?? defaultSmoothForChannel(channel)) ===
+        Number(defaultSmoothForChannel(channel))
+    );
+    if (
+      state.alignPreset === "Default" &&
+      (!fixedDefaultsMatch || !smoothingDefaultsMatch)
+    ) {
+      state.alignPreset = "Custom";
+      renderPresetControls();
+    }
+    state.appliedConfiguration = {
+      preset: state.alignPreset || "Custom",
+      epoc: state.activeEpoc,
+      settings: { ...state.settings },
+      channels: [...state.analysisChannels],
+      smoothing: { ...state.smoothByChannel },
+    };
+  }
+
+  function heatScaleOptions() {
+    return {
+      scaleMode: state.heatScaleMode,
+      colorLimit: state.heatScaleLimit,
+    };
+  }
+
+  function syncHeatScaleControls() {
+    for (const prefix of ["align", "trial"]) {
+      const mode = $(`${prefix}HeatScaleMode`);
+      const limit = $(`${prefix}HeatScaleLimit`);
+      if (mode) mode.value = state.heatScaleMode;
+      if (limit) {
+        limit.value = String(state.heatScaleLimit);
+        limit.disabled = state.heatScaleMode !== "locked";
+      }
+    }
+  }
+
+  function setHeatScaleReadout(prefix, scale) {
+    const readout = $(`${prefix}ScaleReadout`);
+    if (!readout) return;
+    const limit = Number(scale?.limit);
+    readout.textContent = Number.isFinite(limit)
+      ? `${state.heatScaleMode === "locked" ? "locked" : "auto"} ±${conciseNumber(limit)} z`
+      : state.heatScaleMode === "locked"
+        ? `locked ±${conciseNumber(state.heatScaleLimit)} z`
+        : "auto symmetric";
+  }
+
+  function updateHeatScale(sourcePrefix) {
+    const mode = $(`${sourcePrefix}HeatScaleMode`)?.value || "auto";
+    const requested = Number($(`${sourcePrefix}HeatScaleLimit`)?.value);
+    state.heatScaleMode = mode === "locked" ? "locked" : "auto";
+    if (Number.isFinite(requested) && requested > 0) {
+      state.heatScaleLimit = requested;
+    }
+    syncHeatScaleControls();
+    renderAlign();
+    renderTrials();
+  }
+
+  function setupHeatScaleControls() {
+    for (const prefix of ["align", "trial"]) {
+      $(`${prefix}HeatScaleMode`)?.addEventListener("change", () => updateHeatScale(prefix));
+      $(`${prefix}HeatScaleLimit`)?.addEventListener("input", () => updateHeatScale(prefix));
+    }
+    syncHeatScaleControls();
+  }
+
   function processingFormIsValid(trial = false) {
     const ids = trial
       ? [
@@ -902,24 +1071,6 @@
     );
   }
 
-  function scheduleAlignAnalyze(delay = 280) {
-    clearTimeout(alignAnalyzeTimer);
-    if (
-      !hasSession() ||
-      !hasResults() ||
-      !state.analysisChannels.length ||
-      !processingFormIsValid(false)
-    ) {
-      return;
-    }
-    alignAnalyzeTimer = setTimeout(() => {
-      alignAnalyzeTimer = null;
-      runLiveAnalyze().catch((error) =>
-        toast(String(error.message || error))
-      );
-    }, delay);
-  }
-
   function scheduleTrialAnalyze(delay = 280) {
     clearTimeout(trialAnalyzeTimer);
     if (
@@ -948,9 +1099,7 @@
     trialRequestController = null;
     alignMatrixController = null;
     trialMatrixController = null;
-    clearTimeout(alignAnalyzeTimer);
     clearTimeout(trialAnalyzeTimer);
-    alignAnalyzeTimer = null;
     trialAnalyzeTimer = null;
     alignRequestSequence += 1;
     trialRequestSequence += 1;
@@ -967,6 +1116,9 @@
     state.outcomeFilters = {};
     state.analysisChannels = [];
     state.trialAnalysisChannels = [];
+    state.alignDirty = false;
+    state.alignRunState = "idle";
+    state.appliedConfiguration = null;
     state.batchRunning = false;
     state.batchCancelled = false;
     state.batchJobId = null;
@@ -1025,15 +1177,27 @@
     if ($("selLabel")) $("selLabel").textContent = "0 selected";
     if ($("alignSummary")) $("alignSummary").textContent = "Open a session to analyze";
     if ($("trialSummary")) $("trialSummary").textContent = "—";
+    if ($("trialExportCsv")) $("trialExportCsv").disabled = true;
+    if ($("trialExportFig")) $("trialExportFig").disabled = true;
     if ($("trialCalloutText")) {
       $("trialCalloutText").textContent =
-        "Selections re-filter the displayed mean / heatmap using the shared service.";
+        "Analyze trials, then use labels and checkboxes to refine the plots.";
     }
     $("trialCallout")?.classList.remove("callout-warn");
     if ($("rPeak")) $("rPeak").textContent = "—";
     if ($("rLat")) $("rLat").textContent = "—";
     if ($("rN")) $("rN").textContent = "—";
     if ($("alignTag")) $("alignTag").textContent = "—";
+    if ($("alignCalloutText")) {
+      $("alignCalloutText").textContent =
+        "Quality findings will appear here after analysis. Incomplete edge trials are dropped, not clipped.";
+    }
+    $("alignCallout")?.classList.remove("callout-warn");
+    if ($("qcChannel")) $("qcChannel").textContent = "—";
+    if ($("qcKept")) $("qcKept").textContent = "—";
+    if ($("qcEdges")) $("qcEdges").textContent = "—";
+    if ($("qcArtifacts")) $("qcArtifacts").textContent = "—";
+    if ($("qcMaxZ")) $("qcMaxZ").textContent = "—";
     clearCanvas($("alignTrace"));
     clearCanvas($("alignHeat"));
     clearCanvas($("trialTrace"));
@@ -1046,7 +1210,7 @@
     fillSelect($("trialSession"), [], () => "", () => "");
     if ($("sessionMetadata"))
       $("sessionMetadata").textContent = "Open a session to inspect metadata.";
-    setBadge();
+    setAlignRunState("idle");
     renderImportQueue();
     renderDataPage();
     renderBatchPage();
@@ -1286,9 +1450,8 @@
       state.analysisChannels,
       (next) => {
         state.analysisChannels = next;
-        alignRequestSequence += 1;
         renderAnalysisChannelSelectors();
-        scheduleAlignAnalyze();
+        markAlignDirty("Channel selection not applied");
       }
     );
     renderChannelSelector(
@@ -1525,7 +1688,8 @@
     renderAnalysisChannelSelectors();
     syncSmoothingControl();
     renderBatchSelectors();
-    setBadge();
+    if (!hasResults() && state.alignRunState === "idle") setAlignRunState("idle");
+    else setBadge();
   }
 
   function setupAlignControls() {
@@ -1542,16 +1706,14 @@
       $(id)?.addEventListener("input", () => {
         readSettingsFromForm();
         markPresetModified(false);
-        alignRequestSequence += 1;
-        scheduleAlignAnalyze();
+        markAlignDirty("Processing changes not applied");
       })
     );
     ["useIsosbestic", "plotSmooth", "applyBaseline"].forEach((id) =>
       $(id)?.addEventListener("change", () => {
         readSettingsFromForm();
         markPresetModified(false);
-        alignRequestSequence += 1;
-        scheduleAlignAnalyze();
+        markAlignDirty("Processing changes not applied");
       })
     );
     $("alignSession")?.addEventListener("change", async () => {
@@ -1563,14 +1725,13 @@
     });
     $("alignAllChannels")?.addEventListener("click", () => {
       state.analysisChannels = [...(state.session?.channels || [])];
-      alignRequestSequence += 1;
       renderAnalysisChannelSelectors();
-      scheduleAlignAnalyze(0);
+      markAlignDirty("Channel selection not applied");
     });
     $("alignNoChannels")?.addEventListener("click", () => {
       state.analysisChannels = [];
-      alignRequestSequence += 1;
       renderAnalysisChannelSelectors();
+      markAlignDirty("Select a channel, then apply");
     });
     $("alignChannel").addEventListener("change", () => {
       readSettingsFromForm();
@@ -1582,26 +1743,9 @@
         if (error.name !== "AbortError") toast(String(error.message || error));
       });
     });
-    $("alignEpoc").addEventListener("change", async () => {
+    $("alignEpoc").addEventListener("change", () => {
       state.activeEpoc = $("alignEpoc").value;
-      $("alignTag").textContent = state.activeEpoc || "—";
-      if (!hasSession()) return;
-      try {
-        await runLiveAnalyze();
-      } catch (e) {
-        toast(String(e.message || e));
-      }
-    });
-    $("alignPulse").addEventListener("click", async () => {
-      if (!hasSession()) {
-        toast("open a session first");
-        return;
-      }
-      try {
-        await runLiveAnalyze({ force: true });
-      } catch (e) {
-        toast(String(e.message || e));
-      }
+      markAlignDirty("Reference epoc not applied");
     });
     $("alignApply")?.addEventListener("click", async () => {
       if (!hasSession()) {
@@ -1633,9 +1777,8 @@
       readSettingsFromForm();
       state.alignPreset = "Default";
       renderPresetControls();
-      alignRequestSequence += 1;
-      toast("defaults restored");
-      scheduleAlignAnalyze(0);
+      markAlignDirty("Defaults restored; apply to update analysis");
+      toast("defaults restored · apply to analyze");
     });
     $("alignExportCsv")?.addEventListener("click", () =>
       exportLive({
@@ -1657,10 +1800,10 @@
 
   async function runLiveAnalyze(opts = {}) {
     if (!state.path) throw new Error("No session open");
-    clearTimeout(alignAnalyzeTimer);
-    alignAnalyzeTimer = null;
     readSettingsFromForm();
     if (!processingFormIsValid(false)) {
+      state.alignDirty = true;
+      setAlignRunState("failed", "Check processing settings");
       throw new Error("Check the processing window and numeric settings");
     }
     const epoc =
@@ -1668,10 +1811,16 @@
       $("alignEpoc").value ||
       Object.keys(state.session?.epocs || {})[0];
     if (!epoc) throw new Error("No epoc available");
+    const channels = [...state.analysisChannels];
+    if (!channels.length) {
+      state.alignDirty = true;
+      setAlignRunState("failed", "Select at least one channel");
+      throw new Error("Select at least one channel to analyze");
+    }
+    state.alignDirty = true;
+    setAlignRunState("updating");
     toast("analyzing…");
     if (window.auroraBridge?.setStatus) window.auroraBridge.setStatus("Analyzing…");
-    const channels = [...state.analysisChannels];
-    if (!channels.length) throw new Error("Select at least one channel to analyze");
     const requestId = ++alignRequestSequence;
     alignRequestController?.abort();
     alignMatrixController?.abort();
@@ -1693,17 +1842,26 @@
     } catch (error) {
       if (error.name === "AbortError") return null;
       if (requestId !== alignRequestSequence) return null;
+      setAlignRunState("failed", String(error.message || error));
       throw error;
     }
     if (requestId !== alignRequestSequence) return null;
     applyAnalyzePayload(data);
+    if (!hasResults()) {
+      setAlignRunState("failed", "Analysis returned no channels");
+      throw new Error("Analysis returned no channels");
+    }
     try {
       await ensureAlignMatrix(state.activeChannel, requestBody, requestId);
     } catch (error) {
       if (error.name === "AbortError") return null;
+      setAlignRunState("failed", String(error.message || error));
       throw error;
     }
     if (requestId !== alignRequestSequence) return null;
+    captureAppliedConfiguration();
+    state.alignDirty = false;
+    setAlignRunState("current");
     toast(`analyzed ${epocDisplayName(epoc)}`);
     return data;
   }
@@ -1713,12 +1871,19 @@
     if (!result || result.z) return result;
     alignMatrixController?.abort();
     alignMatrixController = new AbortController();
+    const applied = state.appliedConfiguration;
+    const appliedChannelSettings = {};
+    Object.entries(applied?.smoothing || {}).forEach(
+      ([name, smoothFactor]) => {
+        appliedChannelSettings[name] = { smooth_factor: smoothFactor };
+      }
+    );
     const body = requestBody || {
       path: state.path,
-      epoc: state.activeEpoc,
-      channels: [...state.analysisChannels],
-      settings: settingsPayload(),
-      channel_settings: channelSettingsPayload(),
+      epoc: applied?.epoc || state.activeEpoc,
+      channels: [...(applied?.channels || state.analysisChannels)],
+      settings: applied ? { ...applied.settings } : settingsPayload(),
+      channel_settings: applied ? appliedChannelSettings : channelSettingsPayload(),
       compact: true,
     };
     const packed = await fetchPlotMatrix(
@@ -1784,6 +1949,25 @@
       : [];
   }
 
+  function renderQualitySummary(result) {
+    const quality = result?.quality || {};
+    const kept = Number(quality.kept_trials);
+    const attempted = Number(quality.attempted_trials);
+    $("qcChannel").textContent = result?.channel || "—";
+    $("qcKept").textContent = Number.isFinite(kept)
+      ? `${kept}/${Number.isFinite(attempted) ? attempted : kept}`
+      : "—";
+    $("qcEdges").textContent = Number.isFinite(Number(quality.dropped_incomplete_trials))
+      ? String(quality.dropped_incomplete_trials)
+      : "—";
+    $("qcArtifacts").textContent = Number.isFinite(Number(quality.artifact_removals))
+      ? String(quality.artifact_removals)
+      : "—";
+    $("qcMaxZ").textContent = quality.maximum_absolute_z != null && Number.isFinite(Number(quality.maximum_absolute_z))
+      ? conciseNumber(quality.maximum_absolute_z)
+      : "—";
+  }
+
   function renderAlign() {
     if (!hasResults()) {
       clearCanvas($("alignTrace"));
@@ -1791,6 +1975,8 @@
       $("alignSummary").textContent = hasSession()
         ? "Run analyze to plot"
         : "Open a session to analyze";
+      renderQualitySummary(null);
+      setHeatScaleReadout("align", null);
       return;
     }
     const result =
@@ -1813,13 +1999,15 @@
         state.settings.baseline_end,
       ],
     });
-    window.AuroraPlots.drawHeat($("alignHeat"), {
+    const heatScale = window.AuroraPlots.drawHeat($("alignHeat"), {
       times,
       matrix: z,
       trialNumbers: result.trial_numbers || [],
       title: `${plotIdentity} · Z-score heatmap`,
       emptyMessage: result.z ? "no trials available" : "loading heatmap…",
+      ...heatScaleOptions(),
     });
+    setHeatScaleReadout("align", heatScale);
     if (mean.length) {
       const pk = window.AuroraPlots.peakLatency(times, mean);
       $("rPeak").textContent = pk.peak.toFixed(2) + " z";
@@ -1831,6 +2019,7 @@
       `${resultDisplayTitle(result)} · ` +
       `${result.num_trials || 0} trials · ${correctionSummary(result)}`;
     $("hudTrials").textContent = String(result.num_trials || 0);
+    renderQualitySummary(result);
     const qualityWarnings = resultQualityWarnings(result);
     const notices = qualityWarnings.map((warning) => warning.message);
     $("alignCalloutText").textContent = notices.length
@@ -1992,6 +2181,10 @@
           ? undefined
           : state.selectedTrialNumbers,
     };
+    if ($("trialLoad")) {
+      $("trialLoad").disabled = true;
+      $("trialLoad").textContent = "Analyzing…";
+    }
     let data;
     try {
       data = await nativeOrFetchAnalyze(requestBody, {
@@ -2001,6 +2194,11 @@
       if (error.name === "AbortError") return null;
       if (requestId !== trialRequestSequence) return null;
       throw error;
+    } finally {
+      if ($("trialLoad")) {
+        $("trialLoad").disabled = false;
+        $("trialLoad").textContent = "Analyze trials";
+      }
     }
     if (requestId !== trialRequestSequence) return null;
     state.trialEpoc = data.epoc || epoc;
@@ -2034,7 +2232,7 @@
     }
     if (requestId !== trialRequestSequence) return null;
     setBadge();
-    toast(`loaded trials for ${epocDisplayName(state.trialEpoc)}`);
+    toast(`analyzed trials for ${epocDisplayName(state.trialEpoc)}`);
     return data;
   }
 
@@ -2237,6 +2435,15 @@
   }
 
   function renderTrialStatus(fullResult, filteredResult) {
+    if (!fullResult) {
+      if ($("trialCalloutText")) {
+        $("trialCalloutText").textContent = hasSession()
+          ? "Choose an epoc and select Analyze trials."
+          : "Open a session, then analyze trials to begin.";
+      }
+      $("trialCallout")?.classList.remove("callout-warn");
+      return;
+    }
     const source = classifiedSourceFor(state.trialEpoc);
     const allSources = (state.session?.classified_sources || [])
       .map((item) => item.label || item.key)
@@ -2280,6 +2487,8 @@
       Object.values(state.trialResultsByChannel)[0];
     const result = state.trialFilteredResultsByChannel[key];
     if (!fullResult || !result) {
+      if ($("trialExportCsv")) $("trialExportCsv").disabled = true;
+      if ($("trialExportFig")) $("trialExportFig").disabled = true;
       const emptyMessage = state.selectedTrialNumbers?.length === 0
         ? "Select at least one trial"
         : "Analyze to populate trials";
@@ -2292,12 +2501,14 @@
         title: `${title} · Mean ± SEM`,
         emptyMessage,
       });
-      window.AuroraPlots.drawHeat($("trialHeat"), {
+      const emptyScale = window.AuroraPlots.drawHeat($("trialHeat"), {
         times: [],
         matrix: [],
         title: `${title} · Z-score heatmap`,
         emptyMessage,
+        ...heatScaleOptions(),
       });
+      setHeatScaleReadout("trial", emptyScale);
       $("trialSummary").textContent = !hasSession()
         ? "Open a session first"
         : state.selectedTrialNumbers?.length === 0
@@ -2306,6 +2517,9 @@
       renderTrialStatus(fullResult, null);
       return;
     }
+    const canExport = Number(result.num_trials || result.z?.length || 0) > 0;
+    if ($("trialExportCsv")) $("trialExportCsv").disabled = !canExport;
+    if ($("trialExportFig")) $("trialExportFig").disabled = !canExport;
     const mode = $("trialMode").value;
     const times = numericArray(result.times);
     const mean = numericArray(result.mean);
@@ -2324,13 +2538,15 @@
         state.trialSettings.baseline_end,
       ],
     });
-    window.AuroraPlots.drawHeat($("trialHeat"), {
+    const heatScale = window.AuroraPlots.drawHeat($("trialHeat"), {
       times,
       matrix: z,
       trialNumbers: result.trial_numbers || [],
       title: `${plotIdentity} · Z-score heatmap`,
       emptyMessage: result.z ? "no trials selected" : "loading heatmap…",
+      ...heatScaleOptions(),
     });
+    setHeatScaleReadout("trial", heatScale);
     $("trialSummary").textContent =
       `${resultDisplayTitle(result)} · ` +
       `${result.num_trials || z.length} trials · ${correctionSummary(result)}`;
@@ -2409,6 +2625,10 @@
 
   function setupBatch() {
     $("launchBatch").addEventListener("click", exportBatchSelection);
+    $("batchEditConfig")?.addEventListener("click", () => {
+      showView("align");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
     $("abortBatch").addEventListener("click", async () => {
       if (!state.batchRunning) return;
       state.batchCancelled = true;
@@ -2573,14 +2793,56 @@
       $("dataHint").textContent =
         "Multi-select MAT files or TDT tank/block folders. A tank expands to every nested block.";
       $("dataLede").textContent =
-        "Open one or more MATLAB exports or TDT tanks/blocks, then analyze with the shared backend.";
+        "Open one or more MATLAB exports or TDT tanks/blocks, then choose an event to analyze.";
     }
+    if ($("dataContinueAlign")) $("dataContinueAlign").disabled = !hasSession();
     renderImportQueue();
+  }
+
+  function renderBatchConfiguration() {
+    const current =
+      hasSession() &&
+      hasResults() &&
+      !!state.appliedConfiguration &&
+      !state.alignDirty &&
+      state.alignRunState === "current";
+    const configState = $("batchConfigState");
+    if (configState) {
+      let status = "idle";
+      let message = "Open a session, then apply settings in Align.";
+      if (state.alignRunState === "updating") {
+        status = "dirty";
+        message = "Align analysis is updating. Wait for it to finish.";
+      } else if (state.alignRunState === "failed") {
+        status = "dirty";
+        message = "Fix the Align analysis error before batch export.";
+      } else if (state.alignDirty) {
+        status = "dirty";
+        message = "Pending Align changes must be applied before batch export.";
+      } else if (current) {
+        status = "current";
+        message = "Applied and ready for batch export.";
+      } else if (hasSession()) {
+        message = "Run Apply + analyze in Align before batch export.";
+      }
+      configState.dataset.status = status;
+      configState.textContent = message;
+    }
+    if ($("batchConfigPreset")) {
+      $("batchConfigPreset").textContent = state.appliedConfiguration?.preset || "—";
+    }
+    if ($("batchConfigSummary")) {
+      $("batchConfigSummary").textContent = state.appliedConfiguration
+        ? processingSummary(state.appliedConfiguration)
+        : "No applied configuration yet.";
+    }
+    return current;
   }
 
   function renderBatchPage() {
     const body = $("batchList");
     if (!body) return;
+    const configurationCurrent = renderBatchConfiguration();
     if (state.sources.length) {
       const selectedChannels = state.batchChannels || [];
       const selectedEpocs = state.batchEpocs || [];
@@ -2602,9 +2864,12 @@
         selectedChannels.length > 0 &&
         selectedEpocs.length > 0 &&
         hasOutputs &&
+        configurationCurrent &&
         !state.batchRunning;
       $("batchSessionDetail").textContent = state.batchRunning
         ? "Exporting the selected epoc × channel combinations."
+        : !configurationCurrent
+          ? "Apply the analysis configuration in Align before exporting."
         : ready
           ? "Ready to analyze and export the selected combinations."
           : "Choose at least one epoc, one channel, and one output type.";
@@ -2613,6 +2878,8 @@
       $("mEpoc").textContent = String(selectedEpocs.length || "—");
       $("mMode").textContent = state.batchRunning
         ? "running"
+        : !configurationCurrent
+          ? "configure"
         : ready
           ? "ready"
           : "select";
@@ -2751,6 +3018,15 @@
       toast("add at least one batch data source");
       return;
     }
+    if (
+      state.alignDirty ||
+      state.alignRunState !== "current" ||
+      !state.appliedConfiguration ||
+      !hasResults()
+    ) {
+      toast("apply the analysis configuration in Align before batch export");
+      return;
+    }
     if (!epocs.length || !channels.length) {
       toast("choose at least one epoc and one channel");
       return;
@@ -2768,6 +3044,7 @@
     state.batchRunning = true;
     state.batchCancelled = false;
     state.batchOutcomes = [];
+    setBadge();
     renderBatchSelectors();
     renderBatchPage();
     const settings = settingsPayload();
@@ -2845,6 +3122,7 @@
       state.batchRunning = false;
       state.batchCancelled = false;
       state.batchJobId = null;
+      setBadge();
       renderBatchSelectors();
       renderBatchPage();
     }
@@ -2935,7 +3213,7 @@
       }
       return;
     }
-    // Browser mode: native multi file picker when possible
+    // Developer browser preview: use the native multi-file picker when possible.
     const input = $("matFileInput");
     if (input) {
       input.value = "";
@@ -3009,6 +3287,9 @@
     }
     if (message.type === "analyze") {
       applyAnalyzePayload(message.payload || message);
+      captureAppliedConfiguration();
+      state.alignDirty = false;
+      setAlignRunState("current");
       showView("align");
       return;
     }
@@ -3051,6 +3332,7 @@
     document.querySelectorAll(".nav-item").forEach((b) => {
       b.addEventListener("click", () => showView(b.dataset.page));
     });
+    $("dataContinueAlign")?.addEventListener("click", () => showView("align"));
     $("openSessionBtn").addEventListener("click", handleOpen);
     $("closeSessionBtn").addEventListener("click", handleClose);
     $("matFileInput")?.addEventListener("change", async () => {
@@ -3120,6 +3402,7 @@
     setupTrials();
     setupBatch();
     setupPresetControls();
+    setupHeatScaleControls();
     wireChrome();
     clearSessionUi();
     hydrateBrand();
@@ -3155,7 +3438,7 @@
           $("brandSub").textContent = health.brand;
         }
         if (health.ui_version && $("railMeta")) {
-          $("railMeta").textContent = `developer surface · v${health.ui_version}`;
+          $("railMeta").textContent = `desktop workspace · v${health.ui_version}`;
         }
         document.title = health.title || document.title;
       })

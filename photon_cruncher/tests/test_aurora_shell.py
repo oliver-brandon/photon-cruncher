@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.request import urlopen
 
 from PySide6 import QtCore, QtWidgets
@@ -14,6 +17,43 @@ from photon_cruncher.product import AURORA_UI_VERSION, aurora_app_title, aurora_
 
 
 class AuroraShellSpikeTests(unittest.TestCase):
+    def test_aurora_package_does_not_export_a_browser_server(self) -> None:
+        import photon_cruncher.gui_aurora as gui_aurora
+
+        self.assertEqual(gui_aurora.__all__, ["STATIC_DIR"])
+        self.assertFalse(hasattr(gui_aurora, "serve"))
+
+    def test_product_entry_opens_only_the_desktop_shell(self) -> None:
+        from photon_cruncher.aurora_main import main
+
+        with (
+            mock.patch(
+                "photon_cruncher.aurora_main.development_mode_enabled",
+                return_value=True,
+            ),
+            mock.patch(
+                "photon_cruncher.gui_aurora.shell.run_shell",
+                return_value=0,
+            ) as run_shell,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(main([]), 0)
+        run_shell.assert_called_once_with()
+
+    def test_product_entry_rejects_external_browser_mode(self) -> None:
+        from photon_cruncher.aurora_main import main
+
+        with (
+            mock.patch(
+                "photon_cruncher.aurora_main.development_mode_enabled",
+                return_value=True,
+            ),
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            main(["--browser"])
+        self.assertEqual(raised.exception.code, 2)
+
     def test_shell_module_imports(self) -> None:
         from photon_cruncher.gui_aurora import shell
 

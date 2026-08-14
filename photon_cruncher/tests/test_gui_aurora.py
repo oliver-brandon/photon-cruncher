@@ -58,6 +58,19 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn('id="batchResults"', html)
         self.assertIn('id="alignExportCsv"', html)
         self.assertIn('id="alignExportFig"', html)
+        self.assertIn('id="alignRunStatus"', html)
+        self.assertIn('class="align-action-bar"', html)
+        self.assertIn('id="alignHeatScaleMode"', html)
+        self.assertIn('id="qcKept"', html)
+        self.assertIn('id="trialHeatScaleMode"', html)
+        self.assertIn('id="batchConfigSummary"', html)
+        self.assertIn('id="batchEditConfig"', html)
+        self.assertIn('id="dataContinueAlign"', html)
+        self.assertIn('role="status" aria-live="polite"', html)
+        self.assertIn('role="img" aria-label="Event-aligned mean response plot"', html)
+        self.assertNotIn('id="alignPulse"', html)
+        self.assertLess(html.index('id="alignApply"'), html.index('class="split align-layout"'))
+        self.assertNotIn("fonts.googleapis.com", html)
         self.assertIn('value="-3"', html)
         self.assertIn('value="-1"', html)
         self.assertNotIn('id="alignExport"', html)
@@ -90,7 +103,12 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("failed ${errors.length}", js)
         self.assertIn("batchEpocs", js)
         self.assertIn("runTrialAnalyze", js)
-        self.assertIn("scheduleAlignAnalyze", js)
+        self.assertIn("markAlignDirty", js)
+        self.assertIn("setAlignRunState", js)
+        self.assertIn("captureAppliedConfiguration", js)
+        self.assertIn("renderBatchConfiguration", js)
+        self.assertIn("setupHeatScaleControls", js)
+        self.assertNotIn("scheduleAlignAnalyze", js)
         self.assertIn("scheduleTrialAnalyze", js)
         self.assertIn("alignRequestSequence", js)
         self.assertIn("trialRequestSequence", js)
@@ -145,6 +163,14 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn('$("batchResults")', js)
         self.assertIn('ctx.fillText("Z-score"', plots)
         self.assertIn('ctx.fillText("Trial"', plots)
+        self.assertIn("ticksIncludingZero", plots)
+        self.assertIn("yb.min = Math.min(yb.min, 0)", plots)
+        self.assertIn("Zero-centered blue-dark-red scale", plots)
+        self.assertIn("[20, 27, 42]", plots)
+        self.assertIn('ctx.strokeStyle = "rgba(3,7,15,0.92)"', plots)
+        self.assertIn("ctx.lineTo(plot.l + plot.w, zy)", plots)
+        self.assertIn('ctx.fillText("0 z"', plots)
+        self.assertIn('mode: opts.scaleMode === "locked" ? "locked" : "auto"', plots)
         self.assertIn("Math.round(raw)", plots)
         self.assertIn('(\"Trial Explorer\", \"trials\")', shell)
         self.assertIn('(\"Batch Export\", \"batch\")', shell)
@@ -163,6 +189,47 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("max-width: 100%", css)
         self.assertIn(".plot-tools select", css)
         self.assertIn("text-overflow: ellipsis", css)
+
+    def test_supported_minimum_width_keeps_navigation_and_plot_layout(self) -> None:
+        css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        self.assertIn('class="mobile-nav"', html)
+        responsive = css.split("@media (max-width: 1180px)", 1)[1].split(
+            "@media (min-width: 1181px)", 1
+        )[0]
+        self.assertIn(".mobile-nav", responsive)
+        self.assertNotIn(".plot-grid, .stat-grid", responsive)
+        self.assertIn("@media (max-width: 900px)", css)
+        self.assertIn(".align-layout .align-plot-card", css)
+        self.assertNotIn("max-height: calc(100vh - 180px)", css)
+
+    def test_plot_panels_share_height_and_desktop_rail_stays_put(self) -> None:
+        css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")
+        plot_canvas = css.split(".plot-grid canvas {", 1)[1].split("}", 1)[0]
+        self.assertIn("height: clamp(280px, 28vw, 340px)", plot_canvas)
+        self.assertNotIn("height: auto", plot_canvas)
+        rail = css.split(".rail {", 1)[1].split("}", 1)[0]
+        self.assertIn("position: fixed", rail)
+        self.assertIn("inset: 0 auto 0 0", rail)
+        self.assertIn("z-index: 6", rail)
+        self.assertIn("width: 232px", rail)
+        self.assertIn("height: 100vh", rail)
+        self.assertIn(".main { grid-column: 1; }", css)
+
+    def test_analysis_changes_are_explicit_and_batch_configuration_is_visible(self) -> None:
+        js = (STATIC_DIR / "js" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('markAlignDirty("Processing changes not applied")', js)
+        self.assertIn('state.alignRunState === "current"', js)
+        self.assertIn("!!state.appliedConfiguration", js)
+        self.assertIn("processingSummary(state.appliedConfiguration)", js)
+        self.assertIn("apply the analysis configuration in Align before batch export", js)
+
+    def test_align_apply_action_stays_accessible_while_settings_scroll(self) -> None:
+        css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")
+        action_bar = css.split(".align-action-bar {", 1)[1].split("}", 1)[0]
+        self.assertIn("position: sticky", action_bar)
+        self.assertIn("top: 67px", action_bar)
+        self.assertIn(".align-action-bar { top: 124px; }", css)
 
     def test_aurora_icon_has_transparent_corners(self) -> None:
         icon = (
