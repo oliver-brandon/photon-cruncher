@@ -633,7 +633,7 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         export_action.triggered.connect(lambda: self._send_to_ui({"type": "export"}))
 
         file_menu.addSeparator()
-        close_session = file_menu.addAction("Close Session")
+        close_session = file_menu.addAction("Clear All Imports")
         close_session.triggered.connect(self.close_session)
 
         file_menu.addSeparator()
@@ -1021,11 +1021,12 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
     def close_session(self) -> None:
         try:
             self.api("POST", "/api/close", {})
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - native UI boundary
+            self._status.showMessage(f"Could not clear imports: {exc}", 6000)
+            return
         self._session_path = None
-        self._send_to_ui({"type": "close", "toast": "Session closed"})
-        self._status.showMessage("Session closed", 3000)
+        self._send_to_ui({"type": "close", "toast": "Imports cleared"})
+        self._status.showMessage("All imported sessions cleared", 3000)
 
     def show_health(self) -> None:
         try:

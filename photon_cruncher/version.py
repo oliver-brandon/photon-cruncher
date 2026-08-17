@@ -5,7 +5,7 @@ from __future__ import annotations
 import platform
 
 
-__version__ = "2.0.3"
+__version__ = "2.0.4"
 APP_NAME = "Photon Cruncher Aurora"
 AURORA_CODENAME = "aurora"
 BUNDLE_IDENTIFIER = "com.photoncruncher.aurora.dev"

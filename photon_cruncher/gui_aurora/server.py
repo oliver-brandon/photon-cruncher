@@ -791,13 +791,24 @@ def _handler_class(directory: str) -> type[http.server.SimpleHTTPRequestHandler]
                     )
                     return
                 if parsed.path == "/api/close":
+                    cleared_jobs = BATCH_JOBS.clear()
+                    cached_sessions = STORE.stats()["cached_sessions"]
                     STORE.clear()
                     with _UPLOAD_LOCK:
                         upload_dirs = list(_UPLOAD_DIRS.values())
                         _UPLOAD_DIRS.clear()
                     for upload_dir in upload_dirs:
                         shutil.rmtree(upload_dir, ignore_errors=True)
-                    _json_response(self, {"ok": True})
+                    _json_response(
+                        self,
+                        {
+                            "ok": True,
+                            "cleared_sessions": cached_sessions,
+                            "cleared_uploads": len(upload_dirs),
+                            "cleared_batch_jobs": cleared_jobs,
+                            "cache": STORE.stats(),
+                        },
+                    )
                     return
                 _json_response(self, {"ok": False, "error": "not found"}, status=404)
             except Exception as exc:  # noqa: BLE001 - API boundary

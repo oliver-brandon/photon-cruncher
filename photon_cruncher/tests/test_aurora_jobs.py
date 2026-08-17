@@ -186,6 +186,34 @@ class BatchJobManagerTests(unittest.TestCase):
         release.set()
         self.assertEqual(manager.wait(first["id"], timeout=2)["status"], "completed")
 
+    def test_clear_forgets_finished_jobs(self) -> None:
+        manager = BatchJobManager()
+        started = manager.start(lambda _cancelled, _progress: {"exports": []})
+        manager.wait(started["id"], timeout=2)
+
+        self.assertEqual(manager.clear(), 1)
+        with self.assertRaises(KeyError):
+            manager.snapshot(started["id"])
+
+    def test_clear_rejects_an_active_job(self) -> None:
+        manager = BatchJobManager()
+        operation_started = threading.Event()
+        release = threading.Event()
+
+        def operation(_cancelled, _progress):
+            operation_started.set()
+            release.wait(1)
+            return {"exports": []}
+
+        started = manager.start(operation)
+        self.assertTrue(operation_started.wait(1))
+        try:
+            with self.assertRaisesRegex(RuntimeError, "finish or cancel"):
+                manager.clear()
+        finally:
+            release.set()
+            manager.wait(started["id"], timeout=2)
+
 
 if __name__ == "__main__":
     unittest.main()

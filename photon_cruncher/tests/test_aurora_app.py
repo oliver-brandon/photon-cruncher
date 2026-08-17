@@ -233,6 +233,29 @@ class AuroraAppTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_clear_imports_removes_uploaded_files_and_resets_cache(self) -> None:
+        httpd, _thread, port = serve_in_background(host="127.0.0.1", port=None)
+        try:
+            payload = _upload(
+                port,
+                "clear-imports-test",
+                "batch/sample.mat",
+                b"not-a-real-mat",
+                final=True,
+            )
+            uploaded = Path(payload["paths"][0])
+            self.assertTrue(uploaded.exists())
+
+            cleared = _post(port, "/api/close", {})
+
+            self.assertTrue(cleared["ok"])
+            self.assertGreaterEqual(cleared["cleared_uploads"], 1)
+            self.assertEqual(cleared["cache"]["cached_sessions"], 0)
+            self.assertFalse(uploaded.exists())
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_browser_upload_preserves_tdt_folder_layout(self) -> None:
         httpd, _thread, port = serve_in_background(host="127.0.0.1", port=None)
         try:

@@ -109,6 +109,8 @@ class AuroraShellSpikeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('addAction("Check for Updates…")', shell_text)
         self.assertIn('addAction("Export Diagnostic Report…")', shell_text)
+        self.assertIn('addAction("Clear All Imports")', shell_text)
+        self.assertIn('"Imports cleared"', shell_text)
         self.assertIn('setObjectName("updateIndicator")', shell_text)
         self.assertIn('"Install and restart"', shell_text)
         self.assertIn("create_update_service()", shell_text)

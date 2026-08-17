@@ -229,6 +229,7 @@ edit-and-test loop; the release-quality Velopack workflow remains separate.
 
 In the shell:
 - **File → Open MAT / TDT** uses native dialogs
+- **Data → Clear imports** (or **File → Clear All Imports**) removes every loaded MAT/TDT session and resets analysis and batch results without deleting exports, presets, or saved settings
 - Analysis runs through the local API → `photon_cruncher.service`
 - Align exposes explicit channel controls, reactive processing updates, and separate CSV/figure exports
 - Named analysis presets can be saved, imported, exported, and applied in Align or Trial Explorer; edited settings are marked as **Custom**
@@ -270,7 +271,9 @@ prefer the `A / 1_` or `C / 2_` member when paired epocs are available. Each
 recording is written to its own output subfolder. CSV is enabled by default;
 figures can be added in PNG, PDF, or TIFF format. The batch runs in the
 background, loads each recording once for all selected epocs, reports live
-progress, and can be cancelled without waiting for every remaining file.
+progress, and can be cancelled without waiting for every remaining file. After
+the export finishes, return to **Data** and choose **Clear imports** to remove
+the completed batch before importing a fresh one.
 
 For recordings with compatible behavior epocs, Photon Cruncher can add
 in-memory classified trial sources in Trial Explorer. These sources do not

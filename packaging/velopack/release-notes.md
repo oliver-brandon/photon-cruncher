@@ -1,6 +1,8 @@
-# Photon Cruncher Aurora 2.0.3
+# Photon Cruncher Aurora 2.0.4
 
-- Makes Aurora a desktop-app-only workflow while retaining its internal loopback architecture.
-- Keeps the primary Align action and workspace navigation continuously accessible.
-- Improves plot sizing, zero references, heatmap colors, trial labeling, and quality-control visibility.
-- Groups direct figure exports with their matching analysis JSON provenance files.
+- Adds a confirmed **Clear imports** action to Data, Batch, and the File menu.
+- Completely resets imported MAT/TDT sessions, analyses, trial selections,
+  batch results, caches, and temporary uploads for a fresh batch.
+- Preserves exported files, analysis presets, processing settings, and the
+  saved export destination.
+- Prevents imports from being cleared while a batch export is still active.

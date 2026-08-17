@@ -156,6 +156,9 @@ original desktop application through the current Aurora v2 development branch.
   export, processing controls, smoothing, settings persistence, and exports.
 - Added native MAT/TDT open dialogs in the desktop shell.
 - Added multi-select MAT import and multi-tank TDT import.
+- Added a confirmed clear-all action that removes imported MAT/TDT sessions and
+  completed batch state for a fresh batch while preserving exported files,
+  presets, and saved processing/export settings.
 - Retained upload-capable external-browser preview tooling for development and
   UI testing; the supported Aurora product surface is the desktop app only.
 - Added responsive layouts for long file/epoc names and compact controls.

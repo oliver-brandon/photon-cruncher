@@ -83,6 +83,20 @@ class BatchJobManager:
         finished.wait(timeout)
         return self.snapshot(job_id)
 
+    def clear(self) -> int:
+        """Forget finished jobs, refusing to clear while an export is active."""
+        with self._lock:
+            if any(
+                job.status in {"queued", "running", "cancelling"}
+                for job in self._jobs.values()
+            ):
+                raise RuntimeError(
+                    "Wait for the batch export to finish or cancel it before clearing imports."
+                )
+            count = len(self._jobs)
+            self._jobs.clear()
+            return count
+
     def _run(self, job: BatchJob, operation: BatchOperation) -> None:
         with self._lock:
             if job.cancel_event.is_set():

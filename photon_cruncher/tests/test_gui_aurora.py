@@ -27,6 +27,9 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("nav-item", html)
         self.assertIn("page-align", html)
         self.assertIn("openSessionBtn", html)
+        self.assertIn('id="clearImportsBtn"', html)
+        self.assertIn(">Clear imports</button>", html)
+        self.assertNotIn('id="closeSessionBtn"', html)
         self.assertIn('id="matFileInput"', html)
         self.assertIn('id="tdtFolderInput"', html)
         self.assertIn('id="batchMatFileInput"', html)
@@ -120,6 +123,15 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn("saveProcessingSettings", js)
         self.assertIn("aurora.analysisPresets", js)
         self.assertIn("saveAnalysisPresetFile", js)
+        self.assertIn("function handleClearImports()", js)
+        self.assertIn("state.sources = [];", js)
+        self.assertIn("state.batchEpocs = null;", js)
+        self.assertIn("state.batchChannels = null;", js)
+        self.assertIn("Exported files, presets, and saved settings will not be deleted.", js)
+        self.assertIn(
+            '$("batchClearSources")?.addEventListener("click", handleClearImports);',
+            js,
+        )
         self.assertIn("use_isosbestic", js)
         self.assertIn("polynomial_degree", js)
         self.assertIn("syncIsosbesticControls", js)

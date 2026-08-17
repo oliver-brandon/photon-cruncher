@@ -1,6 +1,6 @@
 # Photon Cruncher Project Status
 
-Last verified: 2026-08-14
+Last verified: 2026-08-17
 
 This is the handoff document for continuing Photon Cruncher development. Read it
 with `docs/architecture-aurora.md` and the root `AGENTS.md` before release,
@@ -11,12 +11,12 @@ packaging, or analysis-pipeline work.
 - Repository: `oliver-brandon/photon-cruncher` (public; default branch `main`).
 - Public stable line: `main` at `4bd14a7`, tagged and released as `v1.1.4`.
 - Development line: local `dev` is synchronized with `origin/dev`; the
-  `aurora-dev-v2.0.1` release tag targets implementation commit `10b2014`.
-- Development product: Photon Cruncher Aurora, package version `2.0.3`, with
-  in-app label `Aurora v2.0.3`.
-- Signed Aurora dev prereleases `aurora-dev-v2.0.0` and
-  `aurora-dev-v2.0.1` are published for updater testing. They remain isolated
-  from the stable product; the newest public lab release is still v1.1.4.
+  `aurora-dev-v2.0.3` release tag targets implementation commit `69cd528`.
+- Development product: Photon Cruncher Aurora, package version `2.0.4`, with
+  in-app label `Aurora v2.0.4`.
+- Signed Aurora dev prereleases through `aurora-dev-v2.0.3` are published for
+  updater testing. They remain isolated from the stable product; the newest
+  public lab release is still v1.1.4.
 - GitHub currently has no open issues, so the remaining work listed below is
   not otherwise tracked.
 
@@ -62,6 +62,9 @@ packaging, or analysis-pipeline work.
 - Batch Export supports multiple sources, epoc suffix policies, channel
   selection, CSV and/or figure output, PNG/PDF/TIFF figures, and structured
   exported/skipped/failed reporting.
+- **Clear imports** removes every loaded MAT/TDT source, cached session, browser
+  upload, and completed batch result so a new batch starts cleanly; exported
+  files, presets, processing settings, and the export destination are preserved.
 - Displayed and saved figures include source file, epoc, channel, labeled axes,
   explicit zero ticks on time and trace axes, and matching dashed zero-reference
   lines. Exported heatmaps use stable ordinal trial labels `1, 3, 5, ...` while
@@ -161,7 +164,7 @@ flowchart LR
 
 ## Verification Evidence
 
-The following checks passed through 2026-08-14:
+The following checks passed through 2026-08-17:
 
 - The v2.0.1 regression suite passed all 92 tests, along with Python
   compilation, shell syntax, YAML parsing, centralized version consistency,
@@ -174,7 +177,7 @@ The following checks passed through 2026-08-14:
   public feeds. Both feeds advertise package ID
   `com.photoncruncher.aurora.dev` at version `2.0.1`.
 
-- Full 113-test suite covering loader, CLI, service, pipeline equivalence, Aurora
+- Full 116-test suite covering loader, CLI, service, pipeline equivalence, Aurora
   frontend wiring, shell, browser upload, API, batch behavior, and centralized
   version/update metadata.
 - Python compilation, PyInstaller spec compilation, JavaScript syntax checks,

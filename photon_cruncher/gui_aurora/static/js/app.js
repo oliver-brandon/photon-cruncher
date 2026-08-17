@@ -1160,7 +1160,23 @@
   function clearSessionUi() {
     state.path = null;
     state.session = null;
+    state.sources = [];
+    state.batchEpocs = null;
+    state.batchChannels = null;
+    state.batchOutcomes = [];
+    state.smoothByChannel = {};
+    state.trialSmoothByChannel = {};
     resetAnalysisState();
+
+    for (const id of [
+      "matFileInput",
+      "tdtFolderInput",
+      "batchMatFileInput",
+      "batchFolderInput",
+      "batchTankInput",
+    ]) {
+      if ($(id)) $(id).value = "";
+    }
 
     $("hudSession").textContent = "No session";
     $("orbitName").textContent = "No session open";
@@ -1211,6 +1227,9 @@
     if ($("sessionMetadata"))
       $("sessionMetadata").textContent = "Open a session to inspect metadata.";
     setAlignRunState("idle");
+    setBatch(0, "idle", "Ready");
+    renderSourceSelectors();
+    renderBatchSelectors();
     renderImportQueue();
     renderDataPage();
     renderBatchPage();
@@ -2683,19 +2702,7 @@
     $("batchAddTank")?.addEventListener("click", () =>
       addBatchSourcesFromDialog("selectTdtTank")
     );
-    $("batchClearSources")?.addEventListener("click", async () => {
-      const paths = state.sources.map((source) => source.path);
-      if (paths.length) {
-        api("POST", "/api/evict", { paths, keep_current: true }).catch(() => {});
-      }
-      state.sources = [];
-      state.batchEpocs = [];
-      state.batchChannels = [];
-      state.batchOutcomes = [];
-      renderSourceSelectors();
-      renderBatchSelectors();
-      renderBatchPage();
-    });
+    $("batchClearSources")?.addEventListener("click", handleClearImports);
     $("chooseExportDir")?.addEventListener("click", chooseExportDestination);
     $("exportDir")?.addEventListener("input", () => {
       state.outputDir = $("exportDir").value.trim();
@@ -2775,12 +2782,11 @@
 
   function renderDataPage() {
     const openBtn = $("openSessionBtn");
-    const closeBtn = $("closeSessionBtn");
+    const clearBtn = $("clearImportsBtn");
     const page = $("page-data");
     if (page) page.classList.toggle("empty-mode", !hasSession());
     if (hasSession()) {
       openBtn.textContent = "Add MAT files";
-      closeBtn.disabled = false;
       $("dataHint").textContent =
         "Multi-select MAT files (⌘/Ctrl-click) or TDT tanks/blocks. Click a session in Imported sessions to switch analysis focus.";
       $("dataLede").textContent =
@@ -2789,11 +2795,16 @@
           : "Session ready. Adjust processing on Align, filter trials, then export.";
     } else {
       openBtn.textContent = "Open MAT files";
-      closeBtn.disabled = true;
       $("dataHint").textContent =
         "Multi-select MAT files or TDT tank/block folders. A tank expands to every nested block.";
       $("dataLede").textContent =
         "Open one or more MATLAB exports or TDT tanks/blocks, then choose an event to analyze.";
+    }
+    if (clearBtn) {
+      clearBtn.disabled = !state.sources.length || state.batchRunning;
+      clearBtn.title = state.batchRunning
+        ? "Wait for the batch export to finish or cancel it first"
+        : "Remove all imported sessions and reset analysis and batch results";
     }
     if ($("dataContinueAlign")) $("dataContinueAlign").disabled = !hasSession();
     renderImportQueue();
@@ -3045,6 +3056,7 @@
     state.batchCancelled = false;
     state.batchOutcomes = [];
     setBadge();
+    renderDataPage();
     renderBatchSelectors();
     renderBatchPage();
     const settings = settingsPayload();
@@ -3123,6 +3135,7 @@
       state.batchCancelled = false;
       state.batchJobId = null;
       setBadge();
+      renderDataPage();
       renderBatchSelectors();
       renderBatchPage();
     }
@@ -3236,15 +3249,22 @@
     }
   }
 
-  async function handleClose() {
-    if (!hasSession()) return;
+  async function handleClearImports() {
+    const importCount = state.sources.length;
+    if (!importCount || state.batchRunning) return;
+    const confirmed = confirm(
+      `Clear all ${importCount} imported session${importCount === 1 ? "" : "s"}?\n\n` +
+      "Analysis and batch results will reset. Exported files, presets, and saved settings will not be deleted."
+    );
+    if (!confirmed) return;
     try {
       await api("POST", "/api/close", {});
-    } catch (_) {
-      /* ignore */
+    } catch (error) {
+      toast(String(error.message || error));
+      return;
     }
     clearSessionUi();
-    toast("session closed");
+    toast(`${importCount} imported session${importCount === 1 ? "" : "s"} cleared`);
     showView("data");
   }
 
@@ -3334,7 +3354,7 @@
     });
     $("dataContinueAlign")?.addEventListener("click", () => showView("align"));
     $("openSessionBtn").addEventListener("click", handleOpen);
-    $("closeSessionBtn").addEventListener("click", handleClose);
+    $("clearImportsBtn").addEventListener("click", handleClearImports);
     $("matFileInput")?.addEventListener("change", async () => {
       const input = $("matFileInput");
       const files = Array.from(input?.files || []);
