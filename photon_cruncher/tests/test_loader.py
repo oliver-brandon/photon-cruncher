@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+from scipy.io import savemat
 
 from photon_cruncher.io.loader import (
     discover_tdt_block_paths,
@@ -170,7 +171,10 @@ class LoaderTests(unittest.TestCase):
                     onset=np.array([10.0, 20.0]),
                     offset=np.array([11.0, 21.0]),
                     data=np.array([1, 2]),
-                )
+                ),
+                "Cam1": Struct(onset=np.arange(1000, dtype=float)),
+                "Cam2": Struct(onset=np.arange(1000, dtype=float)),
+                "Tick": Struct(onset=np.arange(1000, dtype=float)),
             },
             info=Struct(subject="Mouse1"),
         )
@@ -191,6 +195,7 @@ class LoaderTests(unittest.TestCase):
                 np.array([4.0, 5.0, 6.0]),
             )
             self.assertEqual(session.streams["x465A"].t0, 0.5)
+            self.assertEqual(sorted(session.epocs), ["CueA"])
             np.testing.assert_array_equal(
                 session.epocs["CueA"].onset,
                 np.array([10.0, 20.0]),
@@ -202,6 +207,35 @@ class LoaderTests(unittest.TestCase):
                 sys.modules.pop("tdt", None)
             else:
                 sys.modules["tdt"] = original_tdt
+
+    def test_load_session_ignores_camera_and_tick_mat_epocs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ignored-epocs.mat"
+            savemat(
+                path,
+                {
+                    "data": {
+                        "streams": {
+                            "x465A": {
+                                "fs": 10.0,
+                                "data": np.linspace(0.0, 1.0, 100),
+                            }
+                        },
+                        "epocs": {
+                            "Cue": {"onset": np.array([2.0, 4.0])},
+                            "Cam1": {"onset": np.arange(1000, dtype=float)},
+                            "CAM2": {"onset": np.arange(1000, dtype=float)},
+                            "tick": {"onset": np.arange(1000, dtype=float)},
+                        },
+                        "info": {"subject": "synthetic"},
+                    }
+                },
+            )
+
+            session = load_session(path)
+
+        self.assertEqual(sorted(session.epocs), ["Cue"])
+        np.testing.assert_array_equal(session.epocs["Cue"].onset, [2.0, 4.0])
 
     def test_trial_extraction_uses_stream_start_time(self) -> None:
         stream = np.arange(10, dtype=float)

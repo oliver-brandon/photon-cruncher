@@ -10,6 +10,11 @@ from photon_cruncher.model import Epoc, PhotometrySession, Stream
 
 
 TDT_BLOCK_EXTENSIONS = {".sev", ".tev", ".tsq", ".tdx", ".tbk"}
+IGNORED_EPOC_NAMES = frozenset({"cam1", "cam2", "tick"})
+
+
+def _is_ignored_epoc(name: str) -> bool:
+    return name.strip().lower() in IGNORED_EPOC_NAMES
 
 
 def is_tdt_block_path(path: Path) -> bool:
@@ -127,6 +132,8 @@ def _load_mat_session(path: Path) -> PhotometrySession:
 
     epocs: dict[str, Epoc] = {}
     for name, entry in data.get("epocs", {}).items():
+        if _is_ignored_epoc(name):
+            continue
         onset = np.asarray(entry.get("onset", []), dtype=float).reshape(-1)
         offset = entry.get("offset")
         values = entry.get("data")
@@ -183,6 +190,8 @@ def _load_tdt_session(path: Path) -> PhotometrySession:
 
     epocs: dict[str, Epoc] = {}
     for name, entry in _items(_field(data, "epocs", {})):
+        if _is_ignored_epoc(name):
+            continue
         onset = np.asarray(_field(entry, "onset", []), dtype=float).reshape(-1)
         offset = _field(entry, "offset")
         values = _field(entry, "data")
