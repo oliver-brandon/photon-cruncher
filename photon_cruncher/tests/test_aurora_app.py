@@ -277,7 +277,10 @@ class AuroraAppTests(unittest.TestCase):
             )
             self.assertTrue(payload["ok"])
             self.assertEqual(len(payload["paths"]), 1)
-            self.assertTrue(payload["paths"][0].endswith("/Tank/Block"))
+            block = Path(payload["paths"][0])
+            self.assertEqual(block.parts[-2:], ("Tank", "Block"))
+            self.assertEqual((block / "Block.tev").read_bytes(), b"tev")
+            self.assertEqual((block / "Block.tsq").read_bytes(), b"tsq")
         finally:
             httpd.shutdown()
             httpd.server_close()
