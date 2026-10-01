@@ -1,9 +1,28 @@
 # Photon Cruncher
 
-Python 3.11+ desktop app for MATLAB-faithful fiber photometry analysis. The
-pipeline mirrors lab MATLAB preprocessing, supports single-file and batch
+Python 3.11+ desktop app for MATLAB-derived fiber photometry analysis. The
+pipeline follows lab preprocessing conventions, supports single-file and batch
 processing, reads MATLAB exports or raw TDT block folders, lets users inspect
 and export selected trials, and exports plotted data as CSV.
+
+## v1.2.1 Analysis Correction
+
+The 405 fit now predicts the signal from its control (`signal = intercept +
+slope * 405`) before subtracting the fitted control. Earlier stable versions
+fitted the reverse relationship and then applied those coefficients to 405.
+**This correction can change z-scores and figures.** For consistent comparisons,
+reprocess recordings with the same version and settings into a fresh output
+folder, and validate results before combining them with older exports.
+
+Each new CSV or figure export includes a neighboring `_analysis.json` file
+recording its source, app version, processing settings, and selected trials.
+These files also prevent replacement of another recording's identified exports.
+Same-named recordings within a batch get distinct source-named folders.
+
+This maintenance release also fixes oversized smoothing windows, rejects
+baseline windows with fewer than two downsampled samples, counts rejected
+artifact trials once, reduces batch memory use, and excludes unused `Cam1`,
+`Cam2`, and `Tick` epocs.
 
 ## Download for Lab Users
 
@@ -16,7 +35,7 @@ need Python, Conda, Terminal, Automator, or the project source folder.
 2. Click **Releases** on the right side of the page.
 3. Open the newest release.
 4. Download the Windows installer, such as
-   `Photon-Cruncher-v1.2.0-Windows.exe`.
+   `Photon-Cruncher-v1.2.1-Windows.exe`.
 5. Double-click the installer and follow its prompts.
 6. Launch **Photon Cruncher** from the shortcut it creates.
 
@@ -31,7 +50,7 @@ certificate.
 2. Click **Releases** on the right side of the page.
 3. Open the newest release.
 4. Download the macOS installer, such as
-   `Photon-Cruncher-v1.2.0-macOS.pkg`.
+   `Photon-Cruncher-v1.2.1-macOS.pkg`.
 5. Open the installer and follow its prompts.
 6. Launch **Photon Cruncher** from Applications.
 
@@ -48,7 +67,7 @@ also choose **Help → Check for Updates…** at any time. A network failure doe
 not interrupt analysis.
 
 The old v1.1.4 zip build is not managed by Velopack and cannot receive v1.2.0
-automatically. Install v1.2.0 once using the new installer; later releases can
+automatically. Install the latest stable version once using its installer; later releases can
 then update in place. Recordings and exports stay outside the app installation
 and are not deleted by an update.
 
@@ -104,10 +123,22 @@ exports include those trial labels in the row names.
 
 ## Notes
 
-* The preprocessing pipeline follows the lab's MATLAB script exactly, including
-  downsampling, regression, baseline logic, and smoothing.
+* The preprocessing pipeline retains the lab's window, downsampling, baseline,
+  and smoothing conventions, with the 405 regression correction noted above.
 * Export outputs include heatmap CSVs with the time vector in the first row,
-  followed by per-trial z-score rows.
+  followed by the mean trace and per-trial z-score rows.
+
+## Developer Checks
+
+The stable branch runs regression tests on macOS and Windows for pushes and
+pull requests. Tests generate synthetic recordings, so private lab data is not
+required for CI. From a source checkout with the build environment installed:
+
+```bash
+QT_QPA_PLATFORM=offscreen .build-venv/bin/python -m unittest discover -s photon_cruncher/tests -t .
+.build-venv/bin/python scripts/version_metadata.py --check
+git diff --check
+```
 
 ## Building and Publishing Stable Updates
 

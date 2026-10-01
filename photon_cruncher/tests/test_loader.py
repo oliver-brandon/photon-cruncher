@@ -392,7 +392,7 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(export_calls, [])
         self.assertEqual(len(exported), 1)
-        self.assertEqual(exported[0].result.channel_key, "A_465")
+        self.assertEqual(exported[0].channel, "A_465")
 
     def test_rev_fixture_explicit_outcomes_partition_levers(self) -> None:
         session = self._load_local_mat_fixture("2143_Rev1_JZL18.mat")

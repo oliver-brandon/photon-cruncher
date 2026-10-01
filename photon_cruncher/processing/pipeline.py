@@ -49,11 +49,15 @@ class ExtractedTrials:
 
 
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1:
+    if window <= 1 or trace.size == 0:
         return trace.copy()
+    # Explicit slicing preserves trace length even for oversized windows.
+    window = min(window, 2 * trace.size)
     kernel = np.ones(window, dtype=float)
-    summed = np.convolve(trace, kernel, mode="same")
-    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="same")
+    start = (window - 1) // 2
+    stop = start + trace.size
+    summed = np.convolve(trace, kernel, mode="full")[start:stop]
+    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="full")[start:stop]
     return summed / counts
 
 
@@ -187,8 +191,8 @@ def process_channel(
 
     _, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
     _, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
-    num_artifacts = int((~good_405).sum() + (~good_465).sum())
     good_trials = good_405 & good_465
+    num_artifacts = int((~good_trials).sum())
     trials_405 = [
         trial for trial, keep in zip(trials_405, good_trials) if keep
     ]
@@ -229,16 +233,22 @@ def process_channel(
 
     ts1 = settings.trange[0] + (np.arange(1, min_length1 + 1) / stream_405.fs * settings.downsample_factor)
     ts2 = settings.trange[0] + (np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor)
+    baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
+    if np.count_nonzero(baseline_mask) < 2:
+        raise ValueError(
+            "The baseline window must contain at least two downsampled samples "
+            "inside TRANGE. Adjust the baseline, TRANGE, or downsample factor."
+        )
 
     mean_signal1 = mean_signal1 - dc_signal1
     mean_signal2 = mean_signal2 - dc_signal2
 
-    bls = np.polyfit(f465.flatten(order="F"), f405.flatten(order="F"), 1)
+    # Predict the signal from its paired control before subtracting the fit.
+    bls = np.polyfit(f405.flatten(order="F"), f465.flatten(order="F"), 1)
     y_fit_all = bls[0] * f405 + bls[1]
     y_df_all = f465 - y_fit_all
 
     zall = np.zeros_like(y_df_all)
-    baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
     for i in range(y_df_all.shape[0]):
         zb = y_df_all[i, baseline_mask].mean()
         zsd = y_df_all[i, baseline_mask].std(ddof=1)

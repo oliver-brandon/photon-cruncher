@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from photon_cruncher.export.exporter import export_batch_summary, export_channel
+from photon_cruncher.export.exporter import (
+    batch_output_directories,
+    export_batch_summary,
+    export_channel,
+)
 from photon_cruncher.io.loader import load_session
 from photon_cruncher.model import Epoc, PhotometrySession
 from photon_cruncher.processing.pipeline import (
@@ -74,7 +78,20 @@ class AnalysisResult:
 @dataclass
 class BatchExportedResult:
     output_dir: Path
-    result: AnalysisResult
+    input_path: Path
+    epoc: str
+    channel: str
+    num_trials: int
+    csv_path: Path | None = None
+    figure_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class BatchOutcome:
+    status: str
+    input_path: Path
+    epoc: str
+    reason: str
 
 
 def run_session(
@@ -149,12 +166,13 @@ def run_batch(
     output_dir: Path,
 ) -> None:
     summary_rows: list[dict[str, Any]] = []
+    destinations = batch_output_directories(input_paths, output_dir, per_session_subdir=False)
     for path in input_paths:
         session = load_session(path)
         results = run_session(session, epoc_name)
         for result in results:
             export_channel(
-                output_dir=output_dir,
+                output_dir=destinations[Path(path).expanduser().resolve()],
                 session_name=session.source_path.stem,
                 epoc_name=epoc_name,
                 channel_key=result.channel_key,
@@ -163,8 +181,8 @@ def run_batch(
                 dropped_trials=[],
                 stream_store=result.stream_store,
                 metadata={
-                    "source_path": str(session.source_path),
                     **session.info,
+                    "source_path": str(session.source_path),
                 },
                 export_smoothed=result.settings.plot_smooth,
             )
@@ -189,15 +207,33 @@ def run_batch_custom(
     export_summary: bool = False,
     per_session_subdir: bool = False,
     export_csv: bool = True,
+    figure_exporter: Callable[[Path, AnalysisResult], Path] | None = None,
+    outcomes: list[BatchOutcome] | None = None,
 ) -> list[BatchExportedResult]:
     summary_rows: list[dict[str, Any]] = []
     exported_results: list[BatchExportedResult] = []
+    destinations = batch_output_directories(
+        input_paths, output_dir, per_session_subdir=per_session_subdir
+    )
+
+    def report(status: str, path: Path, epoc: str, reason: str) -> None:
+        if outcomes is not None:
+            outcomes.append(BatchOutcome(status, path, epoc, reason))
+
     for path in input_paths:
-        session = load_session(path)
-        session_output = output_dir / session.source_path.stem if per_session_subdir else output_dir
+        try:
+            session = load_session(path)
+        except Exception as exc:
+            report("error", path, "", f"Could not load recording: {exc}")
+            continue
+        session_output = destinations[Path(path).expanduser().resolve()]
         for selection in epoc_selections:
-            for epoc_name in epoc_names_for_selection(session, selection):
+            epoc_names = epoc_names_for_selection(session, selection)
+            if not epoc_names:
+                report("skipped", path, selection[0], "No matching epoc.")
+            for epoc_name in epoc_names:
                 if session.epocs[epoc_name].onset.size == 0:
+                    report("skipped", path, epoc_name, "The epoc has no events.")
                     continue
                 try:
                     results = run_session_with_settings(
@@ -206,28 +242,43 @@ def run_batch_custom(
                         channel_keys=channel_keys,
                         settings_factory=settings_factory,
                     )
-                except ValueError:
+                except Exception as exc:
+                    report("error", path, epoc_name, f"Analysis failed: {exc}")
                     continue
                 for result in results:
-                    exported_results.append(
-                        BatchExportedResult(output_dir=session_output, result=result)
-                    )
+                    csv_path = None
+                    figure_path = None
                     if export_csv:
-                        export_channel(
-                            output_dir=session_output,
-                            session_name=session.source_path.stem,
-                            epoc_name=epoc_name,
-                            channel_key=result.channel_key,
-                            processed=result.processed,
-                            settings=result.settings,
-                            dropped_trials=[],
-                            stream_store=result.stream_store,
-                            metadata={
-                                "source_path": str(session.source_path),
-                                **session.info,
-                            },
-                            export_smoothed=result.settings.plot_smooth,
+                        try:
+                            csv_path = export_channel(
+                                output_dir=session_output,
+                                session_name=session.source_path.stem,
+                                epoc_name=epoc_name,
+                                channel_key=result.channel_key,
+                                processed=result.processed,
+                                settings=result.settings,
+                                dropped_trials=result.processed.dropped_edge_trials,
+                                stream_store=result.stream_store,
+                                metadata={
+                                    **session.info,
+                                    "source_path": str(session.source_path),
+                                },
+                                export_smoothed=result.settings.plot_smooth,
+                            )
+                        except Exception as exc:
+                            report("error", path, epoc_name, f"{result.channel_key} CSV export failed: {exc}")
+                    if figure_exporter is not None:
+                        try:
+                            figure_path = figure_exporter(session_output, result)
+                        except Exception as exc:
+                            report("error", path, epoc_name, f"{result.channel_key} figure export failed: {exc}")
+                    exported_results.append(
+                        BatchExportedResult(
+                            session_output, session.source_path, epoc_name,
+                            result.channel_key, int(result.processed.zall.shape[0]),
+                            csv_path, figure_path,
                         )
+                    )
                     if export_summary:
                         summary_rows.append(
                             {

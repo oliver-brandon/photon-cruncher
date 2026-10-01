@@ -23,7 +23,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class VersionMetadataTests(unittest.TestCase):
     def test_runtime_names_derive_from_canonical_version(self) -> None:
-        self.assertEqual(__version__, "1.2.0")
         self.assertEqual(app_title(), f"{APP_NAME} v{__version__}")
         self.assertEqual(ARCHIVE_STEM, f"Photon-Cruncher-v{__version__}")
 

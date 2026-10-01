@@ -5,7 +5,7 @@ from __future__ import annotations
 import platform
 
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 APP_NAME = "Photon Cruncher"
 BUNDLE_IDENTIFIER = "com.photoncruncher.app"
 UPDATE_PACKAGE_ID = BUNDLE_IDENTIFIER

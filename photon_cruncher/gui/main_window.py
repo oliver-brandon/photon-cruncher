@@ -10,14 +10,18 @@ from PySide6 import QtCore, QtWidgets
 from photon_cruncher import app_title
 from photon_cruncher.analysis.runner import (
     AnalysisResult,
-    epoc_names_for_selection,
+    BatchOutcome,
     run_batch_custom,
 )
 from photon_cruncher.analysis.trial_classifier import (
     ClassifiedTrialSource,
     classified_trial_sources,
 )
-from photon_cruncher.export.exporter import export_channel
+from photon_cruncher.export.exporter import (
+    check_export_source,
+    export_channel,
+    write_analysis_manifest,
+)
 from photon_cruncher.gui.updater import UpdateController
 from photon_cruncher.io.loader import discover_tdt_block_paths, load_session
 from photon_cruncher.model import Epoc
@@ -577,6 +581,7 @@ class MainWindow(QtWidgets.QMainWindow):
         batch_layout.addWidget(self.batch_run_button)
 
         self.batch_progress = QtWidgets.QLabel("")
+        self.batch_progress.setWordWrap(True)
         batch_layout.addWidget(self.batch_progress)
         layout.addWidget(batch_group)
         layout.addStretch()
@@ -1694,22 +1699,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if output_dir is None:
             return
         output_dir.mkdir(parents=True, exist_ok=True)
-        for result in self.results_by_channel.values():
-            export_channel(
-                output_dir=output_dir,
-                session_name=result.session.source_path.stem,
-                epoc_name=result.epoc.name,
-                channel_key=result.channel_key,
-                processed=result.processed,
-                settings=result.settings,
-                dropped_trials=[],
-                stream_store=result.stream_store,
-                metadata={
-                    "source_path": str(result.session.source_path),
-                    **result.session.info,
-                },
-                export_smoothed=result.settings.plot_smooth,
-            )
+        try:
+            for result in self.results_by_channel.values():
+                self._save_csv(output_dir, result)
+        except Exception as exc:
+            self._show_error(f"CSV export failed: {exc}")
+            return
         self.status_bar.showMessage(f"CSV exported to {output_dir}")
 
     def _export_figures(self) -> None:
@@ -1720,8 +1715,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if output_dir is None:
             return
         output_dir.mkdir(parents=True, exist_ok=True)
-        for result in self.results_by_channel.values():
-            self._save_figures(output_dir, result)
+        try:
+            for result in self.results_by_channel.values():
+                self._save_figures(output_dir, result)
+        except Exception as exc:
+            self._show_error(f"Figure export failed: {exc}")
+            return
         self.status_bar.showMessage(f"Figures exported to {output_dir}")
 
     def _export_selected_trial_csv(self) -> None:
@@ -1734,22 +1733,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if output_dir is None:
             return
         output_dir.mkdir(parents=True, exist_ok=True)
-        export_channel(
-            output_dir=output_dir,
-            session_name=result.session.source_path.stem,
-            epoc_name=result.epoc.name,
-            channel_key=result.channel_key,
-            processed=result.processed,
-            settings=result.settings,
-            dropped_trials=[],
-            stream_store=result.stream_store,
-            metadata={
-                "source_path": str(result.session.source_path),
-                **result.session.info,
-            },
-            export_smoothed=result.settings.plot_smooth,
-            filename_suffix="_selected_trials",
-        )
+        try:
+            self._save_csv(output_dir, result, filename_suffix="_selected_trials")
+        except Exception as exc:
+            self._show_trial_error(f"CSV export failed: {exc}")
+            return
         self.status_bar.showMessage(f"Selected trial CSV exported to {output_dir}")
 
     def _export_selected_trial_figures(self) -> None:
@@ -1762,8 +1750,29 @@ class MainWindow(QtWidgets.QMainWindow):
         if output_dir is None:
             return
         output_dir.mkdir(parents=True, exist_ok=True)
-        self._save_figures(output_dir, result, filename_suffix="_selected_trials")
+        try:
+            self._save_figures(output_dir, result, filename_suffix="_selected_trials")
+        except Exception as exc:
+            self._show_trial_error(f"Figure export failed: {exc}")
+            return
         self.status_bar.showMessage(f"Selected trial figure exported to {output_dir}")
+
+    def _save_csv(
+        self, output_dir: Path, result: AnalysisResult, filename_suffix: str = ""
+    ) -> Path:
+        return export_channel(
+            output_dir=output_dir,
+            session_name=result.session.source_path.stem,
+            epoc_name=result.epoc.name,
+            channel_key=result.channel_key,
+            processed=result.processed,
+            settings=result.settings,
+            dropped_trials=result.processed.dropped_edge_trials,
+            stream_store=result.stream_store,
+            metadata={**result.session.info, "source_path": str(result.session.source_path)},
+            export_smoothed=result.settings.plot_smooth,
+            filename_suffix=filename_suffix,
+        )
 
     def _save_figures(
         self,
@@ -1771,18 +1780,25 @@ class MainWindow(QtWidgets.QMainWindow):
         result: AnalysisResult,
         filename_suffix: str = "",
         figure_format: str = "png",
-    ) -> None:
-        fig = Figure(figsize=(10, 4.5))
-        self._populate_result_figure(fig, result)
+    ) -> Path:
         prefix = (
             f"{result.session.source_path.stem}_{result.epoc.name}_"
             f"{result.channel_key}{filename_suffix}"
         )
-        fig.savefig(
-            output_dir / f"{prefix}_summary.{figure_format}",
-            dpi=300,
-            format=figure_format,
+        check_export_source(output_dir, prefix, result.session.source_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{prefix}_summary.{figure_format}"
+        fig = Figure(figsize=(10, 4.5))
+        try:
+            self._populate_result_figure(fig, result)
+            fig.savefig(path, dpi=300, format=figure_format)
+        finally:
+            fig.clear()
+        write_analysis_manifest(
+            output_dir, prefix, result.session.source_path, result.epoc.name,
+            result.channel_key, result.processed, result.settings,
         )
+        return path
 
     def _add_batch_files(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -1873,20 +1889,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.trial_channel_list.clear()
         self._clear_results()
 
-    def _batch_export_done_message(
-        self,
-        input_paths: list[Path],
-        export_csv: bool,
-        export_figures: bool,
-    ) -> str:
-        if export_csv and export_figures:
-            export_label = "CSV and figure export"
-        elif export_figures:
-            export_label = "Figure export"
-        else:
-            export_label = "CSV export"
-        return f"{export_label} complete ({len(input_paths)} files)."
-
     def _run_batch(self) -> None:
         if self.batch_file_list.count() == 0:
             self._show_error("Add batch files before running.")
@@ -1911,6 +1913,7 @@ class MainWindow(QtWidgets.QMainWindow):
             output_dir = Path(self.output_dir_input.text()).expanduser()
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            outcomes: list[BatchOutcome] = []
             exported_results = run_batch_custom(
                 input_paths=input_paths,
                 epoc_selections=epoc_selections,
@@ -1920,45 +1923,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 export_summary=False,
                 per_session_subdir=True,
                 export_csv=export_csv,
-            )
-            if export_figures:
-                for exported in exported_results:
-                    exported.output_dir.mkdir(parents=True, exist_ok=True)
-                    self._save_figures(
-                        exported.output_dir,
-                        exported.result,
-                        figure_format=figure_format,
+                figure_exporter=(
+                    lambda directory, result: self._save_figures(
+                        directory, result, figure_format=figure_format
                     )
-            skipped: dict[str, list[str]] = {}
-            for path in input_paths:
-                session = load_session(path)
-                combined: list[str] = []
-                for selection in epoc_selections:
-                    label = selection[0]
-                    selected_members = epoc_names_for_selection(session, selection)
-                    if not selected_members:
-                        combined.append(label)
-                        continue
-                    if all(
-                        session.epocs[epoc].onset.size == 0
-                        for epoc in selected_members
-                    ):
-                        combined.append(label)
-                if combined:
-                    skipped[str(path)] = combined
-
-            if skipped:
-                skipped_details = "; ".join(
-                    f"{Path(path).name}: {', '.join(epocs)}"
-                    for path, epocs in skipped.items()
-                )
-                return (
-                    f"{self._batch_export_done_message(input_paths, export_csv, export_figures)} "
-                    f"Skipped epocs: {skipped_details}"
-                )
-            return self._batch_export_done_message(
-                input_paths, export_csv, export_figures
+                ) if export_figures else None,
+                outcomes=outcomes,
             )
+            exported_count = sum(
+                bool(item.csv_path or item.figure_path) for item in exported_results
+            )
+            errors = sum(item.status == "error" for item in outcomes)
+            skipped = sum(item.status == "skipped" for item in outcomes)
+            message = (
+                f"Exported {exported_count} analysis result(s) to {output_dir}. "
+                f"Errors: {errors}. Skipped: {skipped}."
+            )
+            if outcomes:
+                message += "\n" + "\n".join(
+                    f"{item.input_path.name} / {item.epoc}: {item.reason}"
+                    for item in outcomes
+                )
+            return message
 
         channel_keys = self._selected_channels()
         if not channel_keys:
