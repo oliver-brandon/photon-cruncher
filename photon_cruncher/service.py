@@ -20,6 +20,7 @@ from photon_cruncher.analysis.trial_classifier import (
 from photon_cruncher import __version__
 from photon_cruncher.export.exporter import (
     analysis_manifest_path,
+    check_export_source,
     export_channel,
     save_result_figure,
     write_analysis_manifest,
@@ -301,8 +302,8 @@ def export_result(
             dropped_trials=result.processed.dropped_edge_trials,
             stream_store=result.stream_store,
             metadata={
-                "source_path": str(result.session.source_path),
                 **result.session.info,
+                "source_path": str(result.session.source_path),
             },
             export_smoothed=result.settings.plot_smooth,
             filename_suffix=filename_suffix,
@@ -342,6 +343,7 @@ def write_result_manifest(
         result.channel_key,
         filename_suffix,
     )
+    check_export_source(manifest, result.session.source_path)
     manifest_outputs = {
         key: value for key, value in paths.items() if value
     }

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from photon_cruncher.export.exporter import (
+    batch_output_directories,
     export_batch_summary,
     export_channel,
     save_result_figure,
@@ -15,6 +16,7 @@ from photon_cruncher.processing.pipeline import ProcessingSettings
 from photon_cruncher.service import (
     AnalysisResult,
     analyze as service_analyze,
+    quality_summary,
     write_result_manifest,
 )
 
@@ -79,8 +81,14 @@ def epoc_names_for_selection(
 
 @dataclass
 class BatchExportedResult:
+    """Export metadata only; completed batches must not retain signal arrays."""
+
     output_dir: Path
-    result: AnalysisResult
+    input_path: Path
+    session: str
+    epoc: str
+    channel: str
+    quality: dict[str, Any]
     csv_path: Path | None = None
     figure_path: Path | None = None
     manifest_path: Path | None = None
@@ -161,12 +169,16 @@ def run_batch(
     output_dir: Path,
 ) -> None:
     summary_rows: list[dict[str, Any]] = []
+    destinations = batch_output_directories(
+        input_paths, output_dir, per_session_subdir=False
+    )
     for path in input_paths:
         session = load_session(path)
+        destination = destinations[Path(path).expanduser().resolve()]
         results = run_session(session, epoc_name)
         for result in results:
             csv_path = export_channel(
-                output_dir=output_dir,
+                output_dir=destination,
                 session_name=session.source_path.stem,
                 epoc_name=epoc_name,
                 channel_key=result.channel_key,
@@ -175,12 +187,12 @@ def run_batch(
                 dropped_trials=result.processed.dropped_edge_trials,
                 stream_store=result.stream_store,
                 metadata={
-                    "source_path": str(session.source_path),
                     **session.info,
+                    "source_path": str(session.source_path),
                 },
                 export_smoothed=result.settings.plot_smooth,
             )
-            write_result_manifest(result, output_dir, {"csv": str(csv_path)})
+            write_result_manifest(result, destination, {"csv": str(csv_path)})
             summary_rows.append(
                 {
                     "session": session.source_path.stem,
@@ -211,6 +223,9 @@ def run_batch_custom(
 ) -> list[BatchExportedResult]:
     summary_rows: list[dict[str, Any]] = []
     exported_results: list[BatchExportedResult] = []
+    destinations = batch_output_directories(
+        input_paths, output_dir, per_session_subdir=per_session_subdir
+    )
     total_steps = max(1, len(input_paths) * len(epoc_selections))
     completed_steps = 0
     load = session_loader or load_session
@@ -245,9 +260,7 @@ def run_batch_custom(
             report(f"Could not load {session_name}")
             continue
         session_name = session.source_path.stem
-        session_output = (
-            output_dir / session.source_path.stem if per_session_subdir else output_dir
-        )
+        session_output = destinations[source_path.expanduser().resolve()]
         for selection in epoc_selections:
             if cancelled():
                 break
@@ -347,8 +360,8 @@ def run_batch_custom(
                                 dropped_trials=result.processed.dropped_edge_trials,
                                 stream_store=result.stream_store,
                                 metadata={
-                                    "source_path": str(session.source_path),
                                     **session.info,
+                                    "source_path": str(session.source_path),
                                 },
                                 export_smoothed=result.settings.plot_smooth,
                             )
@@ -402,7 +415,11 @@ def run_batch_custom(
                     exported_results.append(
                         BatchExportedResult(
                             output_dir=session_output,
-                            result=result,
+                            input_path=session.source_path,
+                            session=session_name,
+                            epoc=result.epoc.name,
+                            channel=result.channel_key,
+                            quality=quality_summary(result),
                             csv_path=csv_path,
                             figure_path=figure_path,
                             manifest_path=manifest_path,

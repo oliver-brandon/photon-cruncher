@@ -19,6 +19,7 @@ from photon_cruncher.io.loader import (
     is_tdt_block_path,
     load_session,
 )
+from photon_cruncher.export.exporter import batch_output_directories
 from photon_cruncher.model import Epoc, PhotometrySession
 from photon_cruncher.processing.pipeline import (
     ProcessingSettings,
@@ -70,6 +71,9 @@ def main(argv: list[str] | None = None) -> int:
     except CliError as exc:
         _write_json({"ok": False, "error": str(exc), "app_version": __version__}, sys.stderr)
         return exc.exit_code
+    except Exception as exc:  # CLI boundary: keep runtime errors machine-readable.
+        _write_json({"ok": False, "error": str(exc), "app_version": __version__}, sys.stderr)
+        return EXIT_RUNTIME_ERROR
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -291,6 +295,10 @@ def analyze_command(args: argparse.Namespace) -> int:
     export_figures = bool(config["exports"]["figures"])
     if export_csv or export_figures:
         output_dir.mkdir(parents=True, exist_ok=True)
+    destinations = batch_output_directories(
+        input_paths, output_dir,
+        per_session_subdir=config["exports"]["per_session_subdir"],
+    )
 
     summary: dict[str, Any] = {
         "ok": True,
@@ -298,6 +306,7 @@ def analyze_command(args: argparse.Namespace) -> int:
         "output_dir": str(output_dir),
         "results": [],
         "skipped": [],
+        "errors": [],
         "warnings": [],
     }
 
@@ -305,16 +314,12 @@ def analyze_command(args: argparse.Namespace) -> int:
         try:
             session = load_session(input_path)
         except Exception as exc:
-            summary["skipped"].append(
-                {"input": str(input_path), "reason": f"load failed: {exc}"}
+            summary["errors"].append(
+                {"input": str(input_path), "stage": "load", "reason": str(exc)}
             )
             continue
 
-        session_output_dir = (
-            output_dir / session.source_path.stem
-            if config["exports"]["per_session_subdir"]
-            else output_dir
-        )
+        session_output_dir = destinations[input_path.expanduser().resolve()]
         for epoc_name in epoc_names_for_config(session, config):
             try:
                 epoc, source = resolve_epoc_or_source(session, epoc_name)
@@ -345,13 +350,22 @@ def analyze_command(args: argparse.Namespace) -> int:
                             "message": warning,
                         }
                     )
-            result_items = analyze_session_epoc(session, epoc, source, config)
+            try:
+                result_items = analyze_session_epoc(session, epoc, source, config)
+            except Exception as exc:
+                summary["errors"].append(
+                    {
+                        "input": str(input_path), "epoc": epoc.name,
+                        "stage": "analysis", "reason": str(exc),
+                    }
+                )
+                continue
             if not result_items:
                 summary["skipped"].append(
                     {
                         "input": str(input_path),
                         "epoc": epoc.name,
-                        "reason": "no requested channels could be analyzed",
+                        "reason": "no requested channels or trials matched",
                     }
                 )
                 continue
@@ -366,16 +380,21 @@ def analyze_command(args: argparse.Namespace) -> int:
                     )
                     summary["results"].append(result_summary)
                 except Exception as exc:
-                    summary["skipped"].append(
+                    summary["errors"].append(
                         {
                             "input": str(input_path),
                             "epoc": epoc.name,
                             "channel": result.channel_key,
-                            "reason": f"export failed: {exc}",
+                            "stage": "export",
+                            "reason": str(exc),
                         }
                     )
 
-    exit_code = EXIT_SUCCESS if summary["results"] else EXIT_NO_ANALYSES
+    exit_code = (
+        EXIT_SUCCESS if summary["results"]
+        else EXIT_RUNTIME_ERROR if summary["errors"]
+        else EXIT_NO_ANALYSES
+    )
     summary["ok"] = exit_code == EXIT_SUCCESS
     emit_summary(summary, config.get("summary_json"))
     return exit_code
@@ -729,16 +748,13 @@ def analyze_session_epoc(
     def settings_factory(channel_key: str) -> ProcessingSettings:
         return build_settings(config, channel_key)
 
-    try:
-        results = service.analyze(
-            session,
-            epoc,
-            channel_keys=channel_keys,
-            settings_factory=settings_factory,
-            source=source,
-        )
-    except ValueError:
-        return []
+    results = service.analyze(
+        session,
+        epoc,
+        channel_keys=channel_keys,
+        settings_factory=settings_factory,
+        source=source,
+    )
 
     filtered: list[AnalysisResult] = []
     for result in results:

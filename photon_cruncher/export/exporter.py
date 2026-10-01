@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -12,6 +14,38 @@ from photon_cruncher.processing.pipeline import ProcessedSignal, ProcessingSetti
 
 if TYPE_CHECKING:
     from matplotlib.figure import Figure
+
+
+def batch_output_directories(
+    input_paths: list[Path], output_dir: Path, *, per_session_subdir: bool
+) -> dict[Path, Path]:
+    """Keep same-named sources separate, including on case-insensitive disks."""
+    paths = list(dict.fromkeys(path.expanduser().resolve() for path in input_paths))
+    counts = Counter(path.stem.casefold() for path in paths)
+    directories: dict[Path, Path] = {}
+    for path in paths:
+        if counts[path.stem.casefold()] > 1:
+            identity = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
+            directories[path] = output_dir / f"{path.stem}--{identity}"
+        else:
+            directories[path] = output_dir / path.stem if per_session_subdir else output_dir
+    return directories
+
+
+def check_export_source(manifest_path: Path, source_path: str | Path) -> None:
+    """Refuse to replace a different recording's existing export set."""
+    if not manifest_path.exists():
+        return
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    previous = document.get("source", {}).get("path")
+    if (
+        not previous
+        or Path(previous).expanduser().resolve() != Path(source_path).expanduser().resolve()
+    ):
+        raise ValueError(
+            f"Export destination already belongs to another source: {manifest_path}. "
+            "Choose a different output folder."
+        )
 
 
 def export_channel(
@@ -27,9 +61,16 @@ def export_channel(
     export_smoothed: bool = True,
     filename_suffix: str = "",
 ) -> Path:
-    _ = (dropped_trials, stream_store, metadata, settings)
+    _ = (dropped_trials, stream_store, settings)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{session_name}_{epoc_name}_{channel_key}{filename_suffix}"
+    if metadata.get("source_path"):
+        check_export_source(
+            analysis_manifest_path(
+                output_dir, session_name, epoc_name, channel_key, filename_suffix
+            ),
+            metadata["source_path"],
+        )
 
     z_data = processed.zall_smooth if export_smoothed else processed.zall
     heatmap_path = output_dir / f"{prefix}_heatmap.csv"
@@ -82,11 +123,13 @@ def heatmap_trial_ticks(
     num_rows: int,
     max_ticks: int = 12,
 ) -> tuple[list[int], list[str]]:
-    """Return stable ordinal heatmap ticks at rows 1, 3, 5, and so on."""
-    _ = (processed, max_ticks)
+    """Label a bounded number of whole, odd-numbered ordinal trial rows."""
+    _ = processed
     if num_rows <= 0:
         return [], []
-    tick_positions = list(range(1, num_rows + 1, 2))
+    odd_rows = (num_rows + 1) // 2
+    indices = np.linspace(0, odd_rows - 1, min(odd_rows, max(1, max_ticks)))
+    tick_positions = [1 + 2 * int(round(index)) for index in indices]
     tick_labels = [str(position) for position in tick_positions]
     return tick_positions, tick_labels
 
@@ -182,6 +225,13 @@ def save_result_figure(
 ) -> Path:
     from matplotlib.figure import Figure
 
+    check_export_source(
+        analysis_manifest_path(
+            output_dir, result.session.source_path.stem, result.epoc.name,
+            result.channel_key, filename_suffix,
+        ),
+        result.session.source_path,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     figure = Figure(figsize=(10, 4.5))
     try:

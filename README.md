@@ -205,6 +205,21 @@ photon-cruncher-cli analyze --config analysis-config.json
 
 Packaged downloads include the CLI beside the desktop app. CLI output is JSON.
 
+Analysis summaries distinguish `skipped` selections (such as no matching trials)
+from `errors` with a load, analysis, or export stage. Exit codes are `0` when at
+least one analysis succeeds, `1` for no matching analyses, `2` for invalid
+arguments/configuration, and `3` when runtime failures leave no successful
+analyses. Inspect `errors` even after exit code `0` to catch partial failures.
+
+Batch exports from both the GUI and CLI give same-named recordings separate
+folders with a short source identifier, including when flat output is requested.
+An existing analysis manifest belonging to another source blocks replacement;
+choose a fresh destination in that case. Rerunning the same source in its own
+destination still replaces its previous export.
+
+Baseline windows must contain at least two samples after downsampling and inside
+the extracted TRANGE. Invalid windows are reported before files are exported.
+
 ## Aurora Desktop GUI
 
 Codename **Aurora**. Live analysis only via `photon_cruncher.service` (no

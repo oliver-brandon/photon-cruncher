@@ -221,31 +221,55 @@ def _filtered_result(
     )
 
 
+def _selected_results(
+    results: list[service.AnalysisResult],
+    body: dict[str, Any],
+    *,
+    channel: str | None = None,
+) -> list[service.AnalysisResult]:
+    trial_numbers = body.get("trial_numbers")
+    trial_types = body.get("trial_types")
+    common_trials = bool(body.get("common_trials", False))
+    if common_trials:
+        common = set(results[0].processed.trial_numbers) if results else set()
+        for result in results[1:]:
+            common.intersection_update(result.processed.trial_numbers)
+        if trial_numbers is not None:
+            common.intersection_update(trial_numbers)
+        trial_numbers = sorted(common)
+    if channel is not None:
+        results = [result for result in results if result.channel_key == channel]
+    if trial_numbers == [] and (common_trials or not trial_types):
+        return []
+    if trial_numbers is None and trial_types is None:
+        return results
+    return [
+        result if trial_numbers == result.processed.trial_numbers and not trial_types
+        else _filtered_result(result, trial_numbers=trial_numbers, trial_types=trial_types)
+        for result in results
+    ]
+
+
 def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
     cached, results, epoc = _cached_analysis(body)
     compact = bool(body.get("compact", False))
 
     trial_numbers = body.get("trial_numbers")
     trial_types = body.get("trial_types")
-    filter_requested = trial_numbers is not None or trial_types is not None
+    filter_requested = (
+        trial_numbers is not None
+        or trial_types is not None
+        or body.get("common_trials", False)
+    )
     all_payloads = (
         [_plot_payload(result, compact=compact) for result in results]
         if filter_requested
         else None
     )
-    payloads = []
-    for result in results:
-        if filter_requested:
-            if trial_numbers == [] and not trial_types:
-                continue
-            filtered = _filtered_result(
-                result,
-                trial_numbers=trial_numbers,
-                trial_types=trial_types,
-            )
-            payloads.append(_plot_payload(filtered, compact=compact))
-        else:
-            payloads.append(_plot_payload(result, compact=compact))
+    payloads = [
+        _plot_payload(result, compact=compact)
+        for result in _selected_results(results, body)
+    ]
 
     _record_diagnostic(
         "info",
@@ -272,23 +296,13 @@ def _plot_matrix_request(body: dict[str, Any]) -> tuple[bytes, dict[str, str]]:
     channel = str(body.get("channel") or "")
     if not channel:
         raise ValueError("channel is required")
+    results = _selected_results(results, body, channel=channel)
     result = next(
         (item for item in results if item.channel_key == channel),
         None,
     )
     if result is None:
         raise ValueError(f"channel '{channel}' was not analyzed")
-
-    trial_numbers = body.get("trial_numbers")
-    trial_types = body.get("trial_types")
-    if trial_numbers is not None or trial_types is not None:
-        if trial_numbers == [] and not trial_types:
-            raise ValueError("Select at least one trial to draw the plot.")
-        result = _filtered_result(
-            result,
-            trial_numbers=trial_numbers,
-            trial_types=trial_types,
-        )
 
     processed = result.processed
     matrix = processed.zall_smooth if result.settings.plot_smooth else processed.zall
@@ -503,13 +517,13 @@ def _batch_export_request(
         if csv_path or figure_path:
             written.append(
                 {
-                    "session": item.result.session.source_path.stem,
-                    "epoc": item.result.epoc.name,
-                    "channel": item.result.channel_key,
+                    "session": item.session,
+                    "epoc": item.epoc,
+                    "channel": item.channel,
                     "csv": csv_path,
                     "figure": figure_path,
                     "manifest": manifest_path,
-                    "quality": service.quality_summary(item.result),
+                    "quality": item.quality,
                 }
             )
 

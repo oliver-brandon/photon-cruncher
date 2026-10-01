@@ -2195,6 +2195,7 @@
       channel_settings: trialChannelSettingsPayload(),
       force: !!opts.force,
       compact: true,
+      common_trials: true,
       trial_numbers:
         state.selectedTrialNumbers === null
           ? undefined
@@ -2267,6 +2268,7 @@
       settings: trialSettingsPayload(),
       channel_settings: trialChannelSettingsPayload(),
       compact: true,
+      common_trials: true,
       trial_numbers:
         state.selectedTrialNumbers === null
           ? undefined

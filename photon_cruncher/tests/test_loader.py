@@ -484,7 +484,7 @@ class LoaderTests(unittest.TestCase):
 
         self.assertEqual(export_calls, [])
         self.assertEqual(len(exported), 1)
-        self.assertEqual(exported[0].result.channel_key, "A_465")
+        self.assertEqual(exported[0].channel, "A_465")
 
     def test_batch_custom_reports_partial_failures_without_reloading_sources(self) -> None:
         from photon_cruncher.analysis import runner
@@ -624,7 +624,7 @@ class LoaderTests(unittest.TestCase):
             )
 
         self.assertEqual(len(exported), 1)
-        self.assertEqual(exported[0].result.epoc.name, "Cue")
+        self.assertEqual(exported[0].epoc, "Cue")
 
     def test_batch_custom_retains_result_when_csv_export_fails(self) -> None:
         from photon_cruncher.analysis import runner
@@ -653,7 +653,7 @@ class LoaderTests(unittest.TestCase):
             )
 
         self.assertEqual(len(exported), 1)
-        self.assertEqual(exported[0].result.channel_key, "A_465")
+        self.assertEqual(exported[0].channel, "A_465")
         self.assertIsNone(exported[0].csv_path)
         self.assertEqual(outcomes[0].status, "error")
         self.assertEqual(outcomes[0].channels, ("A_465",))
@@ -803,6 +803,9 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(payload["sessions"][0]["streams"]["x405A"]["samples"], 400)
 
     def test_cli_analyze_exports_csv_and_figure_summary(self) -> None:
+        # First-run font discovery can log to stderr independently of CLI errors.
+        from matplotlib import font_manager  # noqa: F401
+
         from photon_cruncher import cli
 
         session = self._synthetic_cli_session()
@@ -1306,7 +1309,7 @@ class LoaderTests(unittest.TestCase):
             num_artifacts=0,
             trial_numbers=list(range(101, 141)),
         )
-        positions, labels = heatmap_trial_ticks(processed, 40)
+        positions, labels = heatmap_trial_ticks(processed, 40, max_ticks=20)
         self.assertEqual(positions, list(range(1, 41, 2)))
         self.assertEqual(labels, [str(position) for position in positions])
 

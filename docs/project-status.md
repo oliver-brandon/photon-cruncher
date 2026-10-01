@@ -1,6 +1,6 @@
 # Photon Cruncher Project Status
 
-Last verified: 2026-08-17
+Last reviewed: 2026-10-01 (local dev maintenance; release checks below are historical)
 
 This is the handoff document for continuing Photon Cruncher development. Read it
 with `docs/architecture-aurora.md` and the root `AGENTS.md` before release,
@@ -10,15 +10,38 @@ packaging, or analysis-pipeline work.
 
 - Repository: `oliver-brandon/photon-cruncher` (public; default branch `main`).
 - Public stable line: `main` at `4bd14a7`, tagged and released as `v1.1.4`.
-- Development line: local `dev` is synchronized with `origin/dev`; the
-  `aurora-dev-v2.0.3` release tag targets implementation commit `69cd528`.
-- Development product: Photon Cruncher Aurora, package version `2.0.4`, with
-  in-app label `Aurora v2.0.4`.
-- Signed Aurora dev prereleases through `aurora-dev-v2.0.3` are published for
+- Development baseline: `dev` at `07ed1c7`, tagged `aurora-dev-v2.0.5`.
+  The October maintenance changes are not a new release.
+- Development product: Photon Cruncher Aurora, package version `2.0.6`, with
+  in-app label `Aurora v2.0.6`. Installer publication is a separate release step.
+- Signed Aurora dev prereleases through `aurora-dev-v2.0.5` were published for
   updater testing. They remain isolated from the stable product; the newest
   public lab release is still v1.1.4.
-- GitHub currently has no open issues, so the remaining work listed below is
-  not otherwise tracked.
+- GitHub issue/release state was not refreshed during the October local review.
+
+## v2.0.6 Maintenance (Installers Not Yet Published)
+
+- Batch and CLI exports disambiguate duplicate recording names using source
+  identifiers. Existing manifests protect another source's export from replacement.
+- Trial Explorer requests the intersection of kept original trial numbers
+  before generating summaries and heatmaps; exported selections match the preview.
+- Moving means retain trace length even when smoothing exceeds the trace length.
+- Processing rejects baseline windows with fewer than two downsampled samples.
+- Batch return records contain only paths and QC summaries so completed results
+  do not defeat the session cache's memory limits.
+- Figure heatmaps cap labels at 12 whole, odd-numbered trial rows.
+- CLI summaries distinguish runtime errors from unmatched selections and preserve
+  per-source error reasons, including partial failures.
+- `.github/workflows/tests.yml` runs the regression suite, syntax checks, version
+  checks, and patch whitespace checks on macOS and Windows for pushes/PRs to
+  `main` and `dev`. Its first hosted run follows publication of these changes.
+- Synthetic regression tests cover these cases without private recordings.
+- Local validation: all 130 tests passed, including the frozen numeric fixture
+  and a fresh Matplotlib cache. Live frontend checks reproduced the old
+  unequal-edge case and verified matching two-trial plots, single-trial channel
+  switching, and empty-selection export gating after the fix.
+- The benchmark now rejects an unavailable explicitly requested epoc. Current
+  commands and measurements use behavioral epocs; `Tick` remains ignored.
 
 ## Implemented Product
 
@@ -220,10 +243,9 @@ pipeline in clean checkouts.
 1. **Aurora is not a stable release.** Signed dev prereleases are available for
    testing, but public lab users still receive v1.1.4 from `main`. Do not
    present Aurora v2 as stable until the separate stable release gate passes.
-2. **No continuous test workflow.** GitHub Actions currently builds only on
-   manual dispatch or tags. Pull requests and ordinary pushes do not
-   automatically run the scientific regression suite, Python compilation, or
-   JavaScript syntax checks.
+2. **New CI workflow awaits its first hosted run.** The October changes add
+   automated tests on ordinary pushes and PRs. Verify both platform jobs after
+   pushing; local test success alone does not establish Windows behavior.
 3. **Windows still needs a hands-on smoke test.** The Aurora Windows installer,
    packages, and feed now build and publish successfully, but launch, analysis,
    export, and in-place update behavior have not been recorded on real Windows
@@ -243,9 +265,8 @@ pipeline in clean checkouts.
 
 ## Recommended Next Work
 
-1. Add a lightweight CI workflow for pushes and pull requests to `main` and
-   `dev`: run the tracked tests, Python compilation, `node --check`, and
-   `git diff --check`.
+1. Publish the October maintenance changes when requested and verify the new
+   macOS/Windows regression workflow before the next dev release.
 2. Test the published v2.0.0 to v2.0.1 update through the in-app indicator and
    **Help -> Check for Updates** on real macOS and Windows installations. Verify
    release notes, restart, retained settings, and the existing Dock/shortcut.
@@ -255,6 +276,9 @@ pipeline in clean checkouts.
    classifier behavior without committing lab recordings.
 5. Create GitHub issues or a v2 milestone for the unresolved items above so the
    public tracker reflects actual project work.
+6. Consider saved analysis projects next: portable source references, processing
+   settings, selected trials, exclusion notes, and export destinations, with
+   changed/missing-source detection before restoring trial selections.
 
 ## Release Gate For Aurora v2
 

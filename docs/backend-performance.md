@@ -1,6 +1,6 @@
 # Aurora Backend Performance
 
-Last measured: 2026-08-11
+Last measured: 2026-10-01 (local maintenance changes on dev)
 
 This document replaces the pre-Aurora optimization plan. It records the current
 backend layout, reproducible benchmark method, and measured performance without
@@ -39,11 +39,19 @@ not mistaken for steady-state rendering cost.
 MPLCONFIGDIR=/tmp/photon-cruncher-mpl-bench \
   .build-venv/bin/python scripts/bench_backend.py \
   local-test-data/mat/1996_FR1-4_NA.mat \
-  local-test-data/mat/1996_FR3-3_NA.mat \
   local-test-data/mat/2143_Rev1_JZL18.mat \
   local-test-data/mat/2149_Rev1_JZL18.mat \
-  --epoc Tick --figure --repeat 3
+  --epoc CL2_ --figure --transport --repeat 3
+
+MPLCONFIGDIR=/tmp/photon-cruncher-mpl-bench \
+  .build-venv/bin/python scripts/bench_backend.py \
+  local-test-data/mat/1996_FR3-3_NA.mat \
+  --epoc CL1_ --figure --repeat 3
 ```
+
+An explicitly requested epoc must exist. The harness now rejects missing epocs
+instead of silently choosing a different one. `Cam1`, `Cam2`, and `Tick` are
+ignored by the loader and cannot be used for current benchmarks.
 
 Add `--transport` to compare the legacy all-channel JSON payload with Aurora's
 compact summary plus one displayed float32 heatmap matrix. Transport measurement
@@ -52,38 +60,38 @@ the machine has enough free memory.
 
 Environment for the measurements below:
 
-- Photon Cruncher `2.0.0`
+- Photon Cruncher `2.0.5` with the October maintenance changes
 - Python `3.11.15`
-- Darwin `27.0.0`, arm64
-- Explicit `Tick` epoc
+- Darwin `27.2.0`, arm64
+- Explicit behavioral epocs (`CL2_`, or `CL1_` for `1996_FR3-3_NA`)
 - Median of three warm-filesystem runs per stage
 
 ## Current Measurements
 
-| Fixture | Kept trials x samples | Load | Process 3 channels | CSV | Figure |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `1996_FR1-4_NA.mat` | 3534 x 712 | 0.261 s | 0.488 s | 0.299 s | 0.262 s |
-| `1996_FR3-3_NA.mat` | 2288 x 712 | 0.170 s | 0.305 s | 0.194 s | 0.231 s |
-| `2143_Rev1_JZL18.mat` | 614 x 712 | 0.048 s | 0.089 s | 0.051 s | 0.161 s |
-| `2149_Rev1_JZL18.mat` | 470 x 712 | 0.036 s | 0.065 s | 0.041 s | 0.160 s |
+| Fixture | Epoc | Kept trials x samples | Load | Process 3 channels | CSV | Figure |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `1996_FR1-4_NA.mat` | `CL2_` | 67 x 712 | 0.265 s | 0.010 s | 0.006 s | 0.134 s |
+| `1996_FR3-3_NA.mat` | `CL1_` | 23 x 712 | 0.169 s | 0.003 s | 0.002 s | 0.147 s |
+| `2143_Rev1_JZL18.mat` | `CL2_` | 28 x 712 | 0.045 s | 0.004 s | 0.003 s | 0.130 s |
+| `2149_Rev1_JZL18.mat` | `CL2_` | 7 x 712 | 0.037 s | 0.001 s | 0.001 s | 0.124 s |
 
 These values are local reference measurements, not cross-platform guarantees.
 Rerun the command after pipeline, exporter, NumPy, SciPy, pandas, Matplotlib, or
 hardware changes rather than carrying the numbers forward unchanged.
 
-## Plot Transport Stress Check
+## Plot Transport
 
-One warm-filesystem run of the densest fixture used the `Tick` epoc, three
-channels, and a `3534 x 712` displayed matrix:
+The `1996_FR1-4_NA.mat` / `CL2_` benchmark used three channels and a
+`67 x 712` displayed matrix:
 
 | Transport stage | Time | Payload |
 | --- | ---: | ---: |
-| Legacy JSON with all three heatmaps | 2.618 s | 141.444 MiB |
-| Compact JSON summaries for all channels | 0.015 s | 0.174 MiB |
-| Displayed-channel float32 matrix | 0.001 s | 9.599 MiB |
+| Legacy JSON with all three heatmaps | 0.055 s | 2.799 MiB |
+| Compact JSON summaries for all channels | 0.003 s | 0.124 MiB |
+| Displayed-channel float32 matrix | <0.001 s | 0.182 MiB |
 
-The current UI transfers about 9.8 MiB for that view instead of 141.4 MiB,
-roughly a 93% reduction, and does not decode matrices for hidden channels.
+The current UI transfers about 0.306 MiB for that view instead of 2.799 MiB,
+roughly an 89% reduction, and does not decode matrices for hidden channels.
 Changing the display channel fetches that channel lazily. Align and Trial
 Explorer abort stale summary/matrix requests so older responses cannot replace
 newer settings. The float32 matrix remains one flat browser buffer with row
@@ -97,20 +105,28 @@ releases the previous display buffer.
 - An individual result larger than the cache budget is returned but not cached.
 - Batch Export has one background worker, loads each source once per run, and
   checks cancellation between analysis steps.
+- Completed batch records retain paths and QC metadata, not raw sessions or
+  processed matrices. Evicted sessions can therefore be released during a batch.
+- Saved heatmaps use at most 12 whole-row tick labels. This avoids creating
+  hundreds of text artists for large trial counts.
 - Environment overrides: `AURORA_MAX_CACHED_SESSIONS` and
   `AURORA_ANALYSIS_CACHE_MB`.
 
 ## Interpretation
 
 - Normal cue/reward epocs should remain comfortably interactive on this machine.
-- Very dense `Tick` exports are still the useful stress case because they create
-  thousands of trial rows.
+- Use synthetic dense behavioral epocs for stress tests; ignored camera/clock
+  epocs are not available for analysis.
 - CSV and figure export are no longer obvious multi-second bottlenecks once the
   renderer is warm.
 - Batch processing handles source files sequentially in a background worker, so
   a large batch remains responsive but still scales roughly with recording count.
 - Parallel batch work should only be added after profiling an actual lab batch;
   process startup, memory duplication, and disk contention can erase the gain.
+
+A one-off 670-trial figure comparison during the review took 0.509 s with
+335 labels versus 0.170 s with 12 labels. This isolates the label-count cost;
+it is not a multi-run speedup guarantee.
 
 ## Performance Guardrails
 

@@ -305,7 +305,10 @@ class AuroraAppTests(unittest.TestCase):
         )
         exported = SimpleNamespace(
             output_dir=Path("/exports/a"),
-            result=result,
+            session="a",
+            epoc="CueA",
+            channel="A_465",
+            quality={"warnings": []},
             csv_path=Path("/exports/a/a_CueA_A_465_heatmap.csv"),
         )
         failed_export = SimpleNamespace(
@@ -385,7 +388,7 @@ class AuroraAppTests(unittest.TestCase):
         self.assertEqual(payload["exports"][0]["quality"], {"warnings": []})
         self.assertEqual(
             payload["exports"][0]["csv"],
-            "/exports/a/a_CueA_A_465_heatmap.csv",
+            str(exported.csv_path),
         )
         self.assertEqual(payload["errors"][0]["session"], "b")
         self.assertEqual(payload["errors"][0]["channels"], ["A_465"])
@@ -393,8 +396,8 @@ class AuroraAppTests(unittest.TestCase):
         opened.assert_not_called()
 
     def test_filtered_analysis_keeps_full_plot_payloads(self) -> None:
-        full_processed = object()
-        filtered_processed = object()
+        full_processed = SimpleNamespace(trial_numbers=[1, 2, 3])
+        filtered_processed = SimpleNamespace(trial_numbers=[2])
         result = SimpleNamespace(
             session=object(),
             epoc=object(),

@@ -22,7 +22,12 @@ from photon_cruncher.service import AnalysisResult, result_plot_payload
 
 
 def _pick_epoc(session, preferred: str | None):
-    if preferred and preferred in session.epocs:
+    if preferred:
+        if preferred not in session.epocs:
+            raise ValueError(
+                f"Requested epoc {preferred!r} is unavailable; available: "
+                + ", ".join(sorted(session.epocs))
+            )
         return preferred, session.epocs[preferred]
     for name, epoc in session.epocs.items():
         if epoc.onset.size >= 5:

@@ -52,11 +52,16 @@ class ExtractedTrials:
 
 
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1:
+    if window <= 1 or trace.size == 0:
         return trace.copy()
+    # Slice the full convolution explicitly: NumPy's "same" grows to the
+    # kernel length when the window is longer than the trace.
+    window = min(window, 2 * trace.size)
     kernel = np.ones(window, dtype=float)
-    summed = np.convolve(trace, kernel, mode="same")
-    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="same")
+    start = (window - 1) // 2
+    stop = start + trace.size
+    summed = np.convolve(trace, kernel, mode="full")[start:stop]
+    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="full")[start:stop]
     return summed / counts
 
 
@@ -297,6 +302,12 @@ def process_channel(
     ts2 = settings.trange[0] + (
         np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor
     )
+    baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
+    if np.count_nonzero(baseline_mask) < 2:
+        raise ValueError(
+            "The baseline window must contain at least two downsampled samples "
+            "inside TRANGE. Adjust the baseline, TRANGE, or downsample factor."
+        )
 
     if settings.use_isosbestic:
         if settings.polynomial_degree >= f405.size:
@@ -315,7 +326,6 @@ def process_channel(
     else:
         y_df_all = f465
 
-    baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
     baseline_standard_deviations = (
         y_df_all[:, baseline_mask].std(axis=1, ddof=1).astype(float).tolist()
     )

@@ -1,6 +1,15 @@
-# Photon Cruncher Aurora 2.0.5
+# Photon Cruncher Aurora 2.0.6
 
-- Ignores the unused `Cam1`, `Cam2`, and `Tick` epocs in MAT and TDT sessions.
-- Prevents large camera epocs from appearing in the interface or becoming the
-  default Analyze selection, avoiding unnecessary processing and UI freezes.
-- Keeps all behavioral epocs and existing analysis workflows unchanged.
+- Keeps same-named recordings in separate batch export folders and protects
+  existing exports belonging to another recording.
+- Makes Trial Explorer plots and CSVs match the selected trials when channels
+  lose different incomplete edge trials.
+- Handles smoothing windows longer than the extracted trace without errors.
+- Reports invalid baseline windows before exporting unusable results.
+- Reduces memory retained during large batch exports.
+- Limits saved heatmap tick labels to keep large figures readable and faster
+  to export.
+- Preserves CLI error details and distinguishes failed analyses from selections
+  with no matching trials.
+- Adds automated macOS and Windows regression checks and refreshes behavioral
+  epoc benchmarks.
