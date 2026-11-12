@@ -31,6 +31,24 @@ directly from the working tree for rapid testing after local or Codex changes.
 They use the existing `.build-venv`, skip automatic updates for that session,
 and do not build or publish a release.
 
+On Ubuntu, install the Python virtual environment package, create a virtual
+environment, and install the project in editable mode:
+
+```bash
+sudo apt install python3-venv
+python3 -m venv .build-venv
+.build-venv/bin/python -m pip install -e ./photon_cruncher
+./dev-aurora
+```
+
+Linux source sessions do not have a Velopack feed or automatic updates. For
+the version metadata check on Linux, select an existing release target:
+
+```bash
+PHOTON_CRUNCHER_UPDATE_SYSTEM=Windows PHOTON_CRUNCHER_UPDATE_MACHINE=AMD64 \
+  .build-venv/bin/python scripts/version_metadata.py --check
+```
+
 ## Downloads And Release Status
 
 Most users should use GitHub Releases. No Python install is required. The

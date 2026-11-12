@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tomllib
@@ -76,6 +77,11 @@ class VersionMetadataTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
+            env={
+                **os.environ,
+                "PHOTON_CRUNCHER_UPDATE_SYSTEM": "Windows",
+                "PHOTON_CRUNCHER_UPDATE_MACHINE": "AMD64",
+            },
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(__version__, completed.stdout)

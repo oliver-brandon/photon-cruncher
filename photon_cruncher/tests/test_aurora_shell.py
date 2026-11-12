@@ -72,6 +72,28 @@ class AuroraShellSpikeTests(unittest.TestCase):
         ):
             self.assertTrue(hasattr(shell.AuroraBridge, method))
 
+    def test_bootstrap_loads_qt_webchannel_without_local_resource_url(self) -> None:
+        from photon_cruncher.gui_aurora.shell import AuroraShellWindow
+
+        window = mock.Mock()
+        AuroraShellWindow._inject_shell_bootstrap(window)
+        script = window.view.page().runJavaScript.call_args.args[0]
+        self.assertIn("var QWebChannel =", script)
+        self.assertIn("new QWebChannel(qt.webChannelTransport", script)
+        self.assertNotIn("qrc:///qtwebchannel", script)
+
+    def test_bootstrap_reports_missing_qt_webchannel(self) -> None:
+        from photon_cruncher.gui_aurora.shell import AuroraShellWindow
+
+        window = mock.Mock()
+        with mock.patch("photon_cruncher.gui_aurora.shell.QtCore.QFile") as file:
+            file.return_value.open.return_value = False
+            AuroraShellWindow._inject_shell_bootstrap(window)
+        window._status.showMessage.assert_called_once_with(
+            "Failed to load Qt WebChannel", 8000
+        )
+        window.view.page.assert_not_called()
+
     def test_free_port_and_background_server_tuple(self) -> None:
         port = find_free_port("127.0.0.1")
         self.assertIsInstance(port, int)

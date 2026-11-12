@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -98,6 +99,8 @@ def development_mode_enabled(environ: dict[str, str] | None = None) -> bool:
 
 
 def update_channel() -> str:
+    if platform.system() == "Linux":
+        return f"{UPDATE_CHANNEL_PREFIX}-source"
     return update_target()[0]
 
 
@@ -141,7 +144,7 @@ def run_velopack_startup() -> bool:
 
 def velopack_runtime_available() -> bool:
     """Return whether this process can be managed by a Velopack installation."""
-    if development_mode_enabled():
+    if development_mode_enabled() or platform.system() == "Linux":
         return False
     return bool(
         getattr(sys, "frozen", False)
@@ -159,6 +162,10 @@ class VelopackBackend:
         package_id: str = UPDATE_PACKAGE_ID,
         repository_url: str = UPDATE_REPOSITORY_URL,
     ) -> None:
+        if platform.system() == "Linux":
+            raise UpdateConfigurationError(
+                "Linux source builds do not have an update feed"
+            )
         import velopack
 
         self.channel = validate_dev_channel(channel or update_channel())

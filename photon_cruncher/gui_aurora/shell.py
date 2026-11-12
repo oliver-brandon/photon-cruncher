@@ -869,10 +869,17 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         if not ok:
             self._status.showMessage("Failed to load Aurora UI", 8000)
             return
-        self._inject_shell_bootstrap()
+        if not self._inject_shell_bootstrap():
+            return
         self._status.showMessage(f"Aurora ready · {self._base_url}", 4000)
 
-    def _inject_shell_bootstrap(self) -> None:
+    def _inject_shell_bootstrap(self) -> bool:
+        channel_script = QtCore.QFile(":/qtwebchannel/qwebchannel.js")
+        if not channel_script.open(QtCore.QIODevice.OpenModeFlag.ReadOnly):
+            self._status.showMessage("Failed to load Qt WebChannel", 8000)
+            return False
+        channel_source = bytes(channel_script.readAll()).decode("utf-8")
+        channel_script.close()
         js = """
         (() => {
           function attach() {
@@ -898,19 +905,12 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
               }
             });
           }
-          if (!document.querySelector('script[data-qwebchannel]')) {
-            var s = document.createElement('script');
-            s.src = 'qrc:///qtwebchannel/qwebchannel.js';
-            s.dataset.qwebchannel = '1';
-            s.onload = attach;
-            document.head.appendChild(s);
-          } else {
-            attach();
-          }
+          attach();
           true;
         })();
         """
-        self.view.page().runJavaScript(js)
+        self.view.page().runJavaScript(channel_source + "\n" + js)
+        return True
 
     def _send_to_ui(self, message: dict[str, Any]) -> None:
         payload = json.dumps(message)

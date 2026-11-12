@@ -9,9 +9,11 @@ from unittest import mock
 
 from photon_cruncher.aurora_main import main as aurora_main
 from photon_cruncher.updates import (
+    UpdateConfigurationError,
     UpdateRelease,
     UpdateService,
     UpdateState,
+    VelopackBackend,
     development_mode_enabled,
     is_newer_version,
     update_channel,
@@ -64,10 +66,22 @@ class UpdateTests(unittest.TestCase):
     def test_packaged_non_development_runtime_remains_enabled(self) -> None:
         with (
             mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch("platform.system", return_value="Windows"),
             mock.patch.object(sys, "frozen", True, create=True),
         ):
             self.assertFalse(development_mode_enabled())
             self.assertTrue(velopack_runtime_available())
+
+    def test_linux_source_has_no_updater_even_if_forced(self) -> None:
+        with (
+            mock.patch("platform.system", return_value="Linux"),
+            mock.patch.dict(os.environ, {"PHOTON_CRUNCHER_FORCE_VELOPACK": "1"}),
+            mock.patch.object(sys, "frozen", True, create=True),
+        ):
+            self.assertEqual(update_channel(), "aurora-dev-source")
+            self.assertFalse(velopack_runtime_available())
+            with self.assertRaises(UpdateConfigurationError):
+                VelopackBackend()
 
     def test_developer_entry_skips_velopack_startup(self) -> None:
         with (
