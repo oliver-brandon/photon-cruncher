@@ -72,6 +72,21 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(store.stats()["analysis_entries"], 0)
         self.assertEqual(store.stats()["analysis_bytes"], 0)
 
+    def test_reopened_session_rejects_stale_analysis(self) -> None:
+        store = SessionStore()
+        with (
+            mock.patch("photon_cruncher.gui_aurora.session_store.open_session"),
+            mock.patch("photon_cruncher.gui_aurora.session_store.session_summary"),
+        ):
+            original = store.open("session.mat")
+            store.clear()
+            reopened = store.open("session.mat")
+        store.put_analysis(original.path, "key", [], expected=original)
+        self.assertIsNone(store.get_analysis(reopened.path, "key"))
+        store.put_analysis(reopened.path, "key", [], expected=reopened)
+        self.assertIsNone(store.get_analysis(original.path, "key", expected=original))
+        self.assertEqual(store.get_analysis(reopened.path, "key", expected=reopened), [])
+
     def test_session_cache_evicts_old_noncurrent_sources(self) -> None:
         store = SessionStore(max_sessions=2, max_analysis_bytes=1024)
 

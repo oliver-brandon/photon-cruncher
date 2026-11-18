@@ -120,32 +120,36 @@ class SessionStore:
         with self._lock:
             return self._current_path
 
-    def put_analysis(self, path: str, cache_key: str, results: list[AnalysisResult]) -> None:
+    def put_analysis(
+        self, path: str, cache_key: str, results: list[AnalysisResult],
+        *, expected: CachedSession | None = None,
+    ) -> None:
         with self._lock:
             cached = self._by_path.get(path)
-            if cached is not None:
-                lru_key = (path, cache_key)
-                previous_size = self._analysis_lru.pop(lru_key, 0)
-                self._analysis_bytes -= previous_size
-                size = _analysis_result_bytes(results)
-                if size > self._max_analysis_bytes:
-                    cached.analysis_cache.pop(cache_key, None)
-                    return
-                cached.analysis_cache[cache_key] = results
-                self._analysis_lru[lru_key] = size
-                self._analysis_bytes += size
-                self._evict_analyses_locked(protected=lru_key)
+            if cached is None or (expected is not None and cached is not expected):
+                return
+            lru_key = (path, cache_key)
+            previous_size = self._analysis_lru.pop(lru_key, 0)
+            self._analysis_bytes -= previous_size
+            size = _analysis_result_bytes(results)
+            if size > self._max_analysis_bytes:
+                cached.analysis_cache.pop(cache_key, None)
+                return
+            cached.analysis_cache[cache_key] = results
+            self._analysis_lru[lru_key] = size
+            self._analysis_bytes += size
+            self._evict_analyses_locked(protected=lru_key)
 
-    def get_analysis(self, path: str, cache_key: str) -> list[AnalysisResult] | None:
+    def get_analysis(
+        self, path: str, cache_key: str, *, expected: CachedSession | None = None,
+    ) -> list[AnalysisResult] | None:
         with self._lock:
             cached = self._by_path.get(path)
-            if cached is None:
+            if cached is None or (expected is not None and cached is not expected):
                 return None
             results = cached.analysis_cache.get(cache_key)
             if results is not None:
-                lru_key = (path, cache_key)
-                if lru_key in self._analysis_lru:
-                    self._analysis_lru.move_to_end(lru_key)
+                self._analysis_lru.move_to_end((path, cache_key))
                 self._by_path.move_to_end(path)
             return results
 

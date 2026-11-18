@@ -7,7 +7,6 @@ from typing import Any, Callable
 from photon_cruncher.export.exporter import (
     batch_output_directories,
     export_batch_summary,
-    export_channel,
     save_result_figure,
 )
 from photon_cruncher.io.loader import load_session
@@ -16,6 +15,7 @@ from photon_cruncher.processing.pipeline import ProcessingSettings
 from photon_cruncher.service import (
     AnalysisResult,
     analyze as service_analyze,
+    export_result_csv,
     quality_summary,
     write_result_manifest,
 )
@@ -54,28 +54,10 @@ def epoc_names_for_selection(
     present_members = [
         epoc_name for epoc_name in epoc_members if epoc_name in session.epocs
     ]
-    if mode == "prefer_left":
-        preferred = [
-            epoc_name
-            for epoc_name in present_members
-            if _epoc_suffix_side(epoc_name) == "left"
-        ]
-        return preferred or [
-            epoc_name
-            for epoc_name in present_members
-            if _epoc_suffix_side(epoc_name) == "right"
-        ]
-    if mode == "prefer_right":
-        preferred = [
-            epoc_name
-            for epoc_name in present_members
-            if _epoc_suffix_side(epoc_name) == "right"
-        ]
-        return preferred or [
-            epoc_name
-            for epoc_name in present_members
-            if _epoc_suffix_side(epoc_name) == "left"
-        ]
+    if mode in {"prefer_left", "prefer_right"}:
+        side = "left" if mode == "prefer_left" else "right"
+        preferred = [name for name in present_members if _epoc_suffix_side(name) == side]
+        return preferred or [name for name in present_members if _epoc_suffix_side(name)]
     return present_members
 
 
@@ -177,21 +159,7 @@ def run_batch(
         destination = destinations[Path(path).expanduser().resolve()]
         results = run_session(session, epoc_name)
         for result in results:
-            csv_path = export_channel(
-                output_dir=destination,
-                session_name=session.source_path.stem,
-                epoc_name=epoc_name,
-                channel_key=result.channel_key,
-                processed=result.processed,
-                settings=result.settings,
-                dropped_trials=result.processed.dropped_edge_trials,
-                stream_store=result.stream_store,
-                metadata={
-                    **session.info,
-                    "source_path": str(session.source_path),
-                },
-                export_smoothed=result.settings.plot_smooth,
-            )
+            csv_path = export_result_csv(result, destination, epoc_name=epoc_name)
             write_result_manifest(result, destination, {"csv": str(csv_path)})
             summary_rows.append(
                 {
@@ -348,23 +316,10 @@ def run_batch_custom(
                     csv_path: Path | None = None
                     figure_path: Path | None = None
                     manifest_path: Path | None = None
+                    quality = quality_summary(result)
                     if export_csv:
                         try:
-                            csv_path = export_channel(
-                                output_dir=session_output,
-                                session_name=session.source_path.stem,
-                                epoc_name=epoc_name,
-                                channel_key=result.channel_key,
-                                processed=result.processed,
-                                settings=result.settings,
-                                dropped_trials=result.processed.dropped_edge_trials,
-                                stream_store=result.stream_store,
-                                metadata={
-                                    **session.info,
-                                    "source_path": str(session.source_path),
-                                },
-                                export_smoothed=result.settings.plot_smooth,
-                            )
+                            csv_path = export_result_csv(result, session_output, epoc_name=epoc_name)
                         except Exception as exc:  # noqa: BLE001 - retain batch work
                             _record_batch_outcome(
                                 outcomes,
@@ -401,6 +356,7 @@ def run_batch_custom(
                                     "csv": str(csv_path or ""),
                                     "figure": str(figure_path or ""),
                                 },
+                                quality=quality,
                             )
                         except Exception as exc:  # noqa: BLE001 - retain batch work
                             _record_batch_outcome(
@@ -419,7 +375,7 @@ def run_batch_custom(
                             session=session_name,
                             epoc=result.epoc.name,
                             channel=result.channel_key,
-                            quality=quality_summary(result),
+                            quality=quality,
                             csv_path=csv_path,
                             figure_path=figure_path,
                             manifest_path=manifest_path,

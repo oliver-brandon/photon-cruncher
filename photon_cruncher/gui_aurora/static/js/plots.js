@@ -12,16 +12,28 @@
     return { ctx, w, h };
   }
 
-  function bounds(vals, pad) {
+  function traceBounds(mean, sem, individuals) {
     let min = Infinity;
     let max = -Infinity;
-    for (const v of vals) {
-      if (v < min) min = v;
-      if (v > max) max = v;
+    function include(value) {
+      if (!Number.isFinite(value)) return;
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
+    if (individuals) {
+      for (const row of individuals) for (const value of row) include(value);
+    } else {
+      for (let i = 0; i < mean.length; i++) {
+        include(mean[i]);
+        if (sem && Number.isFinite(sem[i])) {
+          include(mean[i] + sem[i]);
+          include(mean[i] - sem[i]);
+        }
+      }
     }
     if (!Number.isFinite(min)) return { min: -1, max: 1 };
     if (min === max) return { min: min - 1, max: max + 1 };
-    const p = (max - min) * (pad ?? 0.14);
+    const p = (max - min) * 0.14;
     return { min: min - p, max: max + p };
   }
 
@@ -88,8 +100,8 @@
     fillPanel(ctx, w, h);
     drawTitle(ctx, opts.title, w);
 
-    const times = Array.from(opts.times || []);
-    const mean = Array.from(opts.mean || []);
+    const times = opts.times || [];
+    const mean = opts.mean || [];
     const sem = opts.sem;
     const color = opts.color || "#00f5d4";
     if (!times.length || !mean.length) {
@@ -106,22 +118,7 @@
     const x1 = times[times.length - 1];
     const xSpan = x1 === x0 ? 1 : x1 - x0;
 
-    const ys = [];
-    if (opts.individuals) {
-      for (const row of opts.individuals) {
-        for (const v of row) if (Number.isFinite(v)) ys.push(v);
-      }
-    } else {
-      for (let i = 0; i < mean.length; i += 1) {
-        if (Number.isFinite(mean[i])) ys.push(mean[i]);
-        if (sem) {
-          if (Number.isFinite(sem[i])) {
-            ys.push(mean[i] + sem[i], mean[i] - sem[i]);
-          }
-        }
-      }
-    }
-    const yb = bounds(ys);
+    const yb = traceBounds(mean, sem, opts.individuals);
     yb.min = Math.min(yb.min, 0);
     yb.max = Math.max(yb.max, 0);
 
@@ -225,17 +222,10 @@
     ctx.stroke();
     ctx.restore();
 
-    // crisp pass
-    ctx.beginPath();
+    // Reuse the glow pass path for the crisp stroke.
     ctx.strokeStyle = "#eafffb";
     ctx.globalAlpha = 0.35;
     ctx.lineWidth = 1;
-    for (let i = 0; i < times.length; i += 1) {
-      const x = X(times[i]);
-      const y = Y(mean[i]);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
     ctx.stroke();
     ctx.globalAlpha = 1;
 
@@ -251,21 +241,48 @@
     ctx.textAlign = "left";
   }
 
-  function heatColor(t) {
-    // Zero-centered blue-dark-red scale for signed z-scores.
-    const stops = [
-      [44, 91, 160],
-      [73, 154, 181],
-      [20, 27, 42],
-      [214, 104, 82],
-      [178, 24, 43],
-    ];
-    const x = Math.min(1, Math.max(0, t)) * (stops.length - 1);
-    const i = Math.floor(x);
-    const f = x - i;
-    const a = stops[i];
-    const b = stops[Math.min(stops.length - 1, i + 1)];
-    return `rgb(${Math.round(a[0] + (b[0] - a[0]) * f)},${Math.round(a[1] + (b[1] - a[1]) * f)},${Math.round(a[2] + (b[2] - a[2]) * f)})`;
+  // Zero-centered blue-dark-red scale for signed z-scores.
+  const heatStops = [[44, 91, 160], [73, 154, 181], [20, 27, 42], [214, 104, 82], [178, 24, 43]];
+
+  function paintHeatmap(ctx, plot, matrix, limit) {
+    const rows = matrix.length;
+    const cols = matrix[0].length;
+    // Draw at most one colour per visible device pixel. Nearest-neighbour
+    // sampling keeps trial rows distinct when scaling to the plot rectangle.
+    const raster = document.createElement("canvas");
+    const dpr = devicePixelRatio || 1;
+    raster.width = Math.min(cols, Math.ceil(plot.w * dpr));
+    raster.height = Math.min(rows, Math.ceil(plot.h * dpr));
+    const surface = raster.getContext("2d");
+    const image = surface.createImageData(raster.width, raster.height);
+    const pixels = image.data;
+    let offset = 0;
+    for (let y = 0; y < raster.height; y++) {
+      const row = matrix[rows - 1 - Math.floor((y + 0.5) * rows / raster.height)];
+      for (let x = 0; x < raster.width; x++) {
+        const value = row[Math.floor((x + 0.5) * cols / raster.width)];
+        if (Number.isFinite(value)) {
+          const t = Math.max(0, Math.min(1, (value + limit) / (2 * limit))) * (heatStops.length - 1);
+          const i = Math.min(Math.floor(t), heatStops.length - 2);
+          const a = heatStops[i];
+          const b = heatStops[i + 1];
+          const fraction = t - i;
+          for (let c = 0; c < 3; c++) {
+            pixels[offset++] = Math.round(a[c] + (b[c] - a[c]) * fraction);
+          }
+        } else {
+          pixels[offset++] = 8;
+          pixels[offset++] = 12;
+          pixels[offset++] = 28;
+        }
+        pixels[offset++] = 255;
+      }
+    }
+    surface.putImageData(image, 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(raster, plot.l, plot.t, plot.w, plot.h);
+    ctx.restore();
   }
 
   function drawHeat(canvas, opts) {
@@ -290,46 +307,23 @@
       w: Math.max(1, w - 58),
       h: Math.max(1, h - (opts.title ? 104 : 86)),
     };
-    let min = Infinity;
-    let max = -Infinity;
-    for (const row of matrix) {
-      for (const v of row) {
-        if (!Number.isFinite(v)) continue;
-        if (v < min) min = v;
-        if (v > max) max = v;
+    let limit = Number(opts.colorLimit);
+    if (opts.scaleMode !== "locked" || !Number.isFinite(limit) || limit <= 0) {
+      let magnitude = -Infinity;
+      for (const row of matrix) {
+        for (const value of row) {
+          if (Number.isFinite(value)) magnitude = Math.max(magnitude, Math.abs(value));
+        }
       }
+      limit = Number.isFinite(magnitude) ? Math.max(magnitude, Number.EPSILON) : 1;
     }
-    const observedLimit =
-      Number.isFinite(min) && Number.isFinite(max)
-        ? Math.max(Math.abs(min), Math.abs(max))
-        : 1;
-    const requestedLimit = Number(opts.colorLimit);
-    const limit =
-      opts.scaleMode === "locked" && Number.isFinite(requestedLimit) && requestedLimit > 0
-        ? requestedLimit
-        : Math.max(observedLimit, Number.EPSILON);
-    min = -limit;
-    max = limit;
+    const min = -limit;
+    const max = limit;
     const rows = matrix.length;
-    const cols = matrix[0].length;
-    const cw = plot.w / cols;
     const ch = plot.h / rows;
-    for (let r = 0; r < rows; r += 1) {
-      const drawRow = rows - 1 - r;
-      for (let c = 0; c < cols; c += 1) {
-        const value = matrix[r][c];
-        const t = (value - min) / (max - min);
-        ctx.fillStyle = Number.isFinite(value) ? heatColor(t) : "rgb(8,12,28)";
-        ctx.fillRect(
-          plot.l + c * cw,
-          plot.t + drawRow * ch,
-          Math.ceil(cw),
-          Math.ceil(ch)
-        );
-      }
-    }
+    paintHeatmap(ctx, plot, matrix, limit);
     // zero marker
-    const times = Array.from(opts.times || []);
+    const times = opts.times || [];
     if (
       times.length &&
       times[0] <= 0 &&
@@ -383,10 +377,9 @@
     const barY = plotBottom + 38;
     const barHeight = 7;
     const gradient = ctx.createLinearGradient(plot.l, 0, plot.l + plot.w, 0);
-    for (let index = 0; index <= 100; index += 1) {
-      const t = index / 100;
-      gradient.addColorStop(t, heatColor(t));
-    }
+    heatStops.forEach((rgb, index) => {
+      gradient.addColorStop(index / (heatStops.length - 1), `rgb(${rgb.join(",")})`);
+    });
     ctx.fillStyle = gradient;
     ctx.fillRect(plot.l, barY, plot.w, barHeight);
     ctx.strokeStyle = "rgba(255,255,255,0.24)";
@@ -413,34 +406,6 @@
     };
   }
 
-  function subset(channel, indices) {
-    if (!indices.length) {
-      const z = new Float64Array(channel.mean.length);
-      return { mean: z, sem: z, rows: [] };
-    }
-    const rows = indices.map((i) => channel.trials[i]);
-    const n = rows.length;
-    const m = rows[0].length;
-    const mean = new Float64Array(m);
-    const sem = new Float64Array(m);
-    for (let j = 0; j < m; j += 1) {
-      let s = 0;
-      for (let i = 0; i < n; i += 1) s += rows[i][j];
-      mean[j] = s / n;
-    }
-    if (n > 1) {
-      for (let j = 0; j < m; j += 1) {
-        let ss = 0;
-        for (let i = 0; i < n; i += 1) {
-          const d = rows[i][j] - mean[j];
-          ss += d * d;
-        }
-        sem[j] = Math.sqrt(ss / (n - 1)) / Math.sqrt(n);
-      }
-    }
-    return { mean, sem, rows };
-  }
-
   function peakLatency(times, mean) {
     let best = -Infinity;
     let idx = 0;
@@ -453,5 +418,5 @@
     return { peak: best, lat: times[idx] };
   }
 
-  window.AuroraPlots = { drawGlowTrace, drawHeat, subset, peakLatency };
+  window.AuroraPlots = { drawGlowTrace, drawHeat, peakLatency };
 })();

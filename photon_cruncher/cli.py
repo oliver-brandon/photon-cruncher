@@ -8,11 +8,10 @@ from typing import Any, Iterable
 
 import numpy as np
 
-from photon_cruncher import __version__
+from photon_cruncher import __version__, service
 from photon_cruncher.analysis.runner import AnalysisResult
 from photon_cruncher.analysis.trial_classifier import (
     ClassifiedTrialSource,
-    classified_trial_sources,
 )
 from photon_cruncher.io.loader import (
     discover_tdt_block_paths,
@@ -21,15 +20,11 @@ from photon_cruncher.io.loader import (
 )
 from photon_cruncher.export.exporter import batch_output_directories
 from photon_cruncher.model import Epoc, PhotometrySession
-from photon_cruncher.processing.pipeline import (
-    ProcessingSettings,
-    available_channels,
-    default_settings_for_channel,
-    process_channel,
-    subset_processed_signal,
-)
+from photon_cruncher.processing.pipeline import ProcessingSettings
 from photon_cruncher.service import (
+    annotate_trials as annotate_processed_trials,  # compatibility with earlier CLI imports
     export_result as service_export_result,
+    resolve_epoc as resolve_epoc_or_source,
     quality_summary,
 )
 
@@ -427,41 +422,11 @@ def discover_input_paths(raw_inputs: Iterable[str | Path]) -> list[Path]:
 
 
 def session_inspection(session: PhotometrySession) -> dict[str, Any]:
-    sources = classified_trial_sources(session)
-    return {
-        "source_path": str(session.source_path),
-        "session_name": session.source_path.stem,
-        "info": _json_safe(session.info),
-        "streams": {
-            name: {
-                "fs": stream.fs,
-                "samples": int(stream.data.size),
-                "t0": stream.t0,
-            }
-            for name, stream in sorted(session.streams.items())
-        },
-        "epocs": {
-            name: {
-                "events": int(epoc.onset.size),
-                "first_onset": _optional_float(epoc.onset[0] if epoc.onset.size else None),
-                "last_onset": _optional_float(epoc.onset[-1] if epoc.onset.size else None),
-            }
-            for name, epoc in sorted(session.epocs.items())
-        },
-        "channels": sorted(available_channels(session).keys()),
-        "classified_sources": [
-            {
-                "key": source.key,
-                "label": source.label,
-                "events": len(source.trials),
-                "type_counts": trial_type_counts(
-                    trial.trial_type for trial in source.trials
-                ),
-                "warnings": source.warnings,
-            }
-            for source in sources
-        ],
-    }
+    summary = service.session_summary(session)
+    summary.pop("channel_details")
+    for source in summary["classified_sources"]:
+        source["type_counts"] = source.pop("trial_type_counts")
+    return summary
 
 
 def normalize_analyze_config(
@@ -683,23 +648,6 @@ def validate_analyze_config(config: dict[str, Any]) -> None:
         raise ConfigError("; ".join(errors))
 
 
-def resolve_epoc_or_source(
-    session: PhotometrySession,
-    requested_name: str,
-) -> tuple[Epoc, ClassifiedTrialSource | None]:
-    if requested_name in session.epocs:
-        return session.epocs[requested_name], None
-    sources = classified_trial_sources(session)
-    for source in sources:
-        if requested_name in {source.key, source.label}:
-            return source.epoc, source
-    available = sorted(session.epocs) + [source.label for source in sources]
-    raise ValueError(
-        f"epoc or classified source '{requested_name}' not found; "
-        f"available: {', '.join(available)}"
-    )
-
-
 def epoc_names_for_config(
     session: PhotometrySession,
     config: dict[str, Any],
@@ -740,10 +688,7 @@ def analyze_session_epoc(
     source: ClassifiedTrialSource | None,
     config: dict[str, Any],
 ) -> list[AnalysisResult]:
-    from photon_cruncher import service
-
-    channel_map = available_channels(session)
-    channel_keys = config["channels"] or sorted(channel_map)
+    channel_keys = config["channels"] or None
 
     def settings_factory(channel_key: str) -> ProcessingSettings:
         return build_settings(config, channel_key)
@@ -767,84 +712,15 @@ def analyze_session_epoc(
 
 
 def build_settings(config: dict[str, Any], channel_key: str) -> ProcessingSettings:
-    processing = config["processing"]
-    settings = default_settings_for_channel(channel_key)
-    settings.trange = (
-        float(processing["trange_start"]),
-        float(processing["trange_end"]),
-    )
-    settings.baseline_per = (
-        float(processing["baseline_start"]),
-        float(processing["baseline_end"]),
-    )
-    settings.base_adjust = float(processing["baseline_adjust"])
-    settings.downsample_factor = int(processing["downsample_factor"])
-    settings.plot_smooth = bool(processing["plot_smoothed"])
-    settings.set_baseline = bool(processing["baseline_correction"])
-    if processing["smooth_factor"] is not None:
-        settings.smooth_factor = int(processing["smooth_factor"])
-    channel_smooth = config["channel_settings"].get(channel_key, {}).get(
-        "smooth_factor"
-    )
-    if channel_smooth is not None:
-        settings.smooth_factor = int(channel_smooth)
-    settings.artifact_405 = _threshold_value(processing["artifact_405"])
-    settings.artifact_465 = _threshold_value(processing["artifact_465"])
-    settings.use_isosbestic = bool(processing["use_isosbestic"])
-    settings.polynomial_degree = int(processing["polynomial_degree"])
-    return settings
-
-
-def annotate_processed_trials(
-    processed: Any,
-    epoc: Epoc,
-    source: ClassifiedTrialSource | None,
-) -> None:
-    if source is not None:
-        trials_by_number = {trial.trial_number: trial for trial in source.trials}
-        processed.trial_labels = [
-            trials_by_number[number].trial_type if number in trials_by_number else ""
-            for number in processed.trial_numbers
-        ]
-        processed.trial_times = [
-            trials_by_number[number].onset
-            if number in trials_by_number
-            else float("nan")
-            for number in processed.trial_numbers
-        ]
-        return
-
-    processed.trial_labels = []
-    processed.trial_times = [
-        float(epoc.onset[number - 1]) if 0 < number <= epoc.onset.size else float("nan")
-        for number in processed.trial_numbers
-    ]
+    overrides = dict(config["processing"])
+    smooth = config["channel_settings"].get(channel_key, {}).get("smooth_factor")
+    if smooth is not None:
+        overrides["smooth_factor"] = smooth
+    return service.settings_for_channel(channel_key, overrides=overrides)
 
 
 def filter_processed_trials(processed: Any, config: dict[str, Any]) -> Any:
-    trial_numbers = [int(number) for number in config["trial_filter"]["trial_numbers"]]
-    trial_types = set(config["trial_filter"]["trial_types"])
-    if not trial_numbers and not trial_types:
-        return processed
-
-    available_numbers = (
-        processed.trial_numbers
-        if processed.trial_numbers
-        else list(range(1, processed.zall.shape[0] + 1))
-    )
-    available_labels = (
-        processed.trial_labels
-        if len(processed.trial_labels) == len(available_numbers)
-        else [""] * len(available_numbers)
-    )
-    selected_numbers = set(trial_numbers) if trial_numbers else set(available_numbers)
-    if trial_types:
-        selected_numbers = {
-            number
-            for number, label in zip(available_numbers, available_labels)
-            if number in selected_numbers and label in trial_types
-        }
-    return subset_processed_signal(processed, sorted(selected_numbers))
+    return service.filter_trials(processed, **config["trial_filter"])
 
 
 def export_result(
@@ -854,12 +730,14 @@ def export_result(
     export_csv: bool,
     export_figures: bool,
 ) -> dict[str, Any]:
+    quality = quality_summary(result)
     paths = service_export_result(
         result,
         output_dir,
         export_csv=export_csv,
         export_figure=export_figures,
         figure_format=config["exports"]["figure_format"],
+        quality=quality,
     )
 
     processed = result.processed
@@ -878,7 +756,7 @@ def export_result(
         "iso_stream": result.stream_store[0],
         "signal_stream": result.stream_store[1],
         "settings": settings_summary(result.settings),
-        "quality": quality_summary(result),
+        "quality": quality,
         "exported_csv": paths.get("csv", ""),
         "exported_figure": paths.get("figure", ""),
         "analysis_manifest": paths.get("manifest", ""),
@@ -915,31 +793,20 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def emit_summary(summary: dict[str, Any], summary_json: str | None) -> None:
+    encoded = json.dumps(_json_safe(summary), indent=2) + "\n"
     if summary_json:
         path = Path(summary_json).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(_json_safe(summary), indent=2) + "\n", encoding="utf-8")
-    _write_json(summary, sys.stdout)
+        path.write_text(encoded, encoding="utf-8")
+    sys.stdout.write(encoded)
 
 
 def _write_json(data: dict[str, Any], stream: Any) -> None:
     stream.write(json.dumps(_json_safe(data), indent=2) + "\n")
 
 
-def _threshold_value(value: Any) -> float:
-    if value is None:
-        return float("inf")
-    return float(value)
-
-
 def _json_threshold(value: float) -> float | None:
     if np.isinf(value):
-        return None
-    return float(value)
-
-
-def _optional_float(value: Any) -> float | None:
-    if value is None:
         return None
     return float(value)
 

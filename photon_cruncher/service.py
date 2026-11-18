@@ -6,6 +6,7 @@ re-implementing load/process/export loops. Backend fixes land here once.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -25,8 +26,7 @@ from photon_cruncher.export.exporter import (
     save_result_figure,
     write_analysis_manifest,
 )
-from photon_cruncher.io.loader import load_session
-from photon_cruncher.io.loader import discover_tdt_block_paths
+from photon_cruncher.io.loader import discover_tdt_block_paths, load_session
 from photon_cruncher.model import Epoc, PhotometrySession
 from photon_cruncher.product import AURORA_APP_NAME
 from photon_cruncher.processing.pipeline import (
@@ -277,7 +277,29 @@ def filter_trials(
             for number, label in zip(available_numbers, available_labels)
             if number in selected and label in types
         }
-    return subset_processed_signal(processed, sorted(selected))
+    return subset_processed_signal(processed, selected)
+
+
+def export_result_csv(
+    result: AnalysisResult,
+    output_dir: Path,
+    *,
+    filename_suffix: str = "",
+    epoc_name: str | None = None,
+) -> Path:
+    return export_channel(
+        output_dir=output_dir,
+        session_name=result.session.source_path.stem,
+        epoc_name=result.epoc.name if epoc_name is None else epoc_name,
+        channel_key=result.channel_key,
+        processed=result.processed,
+        settings=result.settings,
+        dropped_trials=result.processed.dropped_edge_trials,
+        stream_store=result.stream_store,
+        metadata={"source_path": str(result.session.source_path)},
+        export_smoothed=result.settings.plot_smooth,
+        filename_suffix=filename_suffix,
+    )
 
 
 def export_result(
@@ -288,27 +310,12 @@ def export_result(
     export_figure: bool = False,
     figure_format: str = "png",
     filename_suffix: str = "",
+    quality: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     output = Path(output_dir)
     paths: dict[str, str] = {"csv": "", "figure": "", "manifest": ""}
     if export_csv:
-        csv_path = export_channel(
-            output_dir=output,
-            session_name=result.session.source_path.stem,
-            epoc_name=result.epoc.name,
-            channel_key=result.channel_key,
-            processed=result.processed,
-            settings=result.settings,
-            dropped_trials=result.processed.dropped_edge_trials,
-            stream_store=result.stream_store,
-            metadata={
-                **result.session.info,
-                "source_path": str(result.session.source_path),
-            },
-            export_smoothed=result.settings.plot_smooth,
-            filename_suffix=filename_suffix,
-        )
-        paths["csv"] = str(csv_path)
+        paths["csv"] = str(export_result_csv(result, output, filename_suffix=filename_suffix))
     if export_figure:
         figure_path = save_result_figure(
             output,
@@ -323,6 +330,7 @@ def export_result(
             output,
             paths,
             filename_suffix=filename_suffix,
+            quality=quality,
         )
         paths["manifest"] = str(manifest)
     return paths
@@ -334,6 +342,7 @@ def write_result_manifest(
     paths: dict[str, str],
     *,
     filename_suffix: str = "",
+    quality: dict[str, Any] | None = None,
 ) -> Path:
     output = Path(output_dir)
     manifest = analysis_manifest_path(
@@ -350,7 +359,7 @@ def write_result_manifest(
     manifest_outputs["manifest"] = str(manifest)
     return write_analysis_manifest(
         manifest,
-        _strict_json_safe(
+        _json_safe(
             {
                 "application": {
                     "name": AURORA_APP_NAME,
@@ -384,7 +393,7 @@ def write_result_manifest(
                     ),
                     "artifact_removals": int(result.processed.num_artifacts),
                 },
-                "quality": quality_summary(result),
+                "quality": quality if quality is not None else quality_summary(result),
                 "outputs": manifest_outputs,
             }
         ),
@@ -421,10 +430,11 @@ def quality_summary(result: AnalysisResult) -> dict[str, Any]:
     removed_artifacts = int(processed.num_artifacts)
     attempted = kept + removed_edges + removed_artifacts
     finite_mask = np.isfinite(data)
-    nonfinite_values = int(data.size - int(finite_mask.sum()))
-    finite_values = data[finite_mask]
+    nonfinite_values = int(data.size - np.count_nonzero(finite_mask))
+    finite_values = data[finite_mask] if nonfinite_values else data
     max_abs_z = (
-        float(np.max(np.abs(finite_values))) if finite_values.size else None
+        max(abs(float(finite_values.min())), abs(float(finite_values.max())))
+        if finite_values.size else None
     )
     warnings: list[dict[str, str]] = []
     baseline_sd = np.asarray(
@@ -563,14 +573,9 @@ def session_summary(session: PhotometrySession) -> dict[str, Any]:
                 "key": source.key,
                 "label": source.label,
                 "events": len(source.trials),
-                "trial_type_counts": {
-                    label: sum(
-                        1 for trial in source.trials if trial.trial_type == label
-                    )
-                    for label in sorted(
-                        {trial.trial_type for trial in source.trials}
-                    )
-                },
+                "trial_type_counts": dict(sorted(Counter(
+                    trial.trial_type for trial in source.trials
+                ).items())),
                 "warnings": list(source.warnings),
             }
             for source in sources
@@ -627,11 +632,19 @@ def result_plot_payload(
 
 
 def _json_safe(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [_json_safe(item) for item in value]
     if isinstance(value, np.ndarray):
+        # Numeric arrays dominate plot payloads. tolist() already converts
+        # every scalar to a native Python value when all entries are finite.
+        if value.dtype.kind in "biu" or (
+            value.dtype.kind == "f" and value.dtype.itemsize <= 8 and np.isfinite(value).all()
+        ):
+            return value.tolist()
         return _json_safe(value.tolist())
     if isinstance(value, np.integer):
         return int(value)
@@ -643,16 +656,3 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
-
-
-def _strict_json_safe(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    safe = _json_safe(value)
-    if isinstance(safe, dict):
-        return {str(key): _strict_json_safe(item) for key, item in safe.items()}
-    if isinstance(safe, list | tuple):
-        return [_strict_json_safe(item) for item in safe]
-    if isinstance(safe, float) and not math.isfinite(safe):
-        return None
-    return safe

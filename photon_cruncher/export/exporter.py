@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
+import os
 from collections import Counter
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 
 from photon_cruncher.processing.pipeline import ProcessedSignal, ProcessingSettings
 
@@ -75,14 +77,20 @@ def export_channel(
     z_data = processed.zall_smooth if export_smoothed else processed.zall
     heatmap_path = output_dir / f"{prefix}_heatmap.csv"
 
+    if z_data.ndim != 2 or processed.ts.shape != (z_data.shape[1],):
+        raise ValueError("Heatmap rows and the time vector must have the same width.")
     if z_data.shape[0] > 0:
         mean_trace = z_data.mean(axis=0)
     else:
         mean_trace = np.full_like(processed.ts, np.nan, dtype=float)
 
     labels = _heatmap_row_labels(processed, z_data.shape[0])
-    matrix = np.vstack([processed.ts, mean_trace, z_data])
-    _write_labeled_numeric_csv(heatmap_path, labels, matrix)
+    rows = chain((processed.ts, mean_trace), z_data)
+    row_format = ",".join(["%.10g"] * processed.ts.size)
+    with heatmap_path.open("w", encoding="utf-8", newline="") as handle:
+        for label, row in zip(labels, rows, strict=True):
+            numeric_row = row_format % tuple(row)
+            handle.write(f"{label},{numeric_row}\n")
     return heatmap_path
 
 
@@ -115,7 +123,11 @@ def write_analysis_manifest(path: Path, payload: dict[str, Any]) -> Path:
 def export_batch_summary(output_dir: Path, rows: list[dict[str, Any]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "batch_summary.csv"
-    pd.DataFrame(rows).to_csv(summary_path, index=False)
+    fields = list(dict.fromkeys(key for row in rows for key in row))
+    with summary_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator=os.linesep)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def heatmap_trial_ticks(
@@ -266,26 +278,6 @@ def _heatmap_row_labels(processed: ProcessedSignal, num_trials: int) -> list[str
             row_label += f"_{_label_slug(trial_label)}"
         labels.append(row_label)
     return labels
-
-
-def _write_labeled_numeric_csv(
-    path: Path,
-    labels: list[str],
-    matrix: np.ndarray,
-) -> None:
-    if len(labels) != matrix.shape[0]:
-        raise ValueError("CSV label count must match matrix rows.")
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        for label, row in zip(labels, matrix):
-            handle.write(label)
-            handle.write(",")
-            np.savetxt(
-                handle,
-                np.asarray(row, dtype=float).reshape(1, -1),
-                delimiter=",",
-                fmt="%.10g",
-                newline="\n",
-            )
 
 
 def _label_slug(label: str) -> str:

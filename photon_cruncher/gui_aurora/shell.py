@@ -36,6 +36,19 @@ from photon_cruncher.updates import (
 
 WINDOW_GEOMETRY_KEY = "window/geometry"
 
+LEGACY_PROCESSING_KEYS = {
+    "trange_start": "processing/trange_start",
+    "trange_end": "processing/trange_end",
+    "baseline_start": "processing/baseline_start",
+    "baseline_end": "processing/baseline_end",
+    "baseline_adjust": "processing/base_adjust",
+    "downsample_factor": "processing/downsample_factor",
+    "plot_smoothed": "processing/plot_smooth",
+    "baseline_correction": "processing/set_baseline",
+    "use_isosbestic": "processing/use_isosbestic",
+    "polynomial_degree": "processing/polynomial_degree",
+}
+
 
 def restore_window_geometry(
     window: QtWidgets.QWidget,
@@ -225,19 +238,7 @@ class AuroraBridge(QtCore.QObject):
             except (TypeError, ValueError):
                 pass
         else:
-            legacy_keys = {
-                "trange_start": "processing/trange_start",
-                "trange_end": "processing/trange_end",
-                "baseline_start": "processing/baseline_start",
-                "baseline_end": "processing/baseline_end",
-                "baseline_adjust": "processing/base_adjust",
-                "downsample_factor": "processing/downsample_factor",
-                "plot_smoothed": "processing/plot_smooth",
-                "baseline_correction": "processing/set_baseline",
-                "use_isosbestic": "processing/use_isosbestic",
-                "polynomial_degree": "processing/polynomial_degree",
-            }
-            for key, legacy_key in legacy_keys.items():
+            for key, legacy_key in LEGACY_PROCESSING_KEYS.items():
                 value = settings.value(legacy_key)
                 if value is not None:
                     if key in {
@@ -275,21 +276,10 @@ class AuroraBridge(QtCore.QObject):
                 "processing/settings_json",
                 json.dumps(payload, sort_keys=True),
             )
-            legacy_values = {
-                "processing/trange_start": payload.get("trange_start"),
-                "processing/trange_end": payload.get("trange_end"),
-                "processing/baseline_start": payload.get("baseline_start"),
-                "processing/baseline_end": payload.get("baseline_end"),
-                "processing/base_adjust": payload.get("baseline_adjust"),
-                "processing/downsample_factor": payload.get("downsample_factor"),
-                "processing/plot_smooth": payload.get("plot_smoothed"),
-                "processing/set_baseline": payload.get("baseline_correction"),
-                "processing/use_isosbestic": payload.get("use_isosbestic"),
-                "processing/polynomial_degree": payload.get("polynomial_degree"),
-            }
-            for key, value in legacy_values.items():
+            for key, legacy_key in LEGACY_PROCESSING_KEYS.items():
+                value = payload.get(key)
                 if value is not None:
-                    settings.setValue(key, value)
+                    settings.setValue(legacy_key, value)
             smoothing = payload.get("channel_smoothing") or {}
             if isinstance(smoothing, dict):
                 for channel, value in smoothing.items():

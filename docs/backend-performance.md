@@ -1,6 +1,6 @@
 # Aurora Backend Performance
 
-Last measured: 2026-10-01 (local maintenance changes on dev)
+Last measured: 2026-11-17 (Ubuntu development checkout)
 
 This document replaces the pre-Aurora optimization plan. It records the current
 backend layout, reproducible benchmark method, and measured performance without
@@ -66,7 +66,7 @@ Environment for the measurements below:
 - Explicit behavioral epocs (`CL2_`, or `CL1_` for `1996_FR3-3_NA`)
 - Median of three warm-filesystem runs per stage
 
-## Current Measurements
+## October macOS measurements
 
 | Fixture | Epoc | Kept trials x samples | Load | Process 3 channels | CSV | Figure |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
@@ -76,8 +76,32 @@ Environment for the measurements below:
 | `2149_Rev1_JZL18.mat` | `CL2_` | 7 x 712 | 0.037 s | 0.001 s | 0.001 s | 0.124 s |
 
 These values are local reference measurements, not cross-platform guarantees.
-Rerun the command after pipeline, exporter, NumPy, SciPy, pandas, Matplotlib, or
+Rerun the command after pipeline, exporter, NumPy, SciPy, Matplotlib, or
 hardware changes rather than carrying the numbers forward unchanged.
+
+## November Ubuntu comparison
+
+Compared the working tree to `f739213` with Python 3.14.4 on x86-64 Ubuntu.
+Backend times below are medians of five warm calls with one OpenBLAS thread.
+The recording was `1996_FR1-4_NA.mat`, using `CL2_` and three channels.
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| Export CSVs and manifests immediately after analysis | 47 ms | 25 ms |
+| Build the cached compact analysis response (before HTTP encoding) | 2.75 ms | 0.31 ms |
+| Match 2,000 explicit outcome timestamps against reverse-ordered input | 100 ms | 0.3 ms |
+
+On the desktop, a 400 × 712 synthetic heatmap in a 420 × 300 CSS-pixel
+canvas took about 350 ms to redraw before and 17 ms after (median of five
+draws with pixel readback). The display samples the matrix at screen
+resolution and uses the full data range for autoscaling. CSV and figure
+exports use the original matrix.
+
+A separate four-recording batch that loaded each MAT file, analyzed three
+channels at `CL1_`, and wrote 12 CSV/manifest pairs took about 0.93 s
+both before and after (median of three runs with an empty session cache).
+The individual export timing above measures reuse of an already displayed
+result. Batch jobs still analyze each recording.
 
 ## Plot Transport
 

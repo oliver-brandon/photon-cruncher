@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import atexit
 from collections import deque
-import hashlib
 import json
 import http.server
 import os
@@ -144,9 +143,15 @@ def _read_json(handler: http.server.BaseHTTPRequestHandler) -> dict[str, Any]:
     return data
 
 
-def _settings_fingerprint(overrides: dict[str, Any] | None) -> str:
-    blob = json.dumps(overrides or {}, sort_keys=True, default=str)
-    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+def _settings_factory(body: dict[str, Any]) -> service.SettingsFactory:
+    shared = body.get("settings") or {}
+    per_channel = body.get("channel_settings") or {}
+
+    def settings(channel_key: str):
+        overrides = {**shared, **(per_channel.get(channel_key) or {})}
+        return service.settings_for_channel(channel_key, overrides=overrides)
+
+    return settings
 
 
 def _cached_analysis(
@@ -161,31 +166,21 @@ def _cached_analysis(
 
     cached = STORE.open(path)
     channel_keys = body.get("channels")
-    overrides = body.get("settings") or {}
-    channel_settings = body.get("channel_settings") or {}
-    force = bool(body.get("force", False))
-    channels_key = tuple(channel_keys) if channel_keys else ("__all__",)
-    settings_key = {
-        "settings": overrides,
-        "channel_settings": channel_settings,
-    }
-    cache_key = f"{epoc}|{channels_key}|{_settings_fingerprint(settings_key)}"
-
-    results = None if force else STORE.get_analysis(cached.path, cache_key)
+    cache_key = json.dumps(
+        [epoc, channel_keys, body.get("settings") or {}, body.get("channel_settings") or {}],
+        sort_keys=True,
+    )
+    results = None if body.get("force") else STORE.get_analysis(
+        cached.path, cache_key, expected=cached
+    )
     if results is None:
-
-        def settings_factory(channel_key: str):
-            per_channel = dict(overrides)
-            per_channel.update(channel_settings.get(channel_key) or {})
-            return service.settings_for_channel(channel_key, overrides=per_channel)
-
         results = service.analyze(
             cached.session,
             str(epoc),
             channel_keys=channel_keys,
-            settings_factory=settings_factory,
+            settings_factory=_settings_factory(body),
         )
-        STORE.put_analysis(cached.path, cache_key, results)
+        STORE.put_analysis(cached.path, cache_key, results, expected=cached)
 
     return cached, results, str(epoc)
 
@@ -261,13 +256,13 @@ def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
         or trial_types is not None
         or body.get("common_trials", False)
     )
-    all_payloads = (
-        [_plot_payload(result, compact=compact) for result in results]
-        if filter_requested
-        else None
-    )
+    # An unfiltered channel can appear in both lists. Reuse its summary
+    # (or its much larger legacy JSON matrix) within this response.
+    full = {}
+    if filter_requested:
+        full = {id(result): _plot_payload(result, compact=compact) for result in results}
     payloads = [
-        _plot_payload(result, compact=compact)
+        full[id(result)] if id(result) in full else _plot_payload(result, compact=compact)
         for result in _selected_results(results, body)
     ]
 
@@ -285,7 +280,7 @@ def _analyze_request(body: dict[str, Any]) -> dict[str, Any]:
         "session": cached.summary,
         "epoc": epoc,
         "results": payloads,
-        **({"all_results": all_payloads} if all_payloads is not None else {}),
+        **({"all_results": [full[id(result)] for result in results]} if filter_requested else {}),
     }
 
 
@@ -341,46 +336,6 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
     if not path or not epoc or not output_dir:
         raise ValueError("path, epoc, and output_dir are required")
 
-    cached = STORE.open(path)
-    channel_keys = body.get("channels")
-    overrides = body.get("settings") or {}
-    channel_settings = body.get("channel_settings") or {}
-
-    def settings_factory(channel_key: str):
-        per_channel = dict(overrides)
-        per_channel.update(channel_settings.get(channel_key) or {})
-        return service.settings_for_channel(channel_key, overrides=per_channel)
-
-    results = service.analyze(
-        cached.session,
-        str(epoc),
-        channel_keys=channel_keys,
-        settings_factory=settings_factory,
-    )
-    trial_numbers = body.get("trial_numbers")
-    trial_types = body.get("trial_types")
-    if trial_numbers is not None or trial_types is not None:
-        if trial_numbers == [] and not trial_types:
-            raise ValueError("Select at least one trial before exporting.")
-        filtered = []
-        for result in results:
-            processed = service.filter_trials(
-                result.processed,
-                trial_numbers=trial_numbers,
-                trial_types=trial_types,
-            )
-            filtered.append(
-                service.AnalysisResult(
-                    session=result.session,
-                    epoc=result.epoc,
-                    channel_key=result.channel_key,
-                    processed=processed,
-                    settings=result.settings,
-                    stream_store=result.stream_store,
-                )
-            )
-        results = filtered
-
     export_csv = bool(body.get("export_csv", True))
     export_figure = bool(body.get("export_figure", False))
     figure_format = str(body.get("figure_format", "png"))
@@ -388,17 +343,24 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Choose CSV and/or figure export.")
     if figure_format not in {"png", "pdf", "tiff"}:
         raise ValueError("figure_format must be png, pdf, or tiff")
+    if body.get("trial_numbers") == [] and not body.get("trial_types"):
+        raise ValueError("Select at least one trial before exporting.")
+    cached, results, _ = _cached_analysis({**body, "path": path})
+    results = _selected_results(results, body)
+
     destination = Path(output_dir).expanduser().resolve()
     if export_figure:
         destination /= cached.session.source_path.stem
     written: list[dict[str, Any]] = []
     for result in results:
+        quality = service.quality_summary(result)
         paths = service.export_result(
             result,
             destination,
             export_csv=export_csv,
             export_figure=export_figure,
             figure_format=figure_format,
+            quality=quality,
             filename_suffix=(
                 "_selected_trials" if body.get("selected_trials") else ""
             ),
@@ -409,7 +371,7 @@ def _export_request(body: dict[str, Any]) -> dict[str, Any]:
                 "csv": paths.get("csv", ""),
                 "figure": paths.get("figure", ""),
                 "manifest": paths.get("manifest", ""),
-                "quality": service.quality_summary(result),
+                "quality": quality,
             }
         )
     return {
@@ -480,14 +442,6 @@ def _batch_export_request(
     if figure_format not in {"png", "pdf", "tiff"}:
         raise ValueError("figure_format must be png, pdf, or tiff")
 
-    overrides = body.get("settings") or {}
-    channel_settings = body.get("channel_settings") or {}
-
-    def settings_factory(channel_key: str):
-        per_channel = dict(overrides)
-        per_channel.update(channel_settings.get(channel_key) or {})
-        return service.settings_for_channel(channel_key, overrides=per_channel)
-
     destination = Path(str(output_dir)).expanduser().resolve()
     outcomes: list[BatchOutcome] = []
     exported = run_batch_custom(
@@ -495,7 +449,7 @@ def _batch_export_request(
         epoc_selections=epoc_selections,
         output_dir=destination,
         channel_keys=channel_keys,
-        settings_factory=settings_factory,
+        settings_factory=_settings_factory(body),
         export_summary=False,
         per_session_subdir=True,
         export_csv=export_csv,

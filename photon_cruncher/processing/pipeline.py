@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import compress
 from typing import Iterable
 
 import numpy as np
@@ -52,27 +53,22 @@ class ExtractedTrials:
 
 
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1 or trace.size == 0:
-        return trace.copy()
-    # Slice the full convolution explicitly: NumPy's "same" grows to the
-    # kernel length when the window is longer than the trace.
-    window = min(window, 2 * trace.size)
-    kernel = np.ones(window, dtype=float)
-    start = (window - 1) // 2
-    stop = start + trace.size
-    summed = np.convolve(trace, kernel, mode="full")[start:stop]
-    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="full")[start:stop]
-    return summed / counts
+    return _moving_mean_rows(trace.reshape(1, -1), window)[0]
 
 
 def _moving_mean_rows(data: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1:
+    if window <= 1 or data.size == 0:
         return data.copy()
-    if data.size == 0:
-        return data.copy()
+    length = data.shape[1]
+    window = min(window, 2 * length)
+    kernel = np.ones(window)
+    start = (window - 1) // 2
+    section = slice(start, start + length)
+    # All trials share the same shrinking window at the endpoints.
+    counts = np.convolve(np.ones(length), kernel)[section]
     smoothed = np.empty_like(data, dtype=float)
-    for row_idx in range(data.shape[0]):
-        smoothed[row_idx, :] = _moving_mean(data[row_idx, :], window)
+    for idx, row in enumerate(data):
+        smoothed[idx] = np.convolve(row, kernel)[section] / counts
     return smoothed
 
 
@@ -132,38 +128,19 @@ def _artifact_mask(trials: list[np.ndarray], artifact: float) -> np.ndarray:
     return good_mask
 
 
-def _remove_artifacts(trials: list[np.ndarray], artifact: float) -> tuple[list[np.ndarray], np.ndarray]:
-    good_mask_array = _artifact_mask(trials, artifact)
-    filtered = [trial for trial, keep in zip(trials, good_mask_array) if keep]
-    return filtered, good_mask_array
-
-
-def _trim_trials(trials: list[np.ndarray], min_length: int) -> list[np.ndarray]:
-    return [trial[:min_length] for trial in trials]
-
-
 def _downsample_trials(trials: list[np.ndarray], factor: int) -> np.ndarray:
-    if not trials:
-        return np.empty((0, 0), dtype=float)
+    length = min(trial.size for trial in trials)
     if factor <= 1:
-        return np.vstack(trials)
-
-    lengths = {trial.size for trial in trials}
-    if len(lengths) == 1:
-        arr = np.vstack(trials)
-        bins = arr.shape[1] // factor
-        if bins == 0:
-            return np.empty((arr.shape[0], 0), dtype=float)
-        trimmed = arr[:, : bins * factor]
-        return trimmed.reshape(arr.shape[0], bins, factor).mean(axis=2)
-
-    downsampled = []
-    for trial in trials:
-        bins = trial.size // factor
-        trimmed = trial[: bins * factor]
-        reshaped = trimmed.reshape(bins, factor)
-        downsampled.append(reshaped.mean(axis=1))
-    return np.vstack(downsampled)
+        return np.stack([trial[:length] for trial in trials])
+    bins = length // factor
+    if not bins:
+        return np.empty((len(trials), 0), dtype=float)
+    # Reduce each source view before stacking, so overlapping event windows
+    # never require a second matrix at the raw acquisition rate.
+    return np.stack([
+        trial[:bins * factor].reshape(bins, factor).mean(axis=1)
+        for trial in trials
+    ])
 
 
 def _mean_and_sem(z_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -184,13 +161,11 @@ def _baseline_correct(z_data: np.ndarray, ts: np.ndarray, base_adjust: float) ->
     return z_data - vals[:, None]
 
 
-def _zscore_trials(y_df_all: np.ndarray, baseline_mask: np.ndarray) -> np.ndarray:
-    if y_df_all.size == 0:
-        return y_df_all.copy()
+def _zscore_trials(y_df_all: np.ndarray, baseline_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     base = y_df_all[:, baseline_mask]
     zb = base.mean(axis=1, keepdims=True)
     zsd = base.std(axis=1, ddof=1, keepdims=True)
-    return (y_df_all - zb) / zsd
+    return (y_df_all - zb) / zsd, zsd[:, 0]
 
 
 def process_channel(
@@ -209,7 +184,6 @@ def process_channel(
         settings.trange,
         stream_465.t0,
     )
-    trials_by_number_465 = dict(zip(extracted_465.trial_numbers, extracted_465.trials))
     if settings.use_isosbestic:
         if settings.polynomial_degree < 1:
             raise ValueError("Polynomial fit degree must be at least 1.")
@@ -225,78 +199,43 @@ def process_channel(
             settings.trange,
             stream_405.t0,
         )
-        trials_by_number_405 = dict(
-            zip(extracted_405.trial_numbers, extracted_405.trials)
-        )
-        kept_trial_numbers = sorted(
-            set(trials_by_number_405).intersection(trials_by_number_465)
-        )
-        trials_405 = [
-            trials_by_number_405[number] for number in kept_trial_numbers
+        controls = dict(zip(extracted_405.trial_numbers, extracted_405.trials))
+        aligned = [
+            (number, trial)
+            for number, trial in zip(extracted_465.trial_numbers, extracted_465.trials)
+            if number in controls
         ]
-        trials_465 = [
-            trials_by_number_465[number] for number in kept_trial_numbers
-        ]
+        kept_trial_numbers = [number for number, _ in aligned]
+        trials_465 = [trial for _, trial in aligned]
+        trials_405 = [controls[number] for number in kept_trial_numbers]
         dropped_edge_trials = sorted(
-            set(extracted_405.dropped_edge_trials)
-            | set(extracted_465.dropped_edge_trials)
+            set(extracted_405.dropped_edge_trials) | set(extracted_465.dropped_edge_trials)
         )
+    else:
+        kept_trial_numbers = extracted_465.trial_numbers
+        trials_465 = extracted_465.trials
+        dropped_edge_trials = extracted_465.dropped_edge_trials
 
-        if not trials_405 or not trials_465:
-            raise ValueError("No complete trials remain after dropping edge trials.")
-
-        good_405 = _artifact_mask(trials_405, settings.artifact_405)
-        good_465 = _artifact_mask(trials_465, settings.artifact_465)
-        good_trials = good_405 & good_465
-        num_artifacts = int((~good_trials).sum())
-        trials_405 = [
-            trial for trial, keep in zip(trials_405, good_trials) if keep
-        ]
-        trials_465 = [
-            trial for trial, keep in zip(trials_465, good_trials) if keep
-        ]
-        kept_trial_numbers = [
-            number
-            for number, keep in zip(kept_trial_numbers, good_trials)
-            if keep
-        ]
-
-        if not trials_405 or not trials_465:
+    if not trials_465:
+        raise ValueError("No complete trials remain after dropping edge trials.")
+    good = _artifact_mask(trials_465, settings.artifact_465)
+    if settings.use_isosbestic:
+        good &= _artifact_mask(trials_405, settings.artifact_405)
+    num_artifacts = int(len(good) - np.count_nonzero(good))
+    if num_artifacts:
+        if num_artifacts == len(good):
             raise ValueError("No trials remain after artifact removal.")
+        trials_465 = list(compress(trials_465, good))
+        kept_trial_numbers = list(compress(kept_trial_numbers, good))
+        if settings.use_isosbestic:
+            trials_405 = list(compress(trials_405, good))
 
-        min_len_405 = min(trial.size for trial in trials_405)
-        min_len_465 = min(trial.size for trial in trials_465)
-        trials_405 = _trim_trials(trials_405, min_len_405)
-        trials_465 = _trim_trials(trials_465, min_len_465)
-
+    f465 = _downsample_trials(trials_465, settings.downsample_factor)
+    if settings.use_isosbestic:
         f405 = _downsample_trials(trials_405, settings.downsample_factor)
-        f465 = _downsample_trials(trials_465, settings.downsample_factor)
         common_length = min(f405.shape[1], f465.shape[1])
         f405 = f405[:, :common_length]
         f465 = f465[:, :common_length]
-    else:
-        kept_trial_numbers = list(extracted_465.trial_numbers)
-        dropped_edge_trials = list(extracted_465.dropped_edge_trials)
-        trials_465 = list(extracted_465.trials)
-        if not trials_465:
-            raise ValueError("No complete trials remain after dropping edge trials.")
-
-        good_465 = _artifact_mask(trials_465, settings.artifact_465)
-        num_artifacts = int((~good_465).sum())
-        trials_465 = [
-            trial for trial, keep in zip(trials_465, good_465) if keep
-        ]
-        kept_trial_numbers = [
-            number
-            for number, keep in zip(kept_trial_numbers, good_465)
-            if keep
-        ]
-        if not trials_465:
-            raise ValueError("No trials remain after artifact removal.")
-
-        min_len_465 = min(trial.size for trial in trials_465)
-        trials_465 = _trim_trials(trials_465, min_len_465)
-        f465 = _downsample_trials(trials_465, settings.downsample_factor)
 
     min_length2 = f465.shape[1]
     ts2 = settings.trange[0] + (
@@ -326,10 +265,7 @@ def process_channel(
     else:
         y_df_all = f465
 
-    baseline_standard_deviations = (
-        y_df_all[:, baseline_mask].std(axis=1, ddof=1).astype(float).tolist()
-    )
-    zall = _zscore_trials(y_df_all, baseline_mask)
+    zall, baseline_sd = _zscore_trials(y_df_all, baseline_mask)
     zall_smooth = _moving_mean_rows(zall, settings.smooth_factor)
 
     if settings.set_baseline:
@@ -354,7 +290,7 @@ def process_channel(
         num_edge_trials=len(dropped_edge_trials),
         dropped_edge_trials=dropped_edge_trials,
         trial_numbers=kept_trial_numbers,
-        baseline_standard_deviations=baseline_standard_deviations,
+        baseline_standard_deviations=baseline_sd.tolist(),
     )
 
 
@@ -375,8 +311,8 @@ def subset_processed_signal(
     if not keep_mask.any():
         raise ValueError("None of the selected trials are available for this channel.")
 
-    zall = processed.zall[keep_mask, :].copy()
-    zall_smooth = processed.zall_smooth[keep_mask, :].copy()
+    zall = processed.zall[keep_mask]
+    zall_smooth = processed.zall_smooth[keep_mask]
     mean_z, sem_z = _mean_and_sem(zall)
     mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
     kept_trial_numbers = [

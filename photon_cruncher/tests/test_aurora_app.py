@@ -22,7 +22,8 @@ from photon_cruncher.gui_aurora.server import (
 )
 from photon_cruncher.gui_aurora.session_store import STORE
 from photon_cruncher.analysis.runner import BatchOutcome
-from photon_cruncher.model import Epoc, PhotometrySession, Stream
+from photon_cruncher.model import Epoc
+from photon_cruncher.tests.synthetic import write_synthetic_mat
 
 
 def _post(port: int, path: str, body: dict) -> dict:
@@ -73,19 +74,10 @@ class AuroraAppTests(unittest.TestCase):
     def tearDown(self) -> None:
         STORE.clear()
 
-    def _synthetic_mat(self, folder: Path) -> Path:
-        # Build a tiny in-memory session via service path using a real load is hard
-        # without writing mat; instead exercise store/API with monkeypatch-style
-        # direct store open using a temp path registered manually is awkward.
-        # Use local fixture if present, else skip.
-        fixture = Path("local-test-data/mat/2149_Rev1_JZL18.mat")
-        if fixture.exists():
-            return fixture.resolve()
-        self.skipTest("local mat fixture unavailable")
-
     def test_figure_export_uses_source_named_directory(self) -> None:
         cached = SimpleNamespace(
-            session=SimpleNamespace(source_path=Path("/recordings/mouse-01.mat"))
+            path="/recordings/mouse-01.mat",
+            session=SimpleNamespace(source_path=Path("/recordings/mouse-01.mat")),
         )
         result = SimpleNamespace(channel_key="A_465")
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,7 +119,8 @@ class AuroraAppTests(unittest.TestCase):
         self.assertEqual(payload["exports"][0]["manifest"], paths["manifest"])
 
     def test_open_analyze_export_roundtrip(self) -> None:
-        mat = self._synthetic_mat(Path("."))
+        fixture_dir = self.enterContext(tempfile.TemporaryDirectory())
+        mat = write_synthetic_mat(Path(fixture_dir) / "recording.mat")
         httpd, _thread, port = serve_in_background(host="127.0.0.1", port=None)
         try:
             opened = _post(port, "/api/open", {"path": str(mat)})

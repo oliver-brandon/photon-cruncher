@@ -455,12 +455,10 @@ class LoaderTests(unittest.TestCase):
             info={},
             source_path=Path("synthetic.mat"),
         )
-        export_calls = []
-        original_load_session = runner.load_session
-        original_export_channel = runner.export_channel
-        runner.load_session = lambda _: session
-        runner.export_channel = lambda **kwargs: export_calls.append(kwargs)
-        try:
+        with (
+            mock.patch.object(runner, "load_session", return_value=session),
+            mock.patch.object(runner, "export_result_csv") as export_csv,
+        ):
             with tempfile.TemporaryDirectory() as tmp:
                 settings = ProcessingSettings(
                     trange=(-1.0, 1.0),
@@ -478,11 +476,7 @@ class LoaderTests(unittest.TestCase):
                     per_session_subdir=True,
                     export_csv=False,
                 )
-        finally:
-            runner.load_session = original_load_session
-            runner.export_channel = original_export_channel
-
-        self.assertEqual(export_calls, [])
+        export_csv.assert_not_called()
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0].channel, "A_465")
 
@@ -641,7 +635,7 @@ class LoaderTests(unittest.TestCase):
         outcomes: list[runner.BatchOutcome] = []
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
             runner, "load_session", return_value=session
-        ), mock.patch.object(runner, "export_channel", side_effect=OSError("disk full")):
+        ), mock.patch.object(runner, "export_result_csv", side_effect=OSError("disk full")):
             exported = runner.run_batch_custom(
                 input_paths=[Path("synthetic.mat")],
                 epoc_selections=[("Cue", ("Cue",))],

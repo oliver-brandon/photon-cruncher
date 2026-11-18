@@ -14,45 +14,32 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
-from scipy.io import savemat
 
 from photon_cruncher import cli, service
 from photon_cruncher.analysis.runner import run_batch_custom
 from photon_cruncher.export.exporter import heatmap_trial_ticks
 from photon_cruncher.gui_aurora import server
 from photon_cruncher.gui_aurora.session_store import STORE, SessionStore
-from photon_cruncher.model import Epoc, PhotometrySession, Stream
 from photon_cruncher.processing.pipeline import _moving_mean
-
-
-def synthetic_session(path: Path) -> PhotometrySession:
-    fs = 100.0
-    time = np.arange(6000) / fs
-    control = 20 + 0.01 * time + np.sin(time * 0.2)
-    signal = 1.1 * control + np.sin(time * 3) + 0.2 * np.sin(time * 13)
-    return PhotometrySession(
-        streams={
-            "x405A": Stream("x405A", fs, control),
-            "x465A": Stream("x465A", fs, signal),
-        },
-        epocs={"Cue": Epoc("Cue", np.array([10.0, 20.0, 40.0]))},
-        info={},
-        source_path=Path(path),
-    )
-
-
-def write_synthetic_mat(path: Path) -> Path:
-    session = synthetic_session(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    savemat(path, {"data": {
-        "streams": {key: {"data": value.data, "fs": value.fs}
-                    for key, value in session.streams.items()},
-        "epocs": {"Cue": {"onset": session.epocs["Cue"].onset}},
-    }})
-    return path
+from photon_cruncher.tests.synthetic import synthetic_session, write_synthetic_mat
 
 
 class ProcessingRegressionTests(unittest.TestCase):
+    def test_nearest_timestamp_matching_uses_each_candidate_once(self):
+        from photon_cruncher.analysis.trial_classifier import _same_times
+
+        # The closest candidate for the first onset can lie ahead of an
+        # unused earlier one. A tie goes to the earlier timestamp.
+        for expected, actual, tolerance, matched in (
+            ([2, 2.01], [2, 1.9], 0.12, True),
+            ([2, 2.01], [2, 1.9], 0.1, False),
+            ([2, 3], [3, 1], 1, True),
+            ([0, 0], [0, 1], 0, False),
+            ([1], [np.nan], 1, False),
+        ):
+            with self.subTest(actual=actual, tolerance=tolerance):
+                self.assertEqual(_same_times(np.array(expected), np.array(actual), tolerance), matched)
+
     def test_benchmark_rejects_an_unavailable_explicit_epoc(self):
         from scripts.bench_backend import _pick_epoc
 
@@ -168,6 +155,20 @@ class TrialSelectionRegressionTests(unittest.TestCase):
 
     def tearDown(self):
         STORE.clear()
+
+    def test_export_reuses_only_matching_analysis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_synthetic_mat(Path(tmp) / "source.mat")
+            body = {"path": str(path), "epoc": "Cue", "output_dir": tmp}
+            with mock.patch.object(service, "analyze", wraps=service.analyze) as analyze:
+                server._analyze_request({**body, "compact": True})
+                written = server._export_request({**body, "trial_numbers": [2]})
+                manifest = json.loads(Path(written["exports"][0]["manifest"]).read_text())
+                self.assertEqual(manifest["trials"]["numbers"], [2])
+                self.assertEqual(analyze.call_count, 1)
+                self.assertEqual(server._export_request({**body, "channels": []})["exports"], [])
+                server._export_request({**body, "channel_settings": {"A_465": {"smooth_factor": 7}}})
+                self.assertEqual(analyze.call_count, 3)
 
     def test_disjoint_channel_trials_produce_an_empty_selection(self):
         session = synthetic_session(Path("disjoint.mat"))

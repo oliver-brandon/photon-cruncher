@@ -118,8 +118,30 @@ def _flatten_stream_data(data: Any) -> np.ndarray:
     return stream_data.reshape(-1)
 
 
+def _load_epoc(name: str, entry: Any) -> Epoc:
+    onset = np.asarray(_field(entry, "onset", []), dtype=float).reshape(-1)
+    offset = _field(entry, "offset")
+    values = _field(entry, "data")
+    if values is None:
+        values = _field(entry, "values")
+    return Epoc(
+        name=name,
+        onset=onset,
+        offset=(
+            None
+            if offset is None
+            else np.asarray(offset, dtype=float).reshape(-1)
+        ),
+        values=(
+            None
+            if values is None
+            else np.asarray(values, dtype=float).reshape(-1)
+        ),
+    )
+
+
 def _load_mat_session(path: Path) -> PhotometrySession:
-    mat = loadmat(path, squeeze_me=True, struct_as_record=False)
+    mat = loadmat(path, variable_names=["data"], squeeze_me=True, struct_as_record=False)
     if "data" not in mat:
         raise ValueError("Expected 'data' variable in MAT file.")
     data = _mat_to_dict(mat["data"])
@@ -134,25 +156,7 @@ def _load_mat_session(path: Path) -> PhotometrySession:
     for name, entry in data.get("epocs", {}).items():
         if _is_ignored_epoc(name):
             continue
-        onset = np.asarray(entry.get("onset", []), dtype=float).reshape(-1)
-        offset = entry.get("offset")
-        values = entry.get("data")
-        if values is None:
-            values = entry.get("values")
-        epocs[name] = Epoc(
-            name=name,
-            onset=onset,
-            offset=(
-                None
-                if offset is None
-                else np.asarray(offset, dtype=float).reshape(-1)
-            ),
-            values=(
-                None
-                if values is None
-                else np.asarray(values, dtype=float).reshape(-1)
-            ),
-        )
+        epocs[name] = _load_epoc(name, entry)
 
     info = data.get("info", {}) if isinstance(data.get("info", {}), dict) else {}
     return PhotometrySession(
@@ -192,25 +196,7 @@ def _load_tdt_session(path: Path) -> PhotometrySession:
     for name, entry in _items(_field(data, "epocs", {})):
         if _is_ignored_epoc(name):
             continue
-        onset = np.asarray(_field(entry, "onset", []), dtype=float).reshape(-1)
-        offset = _field(entry, "offset")
-        values = _field(entry, "data")
-        if values is None:
-            values = _field(entry, "values")
-        epocs[name] = Epoc(
-            name=name,
-            onset=onset,
-            offset=(
-                None
-                if offset is None
-                else np.asarray(offset, dtype=float).reshape(-1)
-            ),
-            values=(
-                None
-                if values is None
-                else np.asarray(values, dtype=float).reshape(-1)
-            ),
-        )
+        epocs[name] = _load_epoc(name, entry)
 
     info = _object_to_dict(_field(data, "info", {}))
     if not isinstance(info, dict):

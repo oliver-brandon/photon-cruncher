@@ -93,10 +93,6 @@
     return Object.keys(state.resultsByChannel).length > 0;
   }
 
-  function hasFilteredResults() {
-    return Object.keys(state.filteredResultsByChannel).length > 0;
-  }
-
   function toast(msg) {
     const el = $("toast");
     if (!el) return;
@@ -200,12 +196,6 @@
     });
   }
 
-  async function nativeOrFetchAnalyze(body, options = {}) {
-    return api("POST", "/api/analyze", body, {
-      signal: options.signal,
-    });
-  }
-
   async function nativeOrFetchExport(body) {
     if (window.auroraBridge && window.auroraBridge.export) {
       const raw = await bridgeCall("export", JSON.stringify(body));
@@ -240,17 +230,15 @@
     if (rows * columns !== flat.length) {
       throw new Error("Heatmap payload dimensions do not match its data.");
     }
-    const matrix = Array.from({ length: rows }, (_, row) =>
+    return Array.from({ length: rows }, (_, row) =>
       flat.subarray(row * columns, (row + 1) * columns)
     );
-    return { matrix, flat, rows, columns };
   }
 
   function releaseMatricesExcept(resultsByChannel, keptChannel) {
     Object.entries(resultsByChannel || {}).forEach(([channel, result]) => {
       if (channel === keptChannel || !result) return;
       delete result.z;
-      delete result._matrixBuffer;
     });
   }
 
@@ -1268,11 +1256,12 @@
     return parts.filter(Boolean).join(" · ");
   }
 
-  function rememberSource(path, session) {
-    if (!path || !session) return;
-    const existing = state.sources.find((source) => source.path === path);
-    if (existing) existing.session = session;
-    else state.sources.push({ path, session });
+  function rememberSources(sources) {
+    const byPath = new Map(state.sources.map((source) => [source.path, source]));
+    for (const {path, session} of sources) {
+      if (path && session) byPath.set(path, {path, session});
+    }
+    state.sources = [...byPath.values()];
     renderSourceSelectors();
     renderImportQueue();
     renderBatchSelectors();
@@ -1341,7 +1330,6 @@
     }
     resetAnalysisState();
     state.path = resolvedPath;
-    rememberSource(resolvedPath, session);
     applySessionSummary(session, resolvedPath);
     const epocs = Object.keys(session.epocs || {});
     state.activeEpoc =
@@ -1360,7 +1348,7 @@
     toast(unique.length === 1 ? "opening…" : `opening ${unique.length} files…`);
     const data = await api("POST", "/api/inspect-paths", { paths: unique });
     const sources = data.sources || [];
-    sources.forEach((source) => rememberSource(source.path, source.session));
+    rememberSources(sources);
     if (!sources.length) {
       const detail = (data.errors || []).map((e) => e.error || e).join("; ");
       throw new Error(detail || "no sessions could be opened");
@@ -1561,7 +1549,7 @@
   function applySessionSummary(session, path) {
     state.session = session;
     state.path = path || state.path;
-    rememberSource(state.path, session);
+    rememberSources([{path: state.path, session}]);
     syncSessionIsosbesticAvailability(session);
     const name = session.session_name || "session";
     $("hudSession").textContent = name;
@@ -1855,7 +1843,7 @@
     };
     let data;
     try {
-      data = await nativeOrFetchAnalyze(requestBody, {
+      data = await api("POST", "/api/analyze", requestBody, {
         signal: alignRequestController.signal,
       });
     } catch (error) {
@@ -1905,14 +1893,13 @@
       channel_settings: applied ? appliedChannelSettings : channelSettingsPayload(),
       compact: true,
     };
-    const packed = await fetchPlotMatrix(
+    const matrix = await fetchPlotMatrix(
       { ...body, force: false, channel },
       alignMatrixController.signal
     );
     if (requestId !== null && requestId !== alignRequestSequence) return null;
     if (state.resultsByChannel[channel] !== result) return null;
-    result.z = packed.matrix;
-    result._matrixBuffer = packed.flat;
+    result.z = matrix;
     if (state.filteredResultsByChannel[channel] === result) {
       state.filteredResultsByChannel[channel] = result;
     }
@@ -2207,7 +2194,7 @@
     }
     let data;
     try {
-      data = await nativeOrFetchAnalyze(requestBody, {
+      data = await api("POST", "/api/analyze", requestBody, {
         signal: trialRequestController.signal,
       });
     } catch (error) {
@@ -2274,14 +2261,13 @@
           ? undefined
           : state.selectedTrialNumbers,
     };
-    const packed = await fetchPlotMatrix(
+    const matrix = await fetchPlotMatrix(
       { ...body, force: false, channel },
       trialMatrixController.signal
     );
     if (requestId !== null && requestId !== trialRequestSequence) return null;
     if (state.trialFilteredResultsByChannel[channel] !== result) return null;
-    result.z = packed.matrix;
-    result._matrixBuffer = packed.flat;
+    result.z = matrix;
     if (state.trialChannel === channel) renderTrials();
     return result;
   }
@@ -2763,23 +2749,16 @@
 
   async function addBatchPaths(paths) {
     const data = await api("POST", "/api/inspect-paths", { paths });
-      (data.sources || []).forEach((source) =>
-        rememberSource(source.path, source.session)
-      );
-      const epocs = batchEpocChoices();
-      const channels = batchChannelChoices();
-      state.batchEpocs = epocs;
-      state.batchChannels = channels;
-      renderSourceSelectors();
-      renderBatchSelectors();
-      renderBatchPage();
-      if (data.errors?.length) {
-        toast(
-          `Added ${data.sources.length}; ${data.errors.length} source(s) could not load`
-        );
-      } else {
-        toast(`Added ${data.sources.length} data source(s)`);
-      }
+    rememberSources(data.sources || []);
+    state.batchEpocs = batchEpocChoices();
+    state.batchChannels = batchChannelChoices();
+    renderBatchSelectors();
+    renderBatchPage();
+    if (data.errors?.length) {
+      toast(`Added ${data.sources.length}; ${data.errors.length} source(s) could not load`);
+    } else {
+      toast(`Added ${data.sources.length} data source(s)`);
+    }
   }
 
   function renderDataPage() {
@@ -3281,12 +3260,11 @@
       const primary = message.primary || {};
       const extras = message.sources || [];
       if (primary.path && primary.session) {
-        rememberSource(primary.path, primary.session);
         resetAnalysisState();
         state.path = primary.path;
         applySessionSummary(primary.session, primary.path);
       }
-      extras.forEach((source) => rememberSource(source.path, source.session));
+      if (extras.length) rememberSources(extras);
       renderImportQueue();
       renderDataPage();
       if (primary.path) {
@@ -3300,7 +3278,6 @@
       if (message.path && message.path !== state.path) resetAnalysisState();
       state.path = message.path;
       if (message.session) {
-        rememberSource(message.path, message.session);
         applySessionSummary(message.session, message.path);
       }
       renderImportQueue();

@@ -201,7 +201,7 @@ class PipelineEquivalenceTests(unittest.TestCase):
 
         with mock.patch(
             "photon_cruncher.processing.pipeline._zscore_trials",
-            side_effect=lambda corrected, _baseline_mask: corrected,
+            side_effect=lambda corrected, mask: (corrected, corrected[:, mask].std(axis=1, ddof=1)),
         ):
             processed = process_channel(
                 session, "x405A", "x465A", session.epocs["Cue"], settings
@@ -234,7 +234,7 @@ class PipelineEquivalenceTests(unittest.TestCase):
 
         with mock.patch(
             "photon_cruncher.processing.pipeline._zscore_trials",
-            side_effect=lambda corrected, _baseline_mask: corrected,
+            side_effect=lambda corrected, mask: (corrected, corrected[:, mask].std(axis=1, ddof=1)),
         ):
             processed = process_channel(
                 session, "x405A", "x465A", session.epocs["Cue"], settings

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass, field
 import re
 
@@ -140,7 +141,7 @@ def _explicit_source_warnings(
             [
                 trial.onset
                 for trial in trials
-                if trial.trial_type in set(trial_types)
+                if trial.trial_type in trial_types
             ],
             dtype=float,
         )
@@ -213,11 +214,19 @@ def _classify_cl_il_events(
     tolerance: float,
 ) -> list[ClassifiedTrial]:
     trials: list[ClassifiedTrial] = []
+    # Reward timestamps are reusable across trials. Only the neighbours of
+    # a lever onset in time order can be its nearest reward.
+    rewards = np.sort(pe_times[np.isfinite(pe_times)]).tolist()
     for event_time, lever_kind in sorted(events):
         if trials and abs(trials[-1].onset - event_time) <= tolerance:
             trials[-1].trial_type = UNCLASSIFIED
             continue
-        rewarded = _has_match(event_time, pe_times, tolerance)
+        next_reward = bisect_left(rewards, event_time)
+        rewarded = (
+            next_reward < len(rewards) and abs(rewards[next_reward] - event_time) <= tolerance
+        ) or (
+            next_reward > 0 and abs(event_time - rewards[next_reward - 1]) <= tolerance
+        )
         if lever_kind == "CL":
             trial_type = CORRECT_REWARDED if rewarded else CORRECT_NOT_REWARDED
         elif lever_kind == "IL":
@@ -272,33 +281,19 @@ def _is_startup_timestamp(value: float) -> bool:
 def _same_times(left: np.ndarray, right: np.ndarray, tolerance: float) -> bool:
     if left.size != right.size:
         return False
-    if left.size == 0:
-        return True
-    unmatched = list(float(value) for value in np.sort(right))
-    for value in np.sort(left):
-        match_idx = _nearest_index(float(value), unmatched, tolerance)
-        if match_idx is None:
-            return False
-        unmatched.pop(match_idx)
-    return not unmatched
-
-
-def _has_match(value: float, candidates: np.ndarray, tolerance: float) -> bool:
-    if candidates.size == 0:
+    if not np.isfinite(left).all() or not np.isfinite(right).all():
         return False
-    diffs = np.abs(candidates - value)
-    return bool(np.any(diffs <= tolerance))
-
-
-def _nearest_index(
-    value: float,
-    candidates: list[float],
-    tolerance: float,
-) -> int | None:
-    if not candidates:
-        return None
-    diffs = [abs(candidate - value) for candidate in candidates]
-    idx = int(np.argmin(diffs))
-    if diffs[idx] <= tolerance:
-        return idx
-    return None
+    # Match each onset to the nearest unused timestamp, preferring the
+    # earlier one on a tie. Each candidate crosses the cursor at most once.
+    upcoming = sorted(right.tolist(), reverse=True)
+    earlier: list[float] = []
+    for onset in sorted(left.tolist()):
+        while upcoming and upcoming[-1] <= onset:
+            earlier.append(upcoming.pop())
+        if earlier and (not upcoming or onset - earlier[-1] <= upcoming[-1] - onset):
+            nearest = earlier.pop()
+        else:
+            nearest = upcoming.pop()
+        if not (abs(nearest - onset) <= tolerance):
+            return False
+    return True
