@@ -33,8 +33,8 @@ choose it, then select **Install and restart** when Aurora is offered.
 extracted ZIP such as v1.1.4, use the installer once to get automatic updates:
 
 1. Quit Photon Cruncher and open the [latest stable release](https://github.com/oliver-brandon/photon-cruncher/releases/latest).
-2. Under **Assets**, download the file ending in **\`-Windows.exe\`** for Windows x64
-   or **\`-macOS.pkg\`** for an Apple Silicon Mac. Run it and follow the installer prompts.
+2. Under **Assets**, download the file ending in **`-Windows.exe`** for Windows x64
+   or **`-macOS.pkg`** for an Apple Silicon Mac. Run it and follow the installer prompts.
 3. Open **Photon Cruncher** from the Windows Start menu or the Mac Applications
    folder. The window title is **Photon Cruncher Aurora**. Use **Help → Check for Updates…**
    to confirm you opened the installed copy. Replace any shortcut that still opens the old ZIP copy.
