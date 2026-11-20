@@ -187,15 +187,6 @@ class AuroraPrototypeTests(unittest.TestCase):
         self.assertIn('(\"Trial Explorer\", \"trials\")', shell)
         self.assertIn('(\"Batch Export\", \"batch\")', shell)
 
-    def test_starfield_animation_avoids_animated_filters(self) -> None:
-        css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")
-        near_keyframes = css.split("@keyframes star-twinkle-near", 1)[1].split(
-            "@keyframes dust-drift", 1
-        )[0]
-        self.assertNotIn("filter:", near_keyframes)
-        self.assertIn("from { opacity: 0.7; }", near_keyframes)
-        self.assertIn("to { opacity: 1; }", near_keyframes)
-
     def test_select_controls_are_contained(self) -> None:
         css = (STATIC_DIR / "css" / "aurora.css").read_text(encoding="utf-8")
         self.assertIn("max-width: 100%", css)

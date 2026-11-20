@@ -3,32 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Photon Cruncher</title>
+    <title>Photon Cruncher Aurora</title>
     <link rel="icon" href="img/aurora-mark-64.png" />
     <link rel="stylesheet" href="css/aurora.css" />
   </head>
   <body>
-    <div class="starfield" aria-hidden="true">
-      <div class="space-depth"></div>
-      <div class="depth-plane depth-plane-far"></div>
-      <div class="nebula nebula-a"></div>
-      <div class="nebula nebula-b"></div>
-      <div class="nebula nebula-c"></div>
-      <div class="stars stars-far"></div>
-      <div class="depth-plane depth-plane-mid"></div>
-      <div class="stars stars-mid"></div>
-      <div class="dust dust-a"></div>
-      <div class="stars stars-near"></div>
-      <div class="horizon-mist"></div>
-      <div class="space-vignette"></div>
-    </div>
-    <div class="bloom bloom-a" aria-hidden="true"></div>
-    <div class="bloom bloom-b" aria-hidden="true"></div>
+    <svg class="symbol-defs" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <symbol id="icon-data" viewBox="0 0 24 24"><path d="M3 7.5V6a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1M3 8.5h17.5l-1.4 9a2 2 0 0 1-2 1.5H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="icon-align" viewBox="0 0 24 24"><path d="M2 12h4l2.5-6 4.4 13 3.1-9 2 2h4"/></symbol>
+      <symbol id="icon-trials" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9.5h18M3 15h18M9 4v16"/></symbol>
+      <symbol id="icon-batch" viewBox="0 0 24 24"><path d="m12 3 9 4.5-9 4.5-9-4.5zM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></symbol>
+      <symbol id="icon-epoc" viewBox="0 0 24 24"><path d="M5 20V4m0 .8c5.5-3.5 8.2 3.3 14-.1v9c-5.8 3.2-8.5-3.6-14 0"/></symbol>
+      <symbol id="icon-tray" viewBox="0 0 24 24"><path d="M3 13.5 6.5 5h11l3.5 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 13h5l1.5 3h5l1.5-3h5"/></symbol>
+      <symbol id="icon-session" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M7 13h2l2-5 2.5 8 2-4H17"/></symbol>
+    </svg>
 
     <div class="app" id="app">
       <aside class="rail" aria-label="Primary">
         <div class="rail-brand">
-          <div class="mark mark-logo" id="brandMark" aria-hidden="true">
+          <div class="mark" id="brandMark" aria-hidden="true">
             <img src="img/aurora-mark.png" alt="" width="38" height="38" />
           </div>
           <div>
@@ -40,70 +34,66 @@
         <nav class="nav" aria-label="Workspace">
           <div class="nav-label">Workspace</div>
           <button class="nav-item active" data-page="data" type="button">
-            <span class="nav-ico" aria-hidden="true">☰</span>
-            <span>Data</span>
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-data"/></svg>
+            <span>Session intake</span>
             <kbd>1</kbd>
           </button>
           <button class="nav-item" data-page="align" type="button">
-            <span class="nav-ico" aria-hidden="true">∿</span>
-            <span>Align</span>
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-align"/></svg>
+            <span>Align &amp; visualize</span>
             <kbd>2</kbd>
           </button>
           <button class="nav-item" data-page="trials" type="button">
-            <span class="nav-ico" aria-hidden="true">▦</span>
-            <span>Trials</span>
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-trials"/></svg>
+            <span>Trial explorer</span>
             <kbd>3</kbd>
           </button>
           <button class="nav-item" data-page="batch" type="button">
-            <span class="nav-ico" aria-hidden="true">⧉</span>
-            <span>Batch</span>
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-batch"/></svg>
+            <span>Batch export</span>
             <kbd>4</kbd>
           </button>
         </nav>
-
-        <div class="rail-footer">
-          <div class="rail-meta" id="railMeta">desktop workspace</div>
-        </div>
       </aside>
 
       <div class="main">
         <header class="topbar">
           <div class="session-chip">
-            <div class="session-dot" id="sessionDot"></div>
+            <span class="session-icon"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-session"/></svg></span>
             <div>
               <div class="session-name" id="hudSession">No session</div>
               <div class="session-detail" id="orbitMeta">Open a MAT file or TDT block</div>
             </div>
           </div>
           <div class="topbar-right">
-            <div class="mode-pill"><span id="hudMode">DATA</span></div>
-            <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true">open a MAT file or TDT block</div>
-            <span class="badge" id="stateBadge">IDLE</span>
+            <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+            <span class="badge" id="stateBadge">Idle</span>
           </div>
         </header>
 
         <nav class="mobile-nav" aria-label="Workspace">
-          <button class="nav-item active" data-page="data" type="button"><span class="nav-ico" aria-hidden="true">☰</span><span>Data</span></button>
-          <button class="nav-item" data-page="align" type="button"><span class="nav-ico" aria-hidden="true">∿</span><span>Align</span></button>
-          <button class="nav-item" data-page="trials" type="button"><span class="nav-ico" aria-hidden="true">▦</span><span>Trials</span></button>
-          <button class="nav-item" data-page="batch" type="button"><span class="nav-ico" aria-hidden="true">⧉</span><span>Batch</span></button>
+          <button class="nav-item active" data-page="data" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-data"/></svg><span>Data</span></button>
+          <button class="nav-item" data-page="align" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-align"/></svg><span>Align</span></button>
+          <button class="nav-item" data-page="trials" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-trials"/></svg><span>Trials</span></button>
+          <button class="nav-item" data-page="batch" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-batch"/></svg><span>Batch</span></button>
         </nav>
 
         <main class="content">
           <!-- DATA -->
-          <section class="page" id="page-data" data-page="data">
-            <div class="page-head">
+          <section class="page empty-mode" id="page-data" data-page="data">
+            <div class="page-head intake-head">
+              <div class="aurora-folds" aria-hidden="true"><i></i><i></i><i></i></div>
               <div>
-                <p class="eyebrow">01 · DATA</p>
+
                 <h1>Session intake</h1>
                 <p class="lede" id="dataLede">
-                  Open MATLAB exports, TDT tanks, or block folders, then choose an event to analyze.
+                  Open MATLAB exports or TDT recordings to begin.
                 </p>
               </div>
               <div class="page-actions">
-                <button class="btn" type="button" id="clearImportsBtn" disabled>Clear imports</button>
-                <button class="btn" type="button" id="openTdtBtn">Open TDT tanks</button>
                 <button class="btn btn-primary" type="button" id="openSessionBtn">Open MAT files</button>
+                <button class="btn" type="button" id="openTdtBtn">Open TDT tanks</button>
+                <button class="btn" type="button" id="clearImportsBtn" disabled>Clear imports</button>
                 <input
                   id="matFileInput"
                   type="file"
@@ -147,24 +137,24 @@
             </div>
 
             <div class="stat-grid" id="statRail">
-              <div class="card stat"><span>Duration</span><strong id="statDuration">—</strong></div>
-              <div class="card stat"><span>Channels</span><strong id="statChannels">—</strong></div>
-              <div class="card stat"><span>Epocs</span><strong id="statEpocs">—</strong></div>
-              <div class="card stat"><span>Trials</span><strong id="hudTrials">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-clock"/></svg><span>Duration</span><strong id="statDuration">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-align"/></svg><span>Channels</span><strong id="statChannels">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-epoc"/></svg><span>Epocs</span><strong id="statEpocs">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-trials"/></svg><span>Trials</span><strong id="hudTrials">—</strong></div>
             </div>
 
-            <div class="card" id="importQueueCard" style="margin-bottom: 14px">
+            <div class="card" id="importQueueCard">
               <div class="field-label-row">
                 <div>
-                  <div class="card-title" style="margin-bottom: 0">Imported sessions</div>
-                  <div class="quiet" id="importQueueMeta">No files loaded yet</div>
+                  <div class="section-label"><div class="card-title">Imported sessions</div><span class="chip" id="importQueueCount">0</span></div>
+                  <div class="quiet" id="importQueueMeta"></div>
                 </div>
                 <div class="queue-actions">
-                  <span class="chip" id="importQueueCount">0</span>
                   <button class="btn btn-sm btn-primary" type="button" id="dataContinueAlign" disabled>Continue to Align</button>
                 </div>
               </div>
-              <div class="trial-list" id="importQueue" role="list"></div>
+              <div class="trial-list" id="importQueue"></div>
+              <div class="queue-empty" id="queueEmpty"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-tray"/></svg><span>Your imported recordings will appear here.</span></div>
             </div>
 
             <div class="split equal">
@@ -194,9 +184,9 @@
           <section class="page hidden" id="page-align" data-page="align">
             <div class="page-head">
               <div>
-                <p class="eyebrow">02 · ALIGN</p>
-                <h1>Align + visualize</h1>
-                <p class="lede">Tune the event window and inspect linked mean±SEM + trial heatmap.</p>
+
+                <h1>Align &amp; visualize</h1>
+                <p class="lede">Set the event window and compare the mean response with individual trials.</p>
               </div>
             </div>
 
@@ -328,7 +318,7 @@
           <section class="page hidden" id="page-trials" data-page="trials">
             <div class="page-head">
               <div>
-                <p class="eyebrow">03 · TRIALS</p>
+
                 <h1>Trial explorer</h1>
                 <p class="lede">Filter trial labels and inspect how selected trials shape the response.</p>
               </div>
@@ -393,7 +383,7 @@
                   <label class="check"><input type="checkbox" id="trialApplyBaseline" checked /><span>Apply baseline correction</span></label>
                 </details>
                 <button class="btn btn-primary" type="button" id="trialLoad">Analyze trials</button>
-                <input class="search" id="trialSearch" type="search" placeholder="Search trial or label…" />
+                <input class="search" id="trialSearch" aria-label="Search trials or labels" type="search" placeholder="Search trial or label…" />
                 <div class="filter-grid" id="outcomeChips"></div>
                 <div class="inline-actions tight">
                   <button class="btn btn-sm" type="button" id="selAll">All visible</button>
@@ -443,7 +433,7 @@
           <section class="page hidden" id="page-batch" data-page="batch">
             <div class="page-head">
               <div>
-                <p class="eyebrow">04 · BATCH</p>
+
                 <h1>Batch export</h1>
                 <p class="lede">Analyze and export selected epoc × channel combinations across many MAT files or TDT blocks.</p>
               </div>
@@ -527,7 +517,7 @@
                   <div class="check-row">
                     <label class="check"><input type="checkbox" id="expCsv" checked /><span>CSV files</span></label>
                     <label class="check"><input type="checkbox" id="expFig" /><span>Figures</span></label>
-                    <select class="compact-select" id="figFormat">
+                    <select class="compact-select" id="figFormat" aria-label="Figure format">
                       <option>png</option>
                       <option>pdf</option>
                       <option>tiff</option>

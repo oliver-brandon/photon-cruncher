@@ -426,7 +426,7 @@ class UpdateDialog(QtWidgets.QDialog):
         layout.addWidget(self.heading)
 
         self.version_detail = QtWidgets.QLabel()
-        self.version_detail.setStyleSheet("color: #587083;")
+        self.version_detail.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
         layout.addWidget(self.version_detail)
 
         notes_label = QtWidgets.QLabel("What's new")
@@ -556,10 +556,10 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
 
         self._status = self.statusBar()
         self._status.setStyleSheet(
-            "QStatusBar { background: #0b1220; color: #8ba3b8; "
-            "border-top: 1px solid #1b2a3a; }"
+            "QStatusBar { background: #0c1522; color: #a7becb; "
+            "border-top: 1px solid #263b4b; padding: 2px 6px; }"
         )
-        self._status.showMessage(f"Backend {self._base_url} · photon_cruncher.service")
+        self._status.showMessage("Ready")
         self._build_update_indicator()
 
         self._build_menu()
@@ -596,14 +596,17 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
 
     def _build_menu(self) -> None:
         menu = self.menuBar()
-        menu.setStyleSheet(
-            """
-            QMenuBar { background: #0b1220; color: #e8f7ff; padding: 2px; }
-            QMenuBar::item:selected { background: #12343a; }
-            QMenu { background: #0f1724; color: #e8f7ff; border: 1px solid #1f3347; }
-            QMenu::item:selected { background: #164e56; }
-            """
-        )
+        # On macOS the menu bar and menus are system surfaces. Let Qt use
+        # native appearance and accessibility settings for those controls.
+        if sys.platform != "darwin":
+            menu.setStyleSheet(
+                """
+                QMenuBar { background: #0b1220; color: #e8f7ff; padding: 2px; }
+                QMenuBar::item:selected { background: #12343a; }
+                QMenu { background: #0f1724; color: #e8f7ff; border: 1px solid #1f3347; }
+                QMenu::item:selected { background: #164e56; }
+                """
+            )
 
         file_menu = menu.addMenu("&File")
         open_mat = file_menu.addAction("Open MAT Files…")
@@ -667,10 +670,11 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_BrowserReload)
         )
         self._update_indicator.setStyleSheet(
-            "QToolButton { color: #d8fbff; background: #155e63; "
-            "border: 1px solid #2dd4bf; border-radius: 4px; "
-            "padding: 3px 8px; margin: 1px 5px; } "
-            "QToolButton:hover { background: #18747a; }"
+            "QToolButton { color: #e2ffff; background: #164e56; "
+            "border: 1px solid #398f91; border-radius: 9px; "
+            "padding: 4px 10px; margin: 2px 6px; } "
+            "QToolButton:hover { background: #206b70; border-color: #6ad4c9; } "
+            "QToolButton:focus { border: 2px solid #90f3e3; }"
         )
         self._update_indicator.clicked.connect(self.show_update_dialog)
         self._update_indicator.hide()
@@ -861,7 +865,7 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
             return
         if not self._inject_shell_bootstrap():
             return
-        self._status.showMessage(f"Aurora ready · {self._base_url}", 4000)
+        self._status.showMessage("Aurora ready", 4000)
 
     def _inject_shell_bootstrap(self) -> bool:
         channel_script = QtCore.QFile(":/qtwebchannel/qwebchannel.js")

@@ -74,12 +74,7 @@
   let alignMatrixController = null;
   let trialMatrixController = null;
 
-  const modeNames = {
-    data: "DATA",
-    align: "ALIGN",
-    trials: "TRIALS",
-    batch: "BATCH",
-  };
+  const workspaces = ["data", "align", "trials", "batch"];
 
   function $(id) {
     return document.getElementById(id);
@@ -99,9 +94,7 @@
     el.textContent = msg;
     clearTimeout(toast._t);
     toast._t = setTimeout(() => {
-      el.textContent = hasSession()
-        ? "session ready"
-        : "open a MAT file or TDT block";
+      el.textContent = "";
     }, 4200);
   }
 
@@ -110,25 +103,25 @@
     if (!b) return;
     b.classList.remove("live", "dirty", "updating", "error");
     if (state.batchRunning) {
-      b.textContent = "EXPORTING";
+      b.textContent = "Exporting";
       b.classList.add("updating");
     } else if (state.alignRunState === "updating") {
-      b.textContent = "UPDATING";
+      b.textContent = "Updating";
       b.classList.add("updating");
     } else if (state.alignRunState === "failed") {
-      b.textContent = "ERROR";
+      b.textContent = "Error";
       b.classList.add("error");
     } else if (state.alignDirty) {
-      b.textContent = "CHANGES";
+      b.textContent = "Unapplied changes";
       b.classList.add("dirty");
     } else if (hasResults() || Object.keys(state.trialResultsByChannel).length) {
-      b.textContent = "ANALYZED";
+      b.textContent = "Analyzed";
       b.classList.add("live");
     } else if (hasSession()) {
-      b.textContent = "LOADED";
+      b.textContent = "Loaded";
       b.classList.add("live");
     } else {
-      b.textContent = "IDLE";
+      b.textContent = "Idle";
     }
   }
 
@@ -145,6 +138,7 @@
     }[status] || status;
     if (statusEl) statusEl.dataset.status = status;
     if (textEl) textEl.textContent = message || defaultText;
+    window.auroraBridge?.setStatus?.(message || defaultText);
     const current = status === "current" && hasResults() && !state.alignDirty;
     if ($("alignExportCsv")) $("alignExportCsv").disabled = !current;
     if ($("alignExportFig")) $("alignExportFig").disabled = !current;
@@ -737,14 +731,16 @@
   }
 
   function showView(name) {
-    state.view = modeNames[name] ? name : "data";
+    state.view = workspaces.includes(name) ? name : "data";
     document.querySelectorAll(".page").forEach((p) => {
       p.classList.toggle("hidden", p.dataset.page !== state.view);
     });
     document.querySelectorAll(".nav-item").forEach((b) => {
-      b.classList.toggle("active", b.dataset.page === state.view);
+      const current = b.dataset.page === state.view;
+      b.classList.toggle("active", current);
+      if (current) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
     });
-    if ($("hudMode")) $("hudMode").textContent = modeNames[state.view];
     if (state.view === "align") renderAlign();
     if (state.view === "trials") renderTrials();
     if (state.view === "batch") renderBatchPage();
@@ -1277,16 +1273,16 @@
     if (count) count.textContent = String(state.sources.length);
     if (meta) {
       meta.textContent = state.sources.length
-        ? "Click a session to analyze it · multi-select adds more files"
-        : "No files loaded yet";
+        ? "Select a recording to open it in Align."
+        : "";
     }
     state.sources.forEach((source) => {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "import-row" + (source.path === state.path ? " active" : "");
       const marker = document.createElement("span");
-      marker.className = "n";
-      marker.textContent = source.path === state.path ? "●" : "○";
+      marker.className = "selection-dot";
+      row.setAttribute("aria-pressed", String(source.path === state.path));
       const label = document.createElement("span");
       label.textContent = sourceLabel(source);
       const channels = document.createElement("span");
@@ -1307,13 +1303,7 @@
       });
       list.appendChild(row);
     });
-    if (!state.sources.length) {
-      const empty = document.createElement("div");
-      empty.className = "quiet";
-      empty.style.padding = "8px";
-      empty.textContent = "Open one or more MAT files to populate this list.";
-      list.appendChild(empty);
-    }
+    $("queueEmpty").hidden = state.sources.length > 0;
   }
 
   async function activateSource(path, sessionSummary) {
@@ -1827,7 +1817,6 @@
     state.alignDirty = true;
     setAlignRunState("updating");
     toast("analyzing…");
-    if (window.auroraBridge?.setStatus) window.auroraBridge.setStatus("Analyzing…");
     const requestId = ++alignRequestSequence;
     alignRequestController?.abort();
     alignMatrixController?.abort();
@@ -2772,14 +2761,14 @@
         "Multi-select MAT files (⌘/Ctrl-click) or TDT tanks/blocks. Click a session in Imported sessions to switch analysis focus.";
       $("dataLede").textContent =
         state.sources.length > 1
-          ? `${state.sources.length} sessions imported. Active session ready on Align / Trials / Batch.`
-          : "Session ready. Adjust processing on Align, filter trials, then export.";
+          ? `${state.sources.length} recordings imported. Select a recording below to continue.`
+          : "Session ready. Continue to Align to review the event response.";
     } else {
       openBtn.textContent = "Open MAT files";
       $("dataHint").textContent =
         "Multi-select MAT files or TDT tank/block folders. A tank expands to every nested block.";
       $("dataLede").textContent =
-        "Open one or more MATLAB exports or TDT tanks/blocks, then choose an event to analyze.";
+        "Open MATLAB exports or TDT recordings to begin.";
     }
     if (clearBtn) {
       clearBtn.disabled = !state.sources.length || state.batchRunning;
@@ -3312,7 +3301,6 @@
   }
 
   function onShellReady() {
-    toast("native shell connected");
     document.body.classList.add("shell-mode");
     if (window.auroraBridge?.savedExportDir) {
       bridgeCall("savedExportDir")
@@ -3328,6 +3316,13 @@
   }
 
   function wireChrome() {
+    const isMac = /mac/i.test(navigator.userAgentData?.platform || navigator.platform);
+    document.querySelectorAll(".nav-item kbd").forEach((hint) => {
+      const number = hint.textContent;
+      hint.textContent = isMac ? `⌘${number}` : `Ctrl+${number}`;
+      hint.parentElement.setAttribute("aria-keyshortcuts", `${isMac ? "Meta" : "Control"}+${number}`);
+      hint.setAttribute("aria-hidden", "true");
+    });
     document.querySelectorAll(".nav-item").forEach((b) => {
       b.addEventListener("click", () => showView(b.dataset.page));
     });
@@ -3435,9 +3430,6 @@
       .then((health) => {
         if (health.brand && $("brandSub")) {
           $("brandSub").textContent = health.brand;
-        }
-        if (health.ui_version && $("railMeta")) {
-          $("railMeta").textContent = `desktop workspace · v${health.ui_version}`;
         }
         document.title = health.title || document.title;
       })

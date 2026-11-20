@@ -45,19 +45,18 @@
     return value.toFixed(2).replace(/\.00$/, "");
   }
 
-  function ticksIncludingZero(min, max, intervals) {
+  function ticksIncludingZero(min, max, intervals, axisPixels, labelSpacing) {
     const span = max - min;
+    if (!span) return [min];
+    const hasZero = min <= 0 && max >= 0;
     const values = [];
     for (let i = 0; i <= intervals; i += 1) {
-      values.push(min + (span * i) / intervals);
+      const value = min + (span * i) / intervals;
+      // Reserve room for the event/baseline label when a grid tick almost coincides with zero.
+      if (!hasZero || Math.abs(value / span) * axisPixels >= labelSpacing) values.push(value);
     }
-    if (min <= 0 && max >= 0) values.push(0);
-    values.sort((a, b) => a - b);
-    const tolerance = Math.max(Math.abs(span), 1) * 1e-9;
-    return values.filter(
-      (value, index) =>
-        index === 0 || Math.abs(value - values[index - 1]) > tolerance
-    );
+    if (hasZero) values.push(0);
+    return values.sort((a, b) => a - b);
   }
 
   function clippedText(ctx, value, maxWidth) {
@@ -71,10 +70,7 @@
   }
 
   function fillPanel(ctx, w, h) {
-    const gradient = ctx.createLinearGradient(0, 0, w, h);
-    gradient.addColorStop(0, "rgba(4,10,18,0.95)");
-    gradient.addColorStop(1, "rgba(10,8,20,0.95)");
-    ctx.fillStyle = gradient;
+    ctx.fillStyle = "#111620";
     ctx.fillRect(0, 0, w, h);
   }
 
@@ -128,7 +124,7 @@
     ctx.font = "10px 'SFMono-Regular', Consolas, monospace";
     ctx.fillStyle = "rgba(139,163,184,0.88)";
     ctx.strokeStyle = "rgba(100,140,180,0.08)";
-    for (const value of ticksIncludingZero(yb.min, yb.max, 4)) {
+    for (const value of ticksIncludingZero(yb.min, yb.max, 4, plot.h, 14)) {
       const y = Y(value);
       ctx.beginPath();
       ctx.moveTo(plot.l, y);
@@ -137,7 +133,7 @@
       ctx.textAlign = "right";
       ctx.fillText(formatTick(value), plot.l - 7, y + 3);
     }
-    for (const value of ticksIncludingZero(x0, x1, 4)) {
+    for (const value of ticksIncludingZero(x0, x1, 4, plot.w, 28)) {
       const x = X(value);
       ctx.textAlign = "center";
       ctx.fillText(formatTick(value), x, plot.t + plot.h + 16);
@@ -208,7 +204,7 @@
     // glow pass
     ctx.save();
     ctx.shadowColor = color;
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 5;
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = 2.6;
@@ -347,7 +343,7 @@
       const x0 = times[0];
       const x1 = times[times.length - 1];
       const xSpan = x1 === x0 ? 1 : x1 - x0;
-      for (const value of ticksIncludingZero(x0, x1, 2)) {
+      for (const value of ticksIncludingZero(x0, x1, 2, plot.w, 28)) {
         const x = plot.l + ((value - x0) / xSpan) * plot.w;
         ctx.textAlign = "center";
         ctx.fillText(formatTick(value), x, plot.t + plot.h + 15);
