@@ -50,6 +50,9 @@ def main(output: Path) -> None:
         )
 
         window = AuroraShellWindow()
+        compact_size = window.minimumSize()
+        # Small remote desktops otherwise clamp the initial window to compact width.
+        window.setMinimumSize(1480, 940)
         window.resize(1480, 940)
         window.show()
 
@@ -76,6 +79,7 @@ def main(output: Path) -> None:
                 checked: document.querySelectorAll('#alignChannelSelectors input:checked').length,
                 exportEnabled: !document.querySelector('#alignExportCsv')?.disabled,
                 platform: document.documentElement?.dataset.platform,
+                railVisible: !!document.querySelector('.rail')?.getClientRects().length,
                 shortcut: document.querySelector('.nav-item[data-page=align]')?.getAttribute('aria-keyshortcuts'),
                 scroll: document.documentElement?.scrollWidth > innerWidth,
             })""")
@@ -114,7 +118,7 @@ def main(output: Path) -> None:
             javascript("document.querySelector('#openSessionBtn').click()")
             wait_until(lambda: inspect()["status"] == "current", "recording analysis")
             state = inspect()
-            if state["checked"] != 1 or not state["exportEnabled"]:
+            if not state["railVisible"] or state["checked"] != 1 or not state["exportEnabled"]:
                 raise AssertionError(f"Analysis controls are inconsistent: {state}")
             # A styled select remains a native keyboard-operable HTML control.
             javascript("document.querySelector('#alignHeatScaleMode').focus()")
@@ -130,11 +134,12 @@ def main(output: Path) -> None:
                 "automatic heatmap scale",
             )
             capture("align.png")
-            window.resize(1180, 760)
+            window.setMinimumSize(compact_size)
+            window.resize(compact_size)
             QtTest.QTest.qWait(1000)
             state = inspect()
-            if state["scroll"]:
-                raise AssertionError("Compact layout overflows horizontally")
+            if state["railVisible"] or state["scroll"]:
+                raise AssertionError(f"Incorrect compact layout: {state}")
             capture("compact.png")
             print(f"Desktop smoke passed: {state}")
         finally:
