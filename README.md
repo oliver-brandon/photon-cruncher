@@ -26,20 +26,25 @@ conclusions.
 
 ## Install and update
 
-Use the Windows x64 `.exe` or Apple Silicon macOS `.pkg` attached to the
-[latest stable release](https://github.com/oliver-brandon/photon-cruncher/releases/latest). Windows installers are not Authenticode
-signed and Windows SmartScreen may show a warning. macOS stable installers
-require Developer ID signing and notarization.
+**If your stable app has Help → Check for Updates…** (installed v1.2.0 or later),
+choose it, then select **Install and restart** when Aurora is offered.
 
-The existing stable update channel is retained for installed v1.2.0 and later
-apps. Use **Help → Check for Updates…**, then **Install and restart**, to upgrade
-a managed stable installation. Your existing Photon Cruncher shortcut opens Aurora. The older
-v1.1.4 ZIP build requires a fresh installer. Recordings and exports are stored
-outside the app installation.
+**If you don’t see Check for Updates…**, or you launch Photon Cruncher from an
+extracted ZIP such as v1.1.4, use the installer once to get automatic updates:
 
-The release files use the names `Photon-Cruncher-Aurora-v<version>-Windows.exe`
-and `Photon-Cruncher-Aurora-v<version>-macOS.pkg`. The installed app is named
-**Photon Cruncher**, and its window is titled **Photon Cruncher Aurora**.
+1. Quit Photon Cruncher and open the [latest stable release](https://github.com/oliver-brandon/photon-cruncher/releases/latest).
+2. Under **Assets**, download the file ending in **\`-Windows.exe\`** for Windows x64
+   or **\`-macOS.pkg\`** for an Apple Silicon Mac. Run it and follow the installer prompts.
+3. Open **Photon Cruncher** from the Windows Start menu or the Mac Applications
+   folder. The window title is **Photon Cruncher Aurora**. Use **Help → Check for Updates…**
+   to confirm you opened the installed copy. Replace any shortcut that still opens the old ZIP copy.
+
+The installer does not require moving your recordings or exports. If you are
+upgrading from before v1.2.1, read [Scientific comparisons](#scientific-comparisons)
+before comparing new results with older exports.
+
+Windows installers are not Authenticode signed and SmartScreen may show a warning.
+macOS stable installers are Developer ID signed and notarized.
 
 ## Developer source launch
 
