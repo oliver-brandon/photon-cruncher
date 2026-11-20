@@ -1,54 +1,49 @@
-from __future__ import annotations
+"""Stable entry point and settings compatibility for the Aurora upgrade."""
 
-import sys
-import types
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from photon_cruncher import main as app_main
+from PySide6 import QtCore
+
+from photon_cruncher import aurora_main, main
+from photon_cruncher.gui_aurora import shell
 
 
 class MainEntryTests(unittest.TestCase):
-    def test_velopack_startup_runs_before_qt_application(self) -> None:
-        events: list[str] = []
-        application = mock.Mock()
-        application.exec.return_value = 0
-        application_type = mock.Mock(
-            side_effect=lambda _argv: (events.append("qt"), application)[1]
-        )
-        window = mock.Mock()
-        main_window_type = mock.Mock(return_value=window)
-        pyside_module = types.ModuleType("PySide6")
-        pyside_module.QtWidgets = types.SimpleNamespace(
-            QApplication=application_type
-        )
-        main_window_module = types.ModuleType("photon_cruncher.gui.main_window")
-        main_window_module.MainWindow = main_window_type
-
+    def test_stable_launcher_starts_velopack_before_shell(self):
+        events = []
         with (
-            mock.patch.dict(
-                sys.modules,
-                {
-                    "PySide6": pyside_module,
-                    "photon_cruncher.gui.main_window": main_window_module,
-                },
-            ),
-            mock.patch.object(
-                app_main,
-                "run_velopack_startup",
-                side_effect=lambda: events.append("startup"),
-            ) as startup,
-            mock.patch.object(app_main, "_set_app_icon") as set_icon,
+            mock.patch.object(aurora_main, "development_mode_enabled", return_value=False),
+            mock.patch.object(aurora_main, "run_velopack_startup", side_effect=lambda: events.append("startup")),
+            mock.patch.object(shell, "run_shell", side_effect=lambda: events.append("shell") or 0),
         ):
-            result = app_main.main()
+            self.assertEqual(main.main([]), 0)
+        self.assertEqual(events, ["startup", "shell"])
 
-        self.assertEqual(result, 0)
-        self.assertEqual(events, ["startup", "qt"])
-        startup.assert_called_once_with()
-        set_icon.assert_called_once_with(application)
-        main_window_type.assert_called_once_with()
-        window.show.assert_called_once_with()
+    def test_installed_settings_domain_and_legacy_values(self):
+        app = mock.Mock()
+        app.exec.return_value = 0
+        with (
+            mock.patch.object(shell.QtWidgets.QApplication, "instance", return_value=app),
+            mock.patch.object(shell, "AuroraShellWindow"),
+            mock.patch.object(shell.QtCore.QCoreApplication, "setAttribute"),
+            mock.patch("photon_cruncher.product.set_app_icon"),
+        ):
+            self.assertEqual(shell.run_shell(), 0)
+        app.setOrganizationName.assert_called_once_with("PhotonCruncher")
+        app.setApplicationName.assert_called_once_with("PhotonCruncher")
+        app.setApplicationDisplayName.assert_called_once_with("Photon Cruncher Aurora")
 
-
-if __name__ == "__main__":
-    unittest.main()
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = QtCore.QSettings(str(Path(tmp) / "v1.ini"), QtCore.QSettings.Format.IniFormat)
+            settings.setValue("processing/trange_end", 4.0)
+            settings.setValue("processing/channel_smooth/A_465", 17)
+            settings.setValue("output_dir", tmp)
+            with mock.patch.object(shell.QtCore, "QSettings", return_value=settings):
+                config = json.loads(shell.AuroraBridge.savedProcessingSettings(None))
+                self.assertEqual(shell.AuroraBridge.savedExportDir(None), tmp)
+            self.assertEqual(config["trange_end"], 4.0)
+            self.assertEqual(config["channel_smoothing"]["A_465"], 17)

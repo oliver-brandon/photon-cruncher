@@ -1,89 +1,53 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
-import math
+import os
 from collections import Counter
-from dataclasses import asdict
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pandas as pd
 
 from photon_cruncher.processing.pipeline import ProcessedSignal, ProcessingSettings
-from photon_cruncher.version import APP_NAME, __version__
+
+if TYPE_CHECKING:
+    from matplotlib.figure import Figure
 
 
 def batch_output_directories(
     input_paths: list[Path], output_dir: Path, *, per_session_subdir: bool
 ) -> dict[Path, Path]:
-    paths = list(dict.fromkeys(Path(path).expanduser().resolve() for path in input_paths))
+    """Keep same-named sources separate, including on case-insensitive disks."""
+    paths = list(dict.fromkeys(path.expanduser().resolve() for path in input_paths))
     counts = Counter(path.stem.casefold() for path in paths)
-    destinations: dict[Path, Path] = {}
+    directories: dict[Path, Path] = {}
     for path in paths:
         if counts[path.stem.casefold()] > 1:
             identity = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
-            destinations[path] = output_dir / f"{path.stem}--{identity}"
+            directories[path] = output_dir / f"{path.stem}--{identity}"
         else:
-            destinations[path] = output_dir / path.stem if per_session_subdir else output_dir
-    return destinations
+            directories[path] = output_dir / path.stem if per_session_subdir else output_dir
+    return directories
 
 
-def check_export_source(output_dir: Path, prefix: str, source_path: str | Path) -> None:
-    manifest = output_dir / f"{prefix}_analysis.json"
-    if not manifest.exists():
+def check_export_source(manifest_path: Path, source_path: str | Path) -> None:
+    """Refuse to replace a different recording's existing export set."""
+    if not manifest_path.exists():
         return
-    previous = json.loads(manifest.read_text(encoding="utf-8")).get("source", {}).get("path")
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    previous = document.get("source", {}).get("path")
     if (
         not previous
         or Path(previous).expanduser().resolve() != Path(source_path).expanduser().resolve()
     ):
         raise ValueError(
-            f"Existing exports belong to another recording: {manifest}. "
+            f"Export destination already belongs to another source: {manifest_path}. "
             "Choose a different output folder."
         )
-
-
-def write_analysis_manifest(
-    output_dir: Path,
-    prefix: str,
-    source_path: str | Path,
-    epoc_name: str,
-    channel_key: str,
-    processed: ProcessedSignal,
-    settings: ProcessingSettings,
-) -> Path:
-    check_export_source(output_dir, prefix, source_path)
-    source = Path(source_path).expanduser().resolve()
-    setting_values = {
-        key: None if isinstance(value, float) and not math.isfinite(value) else value
-        for key, value in asdict(settings).items()
-    }
-    payload = {
-        "schema_version": 1,
-        "created_utc": datetime.now(UTC).isoformat(),
-        "application": {"name": APP_NAME, "version": __version__},
-        "source": {"path": str(source), "name": source.name},
-        "analysis": {
-            "epoc": epoc_name,
-            "channel": channel_key,
-            "pipeline": "control_to_signal_linear_v1",
-            "settings": setting_values,
-        },
-        "trials": {
-            "kept": int(processed.zall.shape[0]),
-            "numbers": processed.trial_numbers,
-            "labels": processed.trial_labels,
-            "dropped_incomplete": processed.dropped_edge_trials,
-            "artifact_removals": processed.num_artifacts,
-        },
-    }
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{prefix}_analysis.json"
-    path.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    return path
 
 
 def export_channel(
@@ -99,51 +63,221 @@ def export_channel(
     export_smoothed: bool = True,
     filename_suffix: str = "",
 ) -> Path:
+    _ = (dropped_trials, stream_store, settings)
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{session_name}_{epoc_name}_{channel_key}{filename_suffix}"
-    source_path = metadata.get("source_path")
-    if source_path:
-        check_export_source(output_dir, prefix, source_path)
+    if metadata.get("source_path"):
+        check_export_source(
+            analysis_manifest_path(
+                output_dir, session_name, epoc_name, channel_key, filename_suffix
+            ),
+            metadata["source_path"],
+        )
 
     z_data = processed.zall_smooth if export_smoothed else processed.zall
     heatmap_path = output_dir / f"{prefix}_heatmap.csv"
 
+    if z_data.ndim != 2 or processed.ts.shape != (z_data.shape[1],):
+        raise ValueError("Heatmap rows and the time vector must have the same width.")
     if z_data.shape[0] > 0:
         mean_trace = z_data.mean(axis=0)
     else:
         mean_trace = np.full_like(processed.ts, np.nan, dtype=float)
 
-    rows: list[list[object]] = []
-    rows.append(["TIME", *processed.ts.tolist()])
-    rows.append(["MEAN", *mean_trace.tolist()])
-    trial_numbers = (
-        processed.trial_numbers
-        if len(processed.trial_numbers) == z_data.shape[0]
-        else list(range(1, z_data.shape[0] + 1))
-    )
-    trial_labels = (
-        processed.trial_labels
-        if len(processed.trial_labels) == z_data.shape[0]
-        else [""] * z_data.shape[0]
-    )
-    for trial_number, trial_label, trial in zip(trial_numbers, trial_labels, z_data):
-        row_label = f"TRIAL_{trial_number:03d}"
-        if trial_label:
-            row_label += f"_{_label_slug(trial_label)}"
-        rows.append([row_label, *trial.tolist()])
-
-    pd.DataFrame(rows).to_csv(heatmap_path, index=False, header=False)
-    if source_path:
-        write_analysis_manifest(
-            output_dir, prefix, source_path, epoc_name, channel_key, processed, settings
-        )
+    labels = _heatmap_row_labels(processed, z_data.shape[0])
+    rows = chain((processed.ts, mean_trace), z_data)
+    row_format = ",".join(["%.10g"] * processed.ts.size)
+    with heatmap_path.open("w", encoding="utf-8", newline="") as handle:
+        for label, row in zip(labels, rows, strict=True):
+            numeric_row = row_format % tuple(row)
+            handle.write(f"{label},{numeric_row}\n")
     return heatmap_path
+
+
+def analysis_manifest_path(
+    output_dir: Path,
+    session_name: str,
+    epoc_name: str,
+    channel_key: str,
+    filename_suffix: str = "",
+) -> Path:
+    prefix = f"{session_name}_{epoc_name}_{channel_key}{filename_suffix}"
+    return output_dir / f"{prefix}_analysis.json"
+
+
+def write_analysis_manifest(path: Path, payload: dict[str, Any]) -> Path:
+    """Write a stable, human-readable provenance sidecar for one analysis."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    document = {
+        "schema_version": 1,
+        "created_utc": datetime.now(UTC).isoformat(),
+        **payload,
+    }
+    path.write_text(
+        json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def export_batch_summary(output_dir: Path, rows: list[dict[str, Any]]) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / "batch_summary.csv"
-    pd.DataFrame(rows).to_csv(summary_path, index=False)
+    fields = list(dict.fromkeys(key for row in rows for key in row))
+    with summary_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator=os.linesep)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def heatmap_trial_ticks(
+    processed: ProcessedSignal,
+    num_rows: int,
+    max_ticks: int = 12,
+) -> tuple[list[int], list[str]]:
+    """Label a bounded number of whole, odd-numbered ordinal trial rows."""
+    _ = processed
+    if num_rows <= 0:
+        return [], []
+    odd_rows = (num_rows + 1) // 2
+    indices = np.linspace(0, odd_rows - 1, min(odd_rows, max(1, max_ticks)))
+    tick_positions = [1 + 2 * int(round(index)) for index in indices]
+    tick_labels = [str(position) for position in tick_positions]
+    return tick_positions, tick_labels
+
+
+def result_figure_title(result: Any) -> str:
+    file_name = result.session.source_path.name or "Untitled session"
+    return f"{file_name} | Epoc: {result.epoc.name}"
+
+
+def _include_zero_tick(axis: Any, coordinate: str) -> None:
+    """Keep zero visible and explicitly labeled on a Matplotlib axis."""
+    if coordinate == "x":
+        get_limits = axis.get_xlim
+        set_limits = axis.set_xlim
+        get_ticks = axis.get_xticks
+        set_ticks = axis.set_xticks
+    elif coordinate == "y":
+        get_limits = axis.get_ylim
+        set_limits = axis.set_ylim
+        get_ticks = axis.get_yticks
+        set_ticks = axis.set_yticks
+    else:
+        raise ValueError("coordinate must be 'x' or 'y'")
+
+    lower, upper = get_limits()
+    lower, upper = min(lower, upper, 0.0), max(lower, upper, 0.0)
+    set_limits(lower, upper)
+    ticks = [
+        float(tick)
+        for tick in get_ticks()
+        if lower - 1e-12 <= float(tick) <= upper + 1e-12
+    ]
+    ticks.append(0.0)
+    set_ticks(sorted({0.0 if abs(tick) < 1e-12 else tick for tick in ticks}))
+
+
+def populate_result_figure(figure: "Figure", result: Any) -> None:
+    grid = figure.add_gridspec(1, 2, width_ratios=[2, 1])
+    ax_line = figure.add_subplot(grid[0, 0])
+    ax_heatmap = figure.add_subplot(grid[0, 1])
+    processed = result.processed
+    ts = processed.ts
+    if result.settings.plot_smooth:
+        z_data = processed.zall_smooth
+        mean = processed.mean_z_smooth
+        sem = processed.sem_z_smooth
+    else:
+        z_data = processed.zall
+        mean = processed.mean_z
+        sem = processed.sem_z
+
+    heatmap = ax_heatmap.imshow(
+        z_data,
+        aspect="auto",
+        origin="lower",
+        extent=[ts[0], ts[-1], 0.5, z_data.shape[0] + 0.5],
+        cmap="viridis",
+        interpolation="nearest",
+    )
+    ax_heatmap.set_title(f"{result.channel_key} z-score heatmap")
+    ax_heatmap.set_xlabel("Time (s)")
+    ax_heatmap.set_ylabel("Trial")
+    trial_tick_positions, trial_tick_labels = heatmap_trial_ticks(
+        processed, z_data.shape[0]
+    )
+    ax_heatmap.set_yticks(trial_tick_positions)
+    ax_heatmap.set_yticklabels(trial_tick_labels)
+    _include_zero_tick(ax_heatmap, "x")
+    figure.colorbar(heatmap, ax=ax_heatmap, orientation="vertical")
+
+    ax_line.plot(ts, mean, color="#1f77b4", linewidth=2, label="Mean z")
+    ax_line.fill_between(
+        ts, mean - sem, mean + sem, color="#1f77b4", alpha=0.2, label="SEM"
+    )
+    ax_line.axvline(0, color="#222222", linestyle="--", linewidth=1)
+    ax_line.axhline(0, color="#222222", linestyle="--", linewidth=1)
+    ax_line.set_xlabel("Time (s)")
+    ax_line.set_ylabel("Z-score")
+    ax_line.set_title("Mean \u00b1 SEM")
+    _include_zero_tick(ax_line, "x")
+    _include_zero_tick(ax_line, "y")
+    ax_line.legend(loc="upper right")
+
+    figure.suptitle(result_figure_title(result), fontsize=12, fontweight="bold")
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
+
+
+def save_result_figure(
+    output_dir: Path,
+    result: Any,
+    filename_suffix: str = "",
+    figure_format: str = "png",
+) -> Path:
+    from matplotlib.figure import Figure
+
+    check_export_source(
+        analysis_manifest_path(
+            output_dir, result.session.source_path.stem, result.epoc.name,
+            result.channel_key, filename_suffix,
+        ),
+        result.session.source_path,
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    figure = Figure(figsize=(10, 4.5))
+    try:
+        populate_result_figure(figure, result)
+        prefix = (
+            f"{result.session.source_path.stem}_{result.epoc.name}_"
+            f"{result.channel_key}{filename_suffix}"
+        )
+        figure_path = output_dir / f"{prefix}_summary.{figure_format}"
+        figure.savefig(figure_path, dpi=300, format=figure_format)
+    finally:
+        figure.clear()
+        del figure
+    return figure_path
+
+
+def _heatmap_row_labels(processed: ProcessedSignal, num_trials: int) -> list[str]:
+    trial_numbers = (
+        processed.trial_numbers
+        if len(processed.trial_numbers) == num_trials
+        else list(range(1, num_trials + 1))
+    )
+    trial_labels = (
+        processed.trial_labels
+        if len(processed.trial_labels) == num_trials
+        else [""] * num_trials
+    )
+    labels = ["TIME", "MEAN"]
+    for trial_number, trial_label in zip(trial_numbers, trial_labels):
+        row_label = f"TRIAL_{trial_number:03d}"
+        if trial_label:
+            row_label += f"_{_label_slug(trial_label)}"
+        labels.append(row_label)
+    return labels
 
 
 def _label_slug(label: str) -> str:

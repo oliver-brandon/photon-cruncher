@@ -7,7 +7,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from photon_cruncher import __version__, app_title
+from photon_cruncher import __version__
+from photon_cruncher.product import AURORA_UI_VERSION, bundle_app_name
 from photon_cruncher.version import (
     APP_NAME,
     ARCHIVE_STEM,
@@ -23,8 +24,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class VersionMetadataTests(unittest.TestCase):
     def test_runtime_names_derive_from_canonical_version(self) -> None:
-        self.assertEqual(app_title(), f"{APP_NAME} v{__version__}")
-        self.assertEqual(ARCHIVE_STEM, f"Photon-Cruncher-v{__version__}")
+        self.assertEqual(AURORA_UI_VERSION, __version__)
+        self.assertEqual(bundle_app_name(), f"{APP_NAME} v{__version__}")
+        self.assertEqual(ARCHIVE_STEM, f"Photon-Cruncher-Aurora-v{__version__}")
 
     def test_pyproject_uses_dynamic_package_version(self) -> None:
         pyproject = tomllib.loads(
@@ -58,17 +60,14 @@ class VersionMetadataTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn('--packTitle "${app_name}"', mac_script)
+        self.assertNotIn('--packTitle "${app_name} Dev"', mac_script)
         self.assertIn('--packTitle "$AppName"', windows_script)
-        self.assertIn("${INSTALLER_STEM}-Windows.exe", workflow)
-        self.assertIn("${INSTALLER_STEM}-macOS.pkg", workflow)
-        self.assertNotIn("aurora-dev", mac_script + windows_script + workflow)
+        self.assertNotIn('--packTitle "$AppName Dev"', windows_script)
+        self.assertIn("scripts/publish_stable_release.py", workflow)
+        self.assertIn("--field install_app_name", mac_script)
+        self.assertIn("--field install_app_name", windows_script)
 
     def test_repository_version_metadata_is_consistent(self) -> None:
-        env = {
-            **os.environ,
-            "PHOTON_CRUNCHER_UPDATE_SYSTEM": "Windows",
-            "PHOTON_CRUNCHER_UPDATE_MACHINE": "AMD64",
-        }
         completed = subprocess.run(
             [
                 sys.executable,
@@ -76,10 +75,14 @@ class VersionMetadataTests(unittest.TestCase):
                 "--check",
             ],
             cwd=PROJECT_ROOT,
-            env=env,
             check=False,
             capture_output=True,
             text=True,
+            env={
+                **os.environ,
+                "PHOTON_CRUNCHER_UPDATE_SYSTEM": "Windows",
+                "PHOTON_CRUNCHER_UPDATE_MACHINE": "AMD64",
+            },
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn(__version__, completed.stdout)

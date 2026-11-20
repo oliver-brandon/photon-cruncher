@@ -11,6 +11,8 @@ $DistDir = Join-Path $ProjectRoot "dist"
 $AppName = (& $PythonBin $VersionScript --field bundle_app_name).Trim()
 $ArchiveStem = (& $PythonBin $VersionScript --field archive_stem).Trim()
 $AppDir = Join-Path $DistDir $AppName
+$CliExe = Join-Path $DistDir "photon-cruncher-cli.exe"
+$CliTarget = Join-Path $AppDir "photon-cruncher-cli.exe"
 $ZipName = "$ArchiveStem-Windows.zip"
 $ZipPath = Join-Path $DistDir $ZipName
 
@@ -25,6 +27,7 @@ if (-not (Test-Path $VenvPython)) {
 
 & $VenvPython -m pip install --upgrade pip setuptools wheel
 & $VenvPython -m pip install -e "$ProjectRoot\photon_cruncher[build]"
+& $VenvPython -m pip install "PySide6-WebEngine>=6.6"
 & $VenvPython -m PyInstaller `
     --clean `
     --noconfirm `
@@ -36,13 +39,20 @@ if (Test-Path $ZipPath) {
     Remove-Item $ZipPath -Force
 }
 
+if (Test-Path $CliExe) {
+    Copy-Item $CliExe $CliTarget -Force
+}
+
 Compress-Archive -Path $AppDir -DestinationPath $ZipPath -Force
 
 Write-Host ""
-Write-Host "Built app:"
+Write-Host "Built Aurora app:"
 Write-Host "  $AppDir"
+Write-Host ""
+Write-Host "Built command-line access point:"
+Write-Host "  $CliTarget"
 Write-Host ""
 Write-Host "Built zip for GitHub/download sharing:"
 Write-Host "  $ZipPath"
 Write-Host ""
-Write-Host "You can unzip $ZipName anywhere and double-click '$AppName.exe'."
+Write-Host "Unzip $ZipName and double-click '$AppName.exe'."

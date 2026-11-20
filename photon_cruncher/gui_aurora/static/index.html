@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Photon Cruncher Aurora</title>
+    <link rel="icon" href="img/aurora-mark-64.png" />
+    <link rel="stylesheet" href="css/aurora.css" />
+  </head>
+  <body>
+    <svg class="symbol-defs" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <symbol id="icon-data" viewBox="0 0 24 24"><path d="M3 7.5V6a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1M3 8.5h17.5l-1.4 9a2 2 0 0 1-2 1.5H5a2 2 0 0 1-2-2z"/></symbol>
+      <symbol id="icon-align" viewBox="0 0 24 24"><path d="M2 12h4l2.5-6 4.4 13 3.1-9 2 2h4"/></symbol>
+      <symbol id="icon-trials" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9.5h18M3 15h18M9 4v16"/></symbol>
+      <symbol id="icon-batch" viewBox="0 0 24 24"><path d="m12 3 9 4.5-9 4.5-9-4.5zM3 12l9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></symbol>
+      <symbol id="icon-epoc" viewBox="0 0 24 24"><path d="M5 20V4m0 .8c5.5-3.5 8.2 3.3 14-.1v9c-5.8 3.2-8.5-3.6-14 0"/></symbol>
+      <symbol id="icon-tray" viewBox="0 0 24 24"><path d="M3 13.5 6.5 5h11l3.5 8.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 13h5l1.5 3h5l1.5-3h5"/></symbol>
+      <symbol id="icon-session" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M7 13h2l2-5 2.5 8 2-4H17"/></symbol>
+    </svg>
+
+    <div class="app" id="app">
+      <aside class="rail" aria-label="Primary">
+        <div class="rail-brand">
+          <div class="mark" id="brandMark" aria-hidden="true">
+            <img src="img/aurora-mark.png" alt="" width="38" height="38" />
+          </div>
+          <div>
+            <div class="brand-name">Photon Cruncher</div>
+            <div class="brand-sub" id="brandSub">Aurora</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Workspace">
+          <div class="nav-label">Workspace</div>
+          <button class="nav-item active" data-page="data" type="button">
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-data"/></svg>
+            <span>Session intake</span>
+            <kbd>1</kbd>
+          </button>
+          <button class="nav-item" data-page="align" type="button">
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-align"/></svg>
+            <span>Align &amp; visualize</span>
+            <kbd>2</kbd>
+          </button>
+          <button class="nav-item" data-page="trials" type="button">
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-trials"/></svg>
+            <span>Trial explorer</span>
+            <kbd>3</kbd>
+          </button>
+          <button class="nav-item" data-page="batch" type="button">
+            <svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-batch"/></svg>
+            <span>Batch export</span>
+            <kbd>4</kbd>
+          </button>
+        </nav>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="session-chip">
+            <span class="session-icon"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-session"/></svg></span>
+            <div>
+              <div class="session-name" id="hudSession">No session</div>
+              <div class="session-detail" id="orbitMeta">Open a MAT file or TDT block</div>
+            </div>
+          </div>
+          <div class="topbar-right">
+            <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+            <span class="badge" id="stateBadge">Idle</span>
+          </div>
+        </header>
+
+        <nav class="mobile-nav" aria-label="Workspace">
+          <button class="nav-item active" data-page="data" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-data"/></svg><span>Data</span></button>
+          <button class="nav-item" data-page="align" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-align"/></svg><span>Align</span></button>
+          <button class="nav-item" data-page="trials" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-trials"/></svg><span>Trials</span></button>
+          <button class="nav-item" data-page="batch" type="button"><svg class="symbol nav-ico" aria-hidden="true" focusable="false"><use href="#icon-batch"/></svg><span>Batch</span></button>
+        </nav>
+
+        <main class="content">
+          <!-- DATA -->
+          <section class="page empty-mode" id="page-data" data-page="data">
+            <div class="page-head intake-head">
+              <div class="aurora-folds" aria-hidden="true"><i></i><i></i><i></i></div>
+              <div>
+
+                <h1>Session intake</h1>
+                <p class="lede" id="dataLede">
+                  Open MATLAB exports or TDT recordings to begin.
+                </p>
+              </div>
+              <div class="page-actions">
+                <button class="btn btn-primary" type="button" id="openSessionBtn">Open MAT files</button>
+                <button class="btn" type="button" id="openTdtBtn">Open TDT tanks</button>
+                <button class="btn" type="button" id="clearImportsBtn" disabled>Clear imports</button>
+                <input
+                  id="matFileInput"
+                  type="file"
+                  accept=".mat,application/octet-stream"
+                  multiple
+                  hidden
+                />
+                <input
+                  id="tdtFolderInput"
+                  type="file"
+                  webkitdirectory
+                  directory
+                  multiple
+                  hidden
+                />
+                <input
+                  id="batchMatFileInput"
+                  type="file"
+                  accept=".mat,application/octet-stream"
+                  multiple
+                  hidden
+                />
+                <input
+                  id="batchFolderInput"
+                  type="file"
+                  webkitdirectory
+                  directory
+                  multiple
+                  hidden
+                />
+                <input
+                  id="batchTankInput"
+                  type="file"
+                  webkitdirectory
+                  directory
+                  multiple
+                  hidden
+                />
+                <input id="presetFileInput" type="file" accept=".json,application/json" hidden />
+              </div>
+            </div>
+
+            <div class="stat-grid" id="statRail">
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-clock"/></svg><span>Duration</span><strong id="statDuration">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-align"/></svg><span>Channels</span><strong id="statChannels">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-epoc"/></svg><span>Epocs</span><strong id="statEpocs">—</strong></div>
+              <div class="card stat"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-trials"/></svg><span>Trials</span><strong id="hudTrials">—</strong></div>
+            </div>
+
+            <div class="card" id="importQueueCard">
+              <div class="field-label-row">
+                <div>
+                  <div class="section-label"><div class="card-title">Imported sessions</div><span class="chip" id="importQueueCount">0</span></div>
+                  <div class="quiet" id="importQueueMeta"></div>
+                </div>
+                <div class="queue-actions">
+                  <button class="btn btn-sm btn-primary" type="button" id="dataContinueAlign" disabled>Continue to Align</button>
+                </div>
+              </div>
+              <div class="trial-list" id="importQueue"></div>
+              <div class="queue-empty" id="queueEmpty"><svg class="symbol" aria-hidden="true" focusable="false"><use href="#icon-tray"/></svg><span>Your imported recordings will appear here.</span></div>
+            </div>
+
+            <div class="split equal">
+              <div class="card">
+                <div class="card-title">Session</div>
+                <div class="session-hero">
+                  <div class="orbit-name" id="orbitName">No session open</div>
+                  <p class="quiet" id="sessionPath">No file loaded</p>
+                </div>
+                <div class="chip-cloud" id="channelChips"><span class="quiet">—</span></div>
+              </div>
+              <div class="card">
+                <div class="card-title">Epocs & classified sources</div>
+                <div class="chip-cloud" id="epocChips"><span class="quiet">—</span></div>
+                <p class="quiet" style="margin-top: 14px" id="dataHint">
+                  Select one or more MAT files or TDT folders. A tank includes its nested blocks.
+                </p>
+              </div>
+            </div>
+            <details class="card metadata-card">
+              <summary>Session metadata</summary>
+              <pre id="sessionMetadata">Open a session to inspect metadata.</pre>
+            </details>
+          </section>
+
+          <!-- ALIGN -->
+          <section class="page hidden" id="page-align" data-page="align">
+            <div class="page-head">
+              <div>
+
+                <h1>Align &amp; visualize</h1>
+                <p class="lede">Set the event window and compare the mean response with individual trials.</p>
+              </div>
+            </div>
+
+            <div class="align-action-bar" aria-label="Align analysis actions">
+              <div>
+                <div class="run-status" id="alignRunStatus" data-status="idle" role="status" aria-live="polite">
+                  <span class="run-status-dot" aria-hidden="true"></span>
+                  <span id="alignRunStatusText">Open a session</span>
+                </div>
+              </div>
+              <div class="align-action-buttons">
+                <button class="btn btn-primary" type="button" id="alignApply" disabled>Apply + analyze</button>
+                <button class="btn" type="button" id="alignExportCsv" disabled>Export CSV</button>
+                <button class="btn" type="button" id="alignExportFig" disabled>Export figure</button>
+              </div>
+            </div>
+
+            <div class="callout" id="alignCallout">
+              <span class="callout-mark">i</span>
+              <span id="alignCalloutText">Quality findings will appear here after analysis. Incomplete edge trials are dropped, not clipped.</span>
+            </div>
+
+            <div class="split align-layout">
+              <aside class="panel-stack">
+                <div class="card">
+                  <div class="card-title">Analysis source</div>
+                  <label class="field">
+                    <span>Preview file</span>
+                    <select id="alignSession"></select>
+                  </label>
+                  <label class="field">
+                    <span>Reference epoc</span>
+                    <select id="alignEpoc"></select>
+                  </label>
+                  <label class="field">
+                    <span>Display channel</span>
+                    <select id="alignChannel"></select>
+                  </label>
+                </div>
+                <div class="card">
+                  <div class="selector-head">
+                    <span class="card-title">Channels to analyze</span>
+                    <span class="selector-actions">
+                      <button class="text-btn" type="button" id="alignAllChannels">All</button>
+                      <button class="text-btn" type="button" id="alignNoChannels">None</button>
+                    </span>
+                  </div>
+                  <div class="selector-list" id="alignChannelSelectors">
+                    <span class="quiet">Open a session to choose channels.</span>
+                  </div>
+                </div>
+                <div class="card preset-card">
+                  <div class="card-title">Analysis preset</div>
+                  <label class="field">
+                    <span>Active preset</span>
+                    <select id="alignPreset"><option>Default</option></select>
+                  </label>
+                  <div class="preset-actions">
+                    <button class="btn btn-sm" type="button" id="alignPresetSave">Save</button>
+                    <button class="btn btn-sm" type="button" id="alignPresetImport">Import</button>
+                    <button class="btn btn-sm" type="button" id="alignPresetExport">Export</button>
+                    <button class="btn btn-sm" type="button" id="alignPresetDelete" disabled>Delete</button>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Processing window</div>
+                  <div class="field-grid">
+                    <label class="field"><span>TRANGE start</span><input id="tr0" type="number" min="-60" max="60" step="0.1" value="-2" /></label>
+                    <label class="field"><span>TRANGE end after epoc</span><input id="tr1" type="number" min="-60" max="120" step="0.1" value="5" /></label>
+                    <label class="field"><span>Baseline start</span><input id="b0" type="number" min="-60" max="60" step="0.1" value="-3" /></label>
+                    <label class="field"><span>Baseline end</span><input id="b1" type="number" min="-60" max="60" step="0.1" value="-1" /></label>
+                    <label class="field"><span>Baseline adjust</span><input id="baseAdjust" type="number" min="-120" max="0" step="0.1" value="-2" /></label>
+                    <label class="field"><span>Downsample</span><input id="downsample" type="number" min="1" max="200" step="1" value="10" /></label>
+                    <label class="field"><span>Smoothing window</span><input id="smoothFactor" type="number" min="1" step="1" value="10" /></label>
+                    <label class="field" id="polynomialDegreeField"><span>Polynomial fit degree</span><input id="polynomialDegree" type="number" min="1" step="1" value="1" /></label>
+                  </div>
+                  <label class="check"><input type="checkbox" id="useIsosbestic" checked /><span>Use 405 isosbestic fit (off = signal only)</span></label>
+                  <label class="check"><input type="checkbox" id="plotSmooth" checked /><span>Plot smoothed traces</span></label>
+                  <label class="check"><input type="checkbox" id="applyBaseline" checked /><span>Apply baseline correction</span></label>
+                </div>
+                <div class="inline-actions">
+                  <button class="btn" type="button" id="alignDefaults">Defaults</button>
+                </div>
+              </aside>
+
+              <div class="plot-card card align-plot-card">
+                <div class="plot-head">
+                  <div>
+                    <div class="card-title">Event-aligned response</div>
+                    <div class="quiet" id="alignSummary">Open a session to analyze</div>
+                  </div>
+                  <div class="metric-pills">
+                    <div class="pill"><span>peak</span><b id="rPeak">—</b></div>
+                    <div class="pill"><span>latency</span><b id="rLat">—</b></div>
+                    <div class="pill"><span>n</span><b id="rN">—</b></div>
+                    <div class="pill"><span>epoc</span><b id="alignTag">—</b></div>
+                  </div>
+                </div>
+                <div class="plot-toolbar" aria-label="Heatmap display controls">
+                  <span class="toolbar-label">Heatmap scale</span>
+                  <select id="alignHeatScaleMode" aria-label="Align heatmap scale mode">
+                    <option value="auto">Auto symmetric</option>
+                    <option value="locked">Locked range</option>
+                  </select>
+                  <label class="scale-limit-field"><span>±</span><input id="alignHeatScaleLimit" type="number" min="0.1" step="0.1" value="3" aria-label="Align heatmap locked z-score limit" /></label>
+                  <span class="scale-readout" id="alignScaleReadout">auto</span>
+                </div>
+                <div class="plot-grid">
+                  <canvas id="alignTrace" width="900" height="340" role="img" aria-label="Event-aligned mean response plot"></canvas>
+                  <canvas id="alignHeat" width="360" height="340" role="img" aria-label="Event-aligned trial heatmap"></canvas>
+                </div>
+                <div class="qc-section" aria-label="Active channel quality control">
+                  <div class="qc-title-row">
+                    <span class="card-title">Active channel QC</span>
+                    <span class="quiet" id="qcChannel">—</span>
+                  </div>
+                  <div class="qc-grid">
+                    <div class="qc-item"><span>Kept</span><strong id="qcKept">—</strong></div>
+                    <div class="qc-item"><span>Edge drops</span><strong id="qcEdges">—</strong></div>
+                    <div class="qc-item"><span>Artifacts</span><strong id="qcArtifacts">—</strong></div>
+                    <div class="qc-item"><span>Max |z|</span><strong id="qcMaxZ">—</strong></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- TRIALS -->
+          <section class="page hidden" id="page-trials" data-page="trials">
+            <div class="page-head">
+              <div>
+
+                <h1>Trial explorer</h1>
+                <p class="lede">Filter trial labels and inspect how selected trials shape the response.</p>
+              </div>
+              <div class="page-actions">
+                <button class="btn" type="button" id="trialExportCsv" disabled>Export CSV</button>
+                <button class="btn btn-primary" type="button" id="trialExportFig" disabled>Export figure</button>
+              </div>
+            </div>
+            <div class="split trial-layout">
+              <aside class="card trial-panel">
+                <div class="field-label-row">
+                  <div>
+                    <div class="card-title">Trial selection</div>
+                    <div class="quiet" id="trialSub">analyze a session first</div>
+                  </div>
+                  <span class="chip chip-accent" id="selLabel">0 selected</span>
+                </div>
+                <label class="field">
+                  <span>Preview file</span>
+                  <select id="trialSession"></select>
+                </label>
+                <label class="field">
+                  <span>Reference epoc</span>
+                  <select id="trialEpoc"></select>
+                </label>
+                <div class="selector-head">
+                  <span>Channels to analyze</span>
+                  <span class="selector-actions">
+                    <button class="text-btn" type="button" id="trialAllChannels">All</button>
+                    <button class="text-btn" type="button" id="trialNoChannels">None</button>
+                  </span>
+                </div>
+                <div class="selector-list" id="trialChannelSelectors">
+                  <span class="quiet">Open a session to choose channels.</span>
+                </div>
+                <div class="preset-block">
+                  <label class="field">
+                    <span>Analysis preset</span>
+                    <select id="trialPreset"><option>Default</option></select>
+                  </label>
+                  <div class="preset-actions">
+                    <button class="btn btn-sm" type="button" id="trialPresetSave">Save</button>
+                    <button class="btn btn-sm" type="button" id="trialPresetImport">Import</button>
+                    <button class="btn btn-sm" type="button" id="trialPresetExport">Export</button>
+                    <button class="btn btn-sm" type="button" id="trialPresetDelete" disabled>Delete</button>
+                  </div>
+                </div>
+                <details class="processing-details">
+                  <summary>Trial processing settings</summary>
+                  <div class="field-grid">
+                    <label class="field"><span>TRANGE start</span><input id="trialTr0" type="number" min="-60" max="60" step="0.1" value="-2" /></label>
+                    <label class="field"><span>TRANGE end after epoc</span><input id="trialTr1" type="number" min="-60" max="120" step="0.1" value="5" /></label>
+                    <label class="field"><span>Baseline start</span><input id="trialB0" type="number" min="-60" max="60" step="0.1" value="-3" /></label>
+                    <label class="field"><span>Baseline end</span><input id="trialB1" type="number" min="-60" max="60" step="0.1" value="-1" /></label>
+                    <label class="field"><span>Baseline adjust</span><input id="trialBaseAdjust" type="number" min="-120" max="0" step="0.1" value="-2" /></label>
+                    <label class="field"><span>Downsample</span><input id="trialDownsample" type="number" min="1" max="200" step="1" value="10" /></label>
+                    <label class="field"><span>Smoothing window</span><input id="trialSmoothFactor" type="number" min="1" step="1" value="10" /></label>
+                    <label class="field" id="trialPolynomialDegreeField"><span>Polynomial fit degree</span><input id="trialPolynomialDegree" type="number" min="1" step="1" value="1" /></label>
+                  </div>
+                  <label class="check"><input type="checkbox" id="trialUseIsosbestic" checked /><span>Use 405 isosbestic fit (off = signal only)</span></label>
+                  <label class="check"><input type="checkbox" id="trialPlotSmooth" checked /><span>Plot smoothed traces</span></label>
+                  <label class="check"><input type="checkbox" id="trialApplyBaseline" checked /><span>Apply baseline correction</span></label>
+                </details>
+                <button class="btn btn-primary" type="button" id="trialLoad">Analyze trials</button>
+                <input class="search" id="trialSearch" aria-label="Search trials or labels" type="search" placeholder="Search trial or label…" />
+                <div class="filter-grid" id="outcomeChips"></div>
+                <div class="inline-actions tight">
+                  <button class="btn btn-sm" type="button" id="selAll">All visible</button>
+                  <button class="btn btn-sm" type="button" id="selNone">None</button>
+                  <button class="btn btn-sm" type="button" id="selInvert">Invert</button>
+                </div>
+                <div class="trial-list" id="trialStream" role="list"></div>
+              </aside>
+              <div class="plot-stack">
+                <div class="callout" id="trialCallout">
+                  <span class="callout-mark">i</span>
+                  <span id="trialCalloutText">Analyze trials, then use labels and checkboxes to refine the plots.</span>
+                </div>
+                <div class="plot-card card grow">
+                  <div class="plot-head">
+                    <div>
+                      <div class="card-title">Selected-trial response</div>
+                      <div class="quiet" id="trialSummary">—</div>
+                    </div>
+                    <div class="plot-tools">
+                      <select id="trialChannel" aria-label="Displayed trial channel"></select>
+                      <select id="trialMode" aria-label="Trial plot mode">
+                        <option value="mean">Mean ± SEM</option>
+                        <option value="individual">Individual overlay</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="plot-toolbar" aria-label="Trial heatmap display controls">
+                    <span class="toolbar-label">Heatmap scale</span>
+                    <select id="trialHeatScaleMode" aria-label="Trial heatmap scale mode">
+                      <option value="auto">Auto symmetric</option>
+                      <option value="locked">Locked range</option>
+                    </select>
+                    <label class="scale-limit-field"><span>±</span><input id="trialHeatScaleLimit" type="number" min="0.1" step="0.1" value="3" aria-label="Trial heatmap locked z-score limit" /></label>
+                    <span class="scale-readout" id="trialScaleReadout">auto</span>
+                  </div>
+                  <div class="plot-grid">
+                    <canvas id="trialTrace" width="900" height="320" role="img" aria-label="Selected-trial response plot"></canvas>
+                    <canvas id="trialHeat" width="360" height="320" role="img" aria-label="Selected-trial heatmap"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- BATCH -->
+          <section class="page hidden" id="page-batch" data-page="batch">
+            <div class="page-head">
+              <div>
+
+                <h1>Batch export</h1>
+                <p class="lede">Analyze and export selected epoc × channel combinations across many MAT files or TDT blocks.</p>
+              </div>
+              <div class="page-actions">
+                <button class="btn" type="button" id="abortBatch" disabled>Cancel</button>
+                <button class="btn btn-primary" type="button" id="launchBatch" disabled>Export results</button>
+              </div>
+            </div>
+            <div class="batch-grid">
+              <div class="stack">
+                <div class="card">
+                  <div class="card-title">Batch data sources</div>
+                  <p class="quiet" id="batchSessionDetail">Add MAT files, a mixed-data folder, or a TDT tank.</p>
+                  <div class="inline-actions tight">
+                    <button class="btn btn-sm" type="button" id="batchAddFiles">Add files</button>
+                    <button class="btn btn-sm" type="button" id="batchAddFolder">Add folder</button>
+                    <button class="btn btn-sm" type="button" id="batchAddTank">Add TDT tank</button>
+                    <button class="btn btn-sm" type="button" id="batchClearSources">Clear imports</button>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="table">
+                      <thead><tr><th>Source</th><th>Channels</th><th>Epocs</th></tr></thead>
+                      <tbody id="batchList"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Batch selection</div>
+                  <div class="selector-section">
+                    <label class="field">
+                      <span>Suffix handling</span>
+                      <select id="batchEpocPolicy">
+                        <option value="all">Exact checked epocs</option>
+                        <option value="prefer_left">Prefer A / 1_ when both exist</option>
+                        <option value="prefer_right">Prefer C / 2_ when both exist</option>
+                      </select>
+                    </label>
+                    <div class="selector-head">
+                      <span>Epocs</span>
+                      <span class="selector-actions">
+                        <button class="text-btn" type="button" id="batchAllEpocs">All</button>
+                        <button class="text-btn" type="button" id="batchNoEpocs">None</button>
+                        <button class="text-btn" type="button" id="batchLeftEpocs">Only A / 1_</button>
+                        <button class="text-btn" type="button" id="batchRightEpocs">Only C / 2_</button>
+                      </span>
+                    </div>
+                    <div class="selector-list" id="batchEpocSelectors">
+                      <span class="quiet">Open a session to choose epocs.</span>
+                    </div>
+                  </div>
+                  <div class="selector-section">
+                    <div class="selector-head">
+                      <span>Channels</span>
+                      <span class="selector-actions">
+                        <button class="text-btn" type="button" id="batchAllChannels">All</button>
+                        <button class="text-btn" type="button" id="batchNoChannels">None</button>
+                      </span>
+                    </div>
+                    <div class="selector-list" id="batchChannelSelectors">
+                      <span class="quiet">Open a session to choose channels.</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Export destination</div>
+                  <div class="path-row">
+                    <input
+                      id="exportDir"
+                      type="text"
+                      aria-label="Export destination folder"
+                      placeholder="Choose a folder for CSV and figure exports"
+                    />
+                    <button class="btn" type="button" id="chooseExportDir">Choose folder…</button>
+                  </div>
+                  <p class="quiet destination-hint">
+                    The selected folder is reused for this app session.
+                  </p>
+                </div>
+                <div class="card">
+                  <div class="card-title">Outputs</div>
+                  <div class="check-row">
+                    <label class="check"><input type="checkbox" id="expCsv" checked /><span>CSV files</span></label>
+                    <label class="check"><input type="checkbox" id="expFig" /><span>Figures</span></label>
+                    <select class="compact-select" id="figFormat" aria-label="Figure format">
+                      <option>png</option>
+                      <option>pdf</option>
+                      <option>tiff</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="stack">
+                <div class="card batch-config-card">
+                  <div class="field-label-row">
+                    <div>
+                      <div class="card-title" style="margin-bottom: 0">Analysis configuration</div>
+                      <div class="quiet">Uses the last applied Align settings</div>
+                    </div>
+                    <button class="btn btn-sm" type="button" id="batchEditConfig">Edit in Align</button>
+                  </div>
+                  <div class="config-state" id="batchConfigState" data-status="idle">Open a session to configure analysis</div>
+                  <div class="config-preset"><span>Preset</span><strong id="batchConfigPreset">Default</strong></div>
+                  <p class="config-summary" id="batchConfigSummary">No applied configuration yet.</p>
+                </div>
+                <div class="card metrics-card">
+                  <div class="card-title">Summary</div>
+                  <div class="metric-grid">
+                    <div><div class="metric-value" id="mChannels">—</div><div class="metric-label">channels</div></div>
+                    <div><div class="metric-value" id="mTrials">—</div><div class="metric-label">sources</div></div>
+                    <div><div class="metric-value" id="mEpoc">—</div><div class="metric-label">epocs</div></div>
+                    <div><div class="metric-value" id="mMode">idle</div><div class="metric-label">status</div></div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Progress</div>
+                  <div class="field-label-row">
+                    <span class="chip" id="batchStatus" role="status" aria-live="polite">Ready</span>
+                    <span class="quiet" id="batchDetail">idle</span>
+                    <strong id="batchPct">0%</strong>
+                  </div>
+                  <div class="progress"><div class="progress-bar" id="batchBar" style="width:0%"></div></div>
+                </div>
+                <div class="card">
+                  <div class="card-title">Batch results</div>
+                  <div class="table-wrap batch-results-wrap">
+                    <table class="table batch-results-table">
+                      <thead>
+                        <tr><th>Status</th><th>Source</th><th>Epoc</th><th>Channels</th><th>Detail</th></tr>
+                      </thead>
+                      <tbody id="batchResults">
+                        <tr><td colspan="5" class="quiet">No batch results yet</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="js/plots.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

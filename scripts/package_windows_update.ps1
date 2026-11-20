@@ -13,14 +13,14 @@ $OutputDir = if ($env:VELOPACK_OUTPUT_DIR) {
 }
 $StageDir = Join-Path $ProjectRoot "build\velopack\windows"
 $ReleaseNotes = Join-Path $ProjectRoot "packaging\velopack\release-notes.md"
-$IconPath = Join-Path $ProjectRoot "photon_cruncher\assets\icons\photon-cruncher.ico"
+$IconPath = Join-Path $ProjectRoot "photon_cruncher\assets\icons\photon-cruncher-aurora.ico"
 
 if ($env:VELOPACK_SKIP_BUILD -ne "1") {
     & $BuildScript
 }
 
 $Version = (& $PythonBin $VersionScript --field version).Trim()
-$AppName = (& $PythonBin $VersionScript --field app_name).Trim()
+$AppName = (& $PythonBin $VersionScript --field install_app_name).Trim()
 $BundleAppName = (& $PythonBin $VersionScript --field bundle_app_name).Trim()
 $PackageId = (& $PythonBin $VersionScript --field update_package_id).Trim()
 $Channel = (& $PythonBin $VersionScript --field update_channel).Trim()

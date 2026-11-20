@@ -1,19 +1,20 @@
-"""Canonical product and version metadata for stable Photon Cruncher."""
+"""Canonical product and version metadata for Photon Cruncher Aurora."""
 
 from __future__ import annotations
 
 import platform
 
 
-__version__ = "1.2.1"
-APP_NAME = "Photon Cruncher"
+__version__ = "2.1.0"
+APP_NAME = "Photon Cruncher Aurora"
+AURORA_CODENAME = "aurora"
+INSTALL_APP_NAME = "Photon Cruncher"
 BUNDLE_IDENTIFIER = "com.photoncruncher.app"
 UPDATE_PACKAGE_ID = BUNDLE_IDENTIFIER
 UPDATE_CHANNEL_PREFIX = "stable"
 UPDATE_REPOSITORY_URL = "https://github.com/oliver-brandon/photon-cruncher"
 UPDATE_TAG_PREFIX = "v"
 VELOPACK_VERSION = "1.2.0"
-
 
 def update_target(
     system_name: str | None = None,
@@ -41,7 +42,7 @@ def update_target(
     return f"{UPDATE_CHANNEL_PREFIX}-{runtime}", runtime
 
 
-UI_VERSION = __version__
+AURORA_UI_VERSION = __version__
 BUNDLE_APP_NAME = f"{APP_NAME} v{__version__}"
-ARCHIVE_STEM = f"Photon-Cruncher-v{__version__}"
+ARCHIVE_STEM = f"Photon-Cruncher-Aurora-v{__version__}"
 UPDATE_RELEASE_TAG = f"{UPDATE_TAG_PREFIX}{__version__}"

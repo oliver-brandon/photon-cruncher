@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import csv
+import io
+import json
 import os
 import sys
 import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
+from scipy.io import savemat
 
 from photon_cruncher.io.loader import (
     discover_tdt_block_paths,
@@ -41,6 +46,34 @@ class Struct:
 
 
 class LoaderTests(unittest.TestCase):
+    def _invoke_cli(self, args: list[str]):
+        from photon_cruncher import cli
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = cli.main(args)
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    def _synthetic_cli_session(self) -> PhotometrySession:
+        return PhotometrySession(
+            streams={
+                "x405A": Stream(
+                    name="x405A",
+                    fs=10.0,
+                    data=np.linspace(1.0, 40.0, 400),
+                ),
+                "x465A": Stream(
+                    name="x465A",
+                    fs=10.0,
+                    data=np.linspace(2.0, 80.0, 400) ** 1.01,
+                ),
+            },
+            epocs={"Cue": Epoc(name="Cue", onset=np.array([10.0, 20.0]))},
+            info={"subject": "synthetic"},
+            source_path=Path("synthetic.mat"),
+        )
+
     def _load_local_mat_fixture(self, filename: str):
         path = Path("local-test-data") / "mat" / filename
         if not path.exists():
@@ -96,6 +129,32 @@ class LoaderTests(unittest.TestCase):
             )
             self.assertEqual(discover_tdt_block_paths(block_a), [block_a])
 
+    def test_service_discovers_nested_mat_and_tdt_sources(self) -> None:
+        from photon_cruncher.service import discover_data_sources
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            top_level_mat = root / "top.mat"
+            nested_mat = root / "nested" / "recording.mat"
+            uppercase_mat = root / "uppercase.MAT"
+            block = root / "tank" / "BlockA"
+            top_level_mat.write_bytes(b"")
+            nested_mat.parent.mkdir()
+            nested_mat.write_bytes(b"")
+            uppercase_mat.write_bytes(b"")
+            block.mkdir(parents=True)
+            (block / "BlockA.tsq").write_bytes(b"")
+
+            self.assertEqual(
+                discover_data_sources(root),
+                [
+                    nested_mat.resolve(),
+                    top_level_mat.resolve(),
+                    uppercase_mat.resolve(),
+                    block.resolve(),
+                ],
+            )
+
     def test_load_session_reads_tdt_streams_and_epocs(self) -> None:
         fake_tdt = types.SimpleNamespace()
         fake_tdt.read_block = lambda _: Struct(
@@ -112,7 +171,10 @@ class LoaderTests(unittest.TestCase):
                     onset=np.array([10.0, 20.0]),
                     offset=np.array([11.0, 21.0]),
                     data=np.array([1, 2]),
-                )
+                ),
+                "Cam1": Struct(onset=np.arange(1000, dtype=float)),
+                "Cam2": Struct(onset=np.arange(1000, dtype=float)),
+                "Tick": Struct(onset=np.arange(1000, dtype=float)),
             },
             info=Struct(subject="Mouse1"),
         )
@@ -133,6 +195,7 @@ class LoaderTests(unittest.TestCase):
                 np.array([4.0, 5.0, 6.0]),
             )
             self.assertEqual(session.streams["x465A"].t0, 0.5)
+            self.assertEqual(sorted(session.epocs), ["CueA"])
             np.testing.assert_array_equal(
                 session.epocs["CueA"].onset,
                 np.array([10.0, 20.0]),
@@ -144,6 +207,35 @@ class LoaderTests(unittest.TestCase):
                 sys.modules.pop("tdt", None)
             else:
                 sys.modules["tdt"] = original_tdt
+
+    def test_load_session_ignores_camera_and_tick_mat_epocs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ignored-epocs.mat"
+            savemat(
+                path,
+                {
+                    "data": {
+                        "streams": {
+                            "x465A": {
+                                "fs": 10.0,
+                                "data": np.linspace(0.0, 1.0, 100),
+                            }
+                        },
+                        "epocs": {
+                            "Cue": {"onset": np.array([2.0, 4.0])},
+                            "Cam1": {"onset": np.arange(1000, dtype=float)},
+                            "CAM2": {"onset": np.arange(1000, dtype=float)},
+                            "tick": {"onset": np.arange(1000, dtype=float)},
+                        },
+                        "info": {"subject": "synthetic"},
+                    }
+                },
+            )
+
+            session = load_session(path)
+
+        self.assertEqual(sorted(session.epocs), ["Cue"])
+        np.testing.assert_array_equal(session.epocs["Cue"].onset, [2.0, 4.0])
 
     def test_trial_extraction_uses_stream_start_time(self) -> None:
         stream = np.arange(10, dtype=float)
@@ -363,12 +455,10 @@ class LoaderTests(unittest.TestCase):
             info={},
             source_path=Path("synthetic.mat"),
         )
-        export_calls = []
-        original_load_session = runner.load_session
-        original_export_channel = runner.export_channel
-        runner.load_session = lambda _: session
-        runner.export_channel = lambda **kwargs: export_calls.append(kwargs)
-        try:
+        with (
+            mock.patch.object(runner, "load_session", return_value=session),
+            mock.patch.object(runner, "export_result_csv") as export_csv,
+        ):
             with tempfile.TemporaryDirectory() as tmp:
                 settings = ProcessingSettings(
                     trange=(-1.0, 1.0),
@@ -386,13 +476,742 @@ class LoaderTests(unittest.TestCase):
                     per_session_subdir=True,
                     export_csv=False,
                 )
-        finally:
-            runner.load_session = original_load_session
-            runner.export_channel = original_export_channel
-
-        self.assertEqual(export_calls, [])
+        export_csv.assert_not_called()
         self.assertEqual(len(exported), 1)
         self.assertEqual(exported[0].channel, "A_465")
+
+    def test_batch_custom_reports_partial_failures_without_reloading_sources(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        success = self._synthetic_cli_session()
+        success.source_path = Path("success.mat")
+        empty = PhotometrySession(
+            streams=success.streams,
+            epocs={"Cue": Epoc(name="Cue", onset=np.array([]))},
+            info={},
+            source_path=Path("empty.mat"),
+        )
+        load_paths: list[Path] = []
+
+        def load(path: Path) -> PhotometrySession:
+            load_paths.append(Path(path))
+            if path.name == "broken.mat":
+                raise ValueError("unreadable source")
+            return empty if path.name == "empty.mat" else success
+
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+        outcomes: list[runner.BatchOutcome] = []
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            runner, "load_session", side_effect=load
+        ):
+            exported = runner.run_batch_custom(
+                input_paths=[
+                    Path("success.mat"),
+                    Path("empty.mat"),
+                    Path("broken.mat"),
+                ],
+                epoc_selections=[("Cue", ("Cue",))],
+                output_dir=Path(tmp),
+                channel_keys=["A_465", "C_465"],
+                settings_factory=lambda _: settings,
+                export_csv=False,
+                outcomes=outcomes,
+            )
+
+        self.assertEqual(load_paths, [
+            Path("success.mat"),
+            Path("empty.mat"),
+            Path("broken.mat"),
+        ])
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(
+            [(outcome.status, outcome.session, outcome.epoc) for outcome in outcomes],
+            [
+                ("skipped", "success", "Cue"),
+                ("skipped", "empty", "Cue"),
+                ("error", "broken", ""),
+            ],
+        )
+        self.assertEqual(outcomes[0].channels, ("C_465",))
+        self.assertIn("not available", outcomes[0].reason.lower())
+        self.assertEqual(outcomes[1].channels, ("A_465", "C_465"))
+        self.assertIn("no events", outcomes[1].reason.lower())
+        self.assertIn("unreadable source", outcomes[2].reason)
+
+    def test_batch_custom_loads_each_source_once_for_multiple_epocs(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = self._synthetic_cli_session()
+        session.epocs["Second"] = session.epocs["Cue"]
+        load_calls: list[Path] = []
+        progress: list[tuple[int, int, str]] = []
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exported = runner.run_batch_custom(
+                input_paths=[Path("synthetic.mat")],
+                epoc_selections=[
+                    ("Cue", ("Cue",)),
+                    ("Second", ("Second",)),
+                ],
+                output_dir=Path(tmp),
+                channel_keys=["A_465"],
+                settings_factory=lambda _: settings,
+                export_csv=False,
+                session_loader=lambda path: (
+                    load_calls.append(Path(path)) or session
+                ),
+                progress_callback=lambda completed, total, detail: progress.append(
+                    (completed, total, detail)
+                ),
+            )
+
+        self.assertEqual(load_calls, [Path("synthetic.mat")])
+        self.assertEqual(len(exported), 2)
+        self.assertEqual(progress[-1][:2], (2, 2))
+
+    def test_batch_custom_stops_before_the_next_selection_when_cancelled(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = self._synthetic_cli_session()
+        session.epocs["Second"] = session.epocs["Cue"]
+        cancelled = False
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+
+        def progress(_completed: int, _total: int, detail: str) -> None:
+            nonlocal cancelled
+            if detail.startswith("Finished"):
+                cancelled = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            exported = runner.run_batch_custom(
+                input_paths=[Path("synthetic.mat")],
+                epoc_selections=[
+                    ("Cue", ("Cue",)),
+                    ("Second", ("Second",)),
+                ],
+                output_dir=Path(tmp),
+                channel_keys=["A_465"],
+                settings_factory=lambda _: settings,
+                export_csv=False,
+                session_loader=lambda _path: session,
+                cancel_requested=lambda: cancelled,
+                progress_callback=progress,
+            )
+
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].epoc, "Cue")
+
+    def test_batch_custom_retains_result_when_csv_export_fails(self) -> None:
+        from photon_cruncher.analysis import runner
+
+        session = self._synthetic_cli_session()
+        session.source_path = Path("synthetic.mat")
+        settings = ProcessingSettings(
+            trange=(-1.0, 1.0),
+            baseline_per=(-1.0, 0.0),
+            set_baseline=False,
+            downsample_factor=1,
+            smooth_factor=1,
+        )
+        outcomes: list[runner.BatchOutcome] = []
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            runner, "load_session", return_value=session
+        ), mock.patch.object(runner, "export_result_csv", side_effect=OSError("disk full")):
+            exported = runner.run_batch_custom(
+                input_paths=[Path("synthetic.mat")],
+                epoc_selections=[("Cue", ("Cue",))],
+                output_dir=Path(tmp),
+                channel_keys=["A_465"],
+                settings_factory=lambda _: settings,
+                export_csv=True,
+                outcomes=outcomes,
+            )
+
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].channel, "A_465")
+        self.assertIsNone(exported[0].csv_path)
+        self.assertEqual(outcomes[0].status, "error")
+        self.assertEqual(outcomes[0].channels, ("A_465",))
+        self.assertIn("disk full", outcomes[0].reason)
+
+    def test_cli_validate_config_accepts_minimal_analyze_config(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "exports": {"csv": True, "figures": False},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["config"]["processing"]["baseline_adjust"], -2.0)
+        self.assertTrue(payload["config"]["processing"]["use_isosbestic"])
+        self.assertEqual(payload["config"]["processing"]["polynomial_degree"], 1)
+
+    def test_cli_validate_config_preserves_isosbestic_settings(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "processing": {
+                "use_isosbestic": False,
+                "polynomial_degree": 3,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        processing = json.loads(stdout)["config"]["processing"]
+        self.assertFalse(processing["use_isosbestic"])
+        self.assertEqual(processing["polynomial_degree"], 3)
+
+    def test_cli_validate_config_rejects_bad_polynomial_degree(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "processing": {"polynomial_degree": 0},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(stdout)
+        self.assertIn("polynomial_degree", payload["errors"][0]["message"])
+
+    def test_cli_validate_config_rejects_bad_trange(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "output_dir": "exports",
+            "epocs": ["Cue"],
+            "processing": {"trange_start": 5.0, "trange_end": -2.0},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 2)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["valid"])
+        self.assertIn("trange_start", payload["errors"][0]["message"])
+
+    def test_cli_validate_config_rejects_malformed_sections_and_values(self) -> None:
+        cases = [
+            {"processing": "not an object"},
+            {"processing": []},
+            {"processing": {"smooth_factor": "abc"}},
+            {"processing": {"downsample_factor": True}},
+            {"trial_filter": {"trial_numbers": "1,2"}},
+            {"trial_filter": {"trial_numbers": [True]}},
+            {"channel_settings": {"A_465": {"smooth_factor": True}}},
+            {"exports": {"csv": "yes"}},
+            {"inputs": "synthetic.mat"},
+            {"output_dir": 123},
+            {"summary_json": 123},
+        ]
+        for override in cases:
+            config = {
+                "inputs": ["synthetic.mat"],
+                "epocs": ["Cue"],
+                "exports": {"csv": False, "figures": False},
+            }
+            config.update(override)
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / "analysis-config.json"
+                config_path.write_text(json.dumps(config), encoding="utf-8")
+                exit_code, stdout, stderr = self._invoke_cli(
+                    ["validate-config", str(config_path)]
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(stderr, "")
+            payload = json.loads(stdout)
+            self.assertFalse(payload["valid"])
+            self.assertTrue(payload["errors"])
+
+    def test_cli_inspect_outputs_session_json(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(["inspect", "synthetic.mat"])
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sessions"][0]["channels"], ["A_465"])
+        self.assertEqual(payload["sessions"][0]["epocs"]["Cue"]["events"], 2)
+        self.assertEqual(payload["sessions"][0]["streams"]["x405A"]["samples"], 400)
+
+    def test_cli_analyze_exports_csv_and_figure_summary(self) -> None:
+        # First-run font discovery can log to stderr independently of CLI errors.
+        from matplotlib import font_manager  # noqa: F401
+
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                exit_code, stdout, stderr = self._invoke_cli(
+                    [
+                        "analyze",
+                        "synthetic.mat",
+                        "--output-dir",
+                        tmp,
+                        "--epoc",
+                        "Cue",
+                        "--channel",
+                        "A_465",
+                        "--trange-start",
+                        "-1",
+                        "--trange-end",
+                        "1",
+                        "--baseline-start",
+                        "-1",
+                        "--baseline-end",
+                        "0",
+                        "--downsample-factor",
+                        "1",
+                        "--smooth-factor",
+                        "1",
+                        "--no-baseline-correction",
+                        "--export",
+                        "both",
+                        "--figure-format",
+                        "png",
+                    ]
+                )
+                payload = json.loads(stdout)
+                csv_path = Path(payload["results"][0]["exported_csv"])
+                figure_path = Path(payload["results"][0]["exported_figure"])
+                manifest_path = Path(payload["results"][0]["analysis_manifest"])
+                self.assertTrue(csv_path.exists())
+                self.assertTrue(figure_path.exists())
+                self.assertTrue(manifest_path.exists())
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["results"][0]["num_trials"], 2)
+        self.assertEqual(payload["results"][0]["settings"]["baseline_adjust"], -2.0)
+        self.assertEqual(
+            payload["results"][0]["quality"]["evaluated_trace"],
+            "raw_zscore",
+        )
+
+    def test_cli_analyze_accepts_signal_only_and_polynomial_flags(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(
+                [
+                    "analyze",
+                    "synthetic.mat",
+                    "--epoc",
+                    "Cue",
+                    "--channel",
+                    "A_465",
+                    "--no-isosbestic",
+                    "--polynomial-degree",
+                    "3",
+                    "--artifact-405",
+                    "0",
+                    "--baseline-start",
+                    "-2",
+                    "--baseline-end",
+                    "-0.5",
+                    "--downsample-factor",
+                    "1",
+                    "--export",
+                    "none",
+                ]
+            )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        settings = json.loads(stdout)["results"][0]["settings"]
+        self.assertFalse(settings["use_isosbestic"])
+        self.assertEqual(settings["polynomial_degree"], 3)
+
+    def test_cli_analyze_signal_only_recording_without_a_405_stream(self) -> None:
+        from photon_cruncher import cli
+
+        paired = self._synthetic_cli_session()
+        session = PhotometrySession(
+            streams={"x465A": paired.streams["x465A"]},
+            epocs=paired.epocs,
+            info=paired.info,
+            source_path=Path("signal-only.mat"),
+        )
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("signal-only.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(
+                [
+                    "analyze",
+                    "signal-only.mat",
+                    "--epoc",
+                    "Cue",
+                    "--channel",
+                    "A_465",
+                    "--no-isosbestic",
+                    "--baseline-start",
+                    "-2",
+                    "--baseline-end",
+                    "-0.5",
+                    "--downsample-factor",
+                    "1",
+                    "--export",
+                    "none",
+                ]
+            )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        result = json.loads(stdout)["results"][0]
+        self.assertEqual(result["iso_stream"], "")
+        self.assertEqual(result["signal_stream"], "x465A")
+
+    def test_cli_analyze_applies_polynomial_degree_with_isosbestic(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            exit_code, stdout, stderr = self._invoke_cli(
+                [
+                    "analyze",
+                    "synthetic.mat",
+                    "--epoc",
+                    "Cue",
+                    "--channel",
+                    "A_465",
+                    "--use-isosbestic",
+                    "--polynomial-degree",
+                    "2",
+                    "--baseline-start",
+                    "-2",
+                    "--baseline-end",
+                    "-0.5",
+                    "--downsample-factor",
+                    "1",
+                    "--export",
+                    "none",
+                ]
+            )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        settings = json.loads(stdout)["results"][0]["settings"]
+        self.assertTrue(settings["use_isosbestic"])
+        self.assertEqual(settings["polynomial_degree"], 2)
+
+    def test_cli_use_isosbestic_flag_overrides_config(self) -> None:
+        from photon_cruncher import cli
+
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--epoc",
+                "Cue",
+                "--use-isosbestic",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(
+            args,
+            {"processing": {"use_isosbestic": False}},
+        )
+
+        self.assertTrue(config["processing"]["use_isosbestic"])
+
+    def test_cli_symmetric_flags_and_resets_override_config(self) -> None:
+        from photon_cruncher import cli
+
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--epoc",
+                "Cue",
+                "--plot-smoothed",
+                "--baseline-correction",
+                "--default-smoothing",
+                "--no-artifact-405",
+                "--no-artifact-465",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(
+            args,
+            {
+                "processing": {
+                    "plot_smoothed": False,
+                    "baseline_correction": False,
+                    "smooth_factor": 25,
+                    "artifact_405": 2.0,
+                    "artifact_465": 3.0,
+                }
+            },
+        )
+
+        self.assertTrue(config["processing"]["plot_smoothed"])
+        self.assertTrue(config["processing"]["baseline_correction"])
+        self.assertIsNone(config["processing"]["smooth_factor"])
+        self.assertIsNone(config["processing"]["artifact_405"])
+        self.assertIsNone(config["processing"]["artifact_465"])
+
+    def test_cli_channel_smoothing_overrides_global_smoothing(self) -> None:
+        from photon_cruncher import cli
+
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--epoc",
+                "Cue",
+                "--smooth-factor",
+                "5",
+                "--channel-smooth",
+                "A_465=17",
+                "C_465=23",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(args, {})
+        cli.validate_analyze_config(config)
+
+        self.assertEqual(cli.build_settings(config, "A_465").smooth_factor, 17)
+        self.assertEqual(cli.build_settings(config, "C_465").smooth_factor, 23)
+        self.assertEqual(cli.build_settings(config, "A_560").smooth_factor, 5)
+
+    def test_cli_all_epocs_policy_prefers_available_pair_side(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        session.epocs = {
+            "CueA": Epoc(name="CueA", onset=np.array([10.0])),
+            "CueC": Epoc(name="CueC", onset=np.array([20.0])),
+            "Reward1_": Epoc(name="Reward1_", onset=np.array([10.0])),
+            "Reward2_": Epoc(name="Reward2_", onset=np.array([20.0])),
+            "Solo": Epoc(name="Solo", onset=np.array([30.0])),
+        }
+        args = cli.build_parser().parse_args(
+            [
+                "analyze",
+                "synthetic.mat",
+                "--all-epocs",
+                "--epoc-policy",
+                "prefer-right",
+                "--export",
+                "none",
+            ]
+        )
+        config = cli.normalize_analyze_config(args, {})
+        cli.validate_analyze_config(config)
+
+        self.assertEqual(
+            set(cli.epoc_names_for_config(session, config)),
+            {"CueC", "Reward2_", "Solo"},
+        )
+
+    def test_cli_validate_config_accepts_all_epocs_and_channel_settings(self) -> None:
+        config = {
+            "inputs": ["synthetic.mat"],
+            "all_epocs": True,
+            "epoc_policy": "prefer_left",
+            "channel_settings": {
+                "A_465": {"smooth_factor": 11},
+                "C_465": {"smooth_factor": 21},
+            },
+            "exports": {"csv": False, "figures": False},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "analysis-config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            exit_code, stdout, stderr = self._invoke_cli(
+                ["validate-config", str(config_path)]
+            )
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["config"]["all_epocs"])
+        self.assertEqual(
+            payload["config"]["channel_settings"]["C_465"]["smooth_factor"],
+            21,
+        )
+
+    def test_cli_analyze_classified_source_filters_trial_type(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        session.epocs = {
+            "cRew": Epoc(name="cRew", onset=np.array([10.0])),
+            "iNoRew": Epoc(name="iNoRew", onset=np.array([20.0])),
+        }
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                exit_code, stdout, stderr = self._invoke_cli(
+                    [
+                        "analyze",
+                        "synthetic.mat",
+                        "--output-dir",
+                        tmp,
+                        "--epoc",
+                        "Classified trials",
+                        "--channel",
+                        "A_465",
+                        "--trial-type",
+                        CORRECT_REWARDED,
+                        "--trange-start",
+                        "-1",
+                        "--trange-end",
+                        "1",
+                        "--baseline-start",
+                        "-1",
+                        "--baseline-end",
+                        "0",
+                        "--downsample-factor",
+                        "1",
+                        "--smooth-factor",
+                        "1",
+                        "--no-baseline-correction",
+                        "--export",
+                        "csv",
+                    ]
+                )
+                payload = json.loads(stdout)
+                csv_path = Path(payload["results"][0]["exported_csv"])
+                with csv_path.open(newline="") as handle:
+                    rows = list(csv.reader(handle))
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["results"][0]["trial_labels"], [CORRECT_REWARDED])
+        self.assertEqual(rows[2][0], "TRIAL_001_correct_rewarded")
+
+    def test_cli_analyze_no_matching_trials_returns_exit_one(self) -> None:
+        from photon_cruncher import cli
+
+        session = self._synthetic_cli_session()
+        original_discover = cli.discover_input_paths
+        original_load_session = cli.load_session
+        cli.discover_input_paths = lambda _: [Path("synthetic.mat")]
+        cli.load_session = lambda _: session
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                exit_code, stdout, stderr = self._invoke_cli(
+                    [
+                        "analyze",
+                        "synthetic.mat",
+                        "--output-dir",
+                        tmp,
+                        "--epoc",
+                        "Missing",
+                        "--export",
+                        "csv",
+                    ]
+                )
+        finally:
+            cli.discover_input_paths = original_discover
+            cli.load_session = original_load_session
+
+        self.assertEqual(stderr, "")
+        self.assertEqual(exit_code, 1)
+        payload = json.loads(stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["results"], [])
 
     def test_rev_fixture_explicit_outcomes_partition_levers(self) -> None:
         session = self._load_local_mat_fixture("2143_Rev1_JZL18.mat")
@@ -430,191 +1249,130 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(len(source.trials), 456)
         self.assertGreater(source.trials[0].onset, 0.0)
 
-    def test_trial_explorer_lists_classified_sources_for_local_fixture(self) -> None:
-        path = Path("local-test-data") / "mat" / "2143_Rev1_JZL18.mat"
-        if not path.exists():
-            self.skipTest(f"Local fixture not available: {path}")
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        window._add_batch_paths([path], clear_existing=True)
 
-        labels = [
-            window.trial_epoc_combo.itemText(idx)
-            for idx in range(window.trial_epoc_combo.count())
-        ]
-        self.assertIn("Classified trials levers", labels)
 
-    def test_align_preview_epoc_uses_align_picker_not_trial_picker(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            cue_a = Epoc(name="CueA", onset=np.array([1.0]))
-            cue_b = Epoc(name="CueB", onset=np.array([2.0]))
-            window.session = PhotometrySession(
-                streams={},
-                epocs={"CueA": cue_a, "CueB": cue_b},
-                info={},
-                source_path=Path("synthetic.mat"),
-            )
-            window.epoc_combo.addItems(["CueA", "CueB"])
-            window.epoc_combo.setCurrentText("CueA")
-            window.trial_epoc_combo.addItem("CueB", ("epoc", "CueB"))
-            window.trial_epoc_combo.setCurrentIndex(0)
 
-            self.assertIs(window._selected_preview_epoc(), cue_a)
-            trial_epoc, trial_source = window._selected_trial_epoc()
-            self.assertIs(trial_epoc, cue_b)
-            self.assertIsNone(trial_source)
-        finally:
-            window.close()
 
-    def test_align_preview_controls_request_refresh_after_preview_exists(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
-
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            window.session = PhotometrySession(
-                streams={},
-                epocs={"CueA": Epoc(name="CueA", onset=np.array([1.0]))},
-                info={},
-                source_path=Path("synthetic.mat"),
-            )
-            window.results_by_channel = {"A_465": object()}
-            calls: list[str] = []
-            window._preview_signals = lambda: calls.append("preview")
-
-            window._request_preview_refresh()
-            window._preview_refresh_timer.stop()
-            window._run_preview_refresh()
-
-            self.assertEqual(calls, ["preview"])
-        finally:
-            window.close()
-
-    def test_batch_export_checkboxes_default_to_csv_only(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
-
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            self.assertTrue(window.batch_export_csv.isChecked())
-            self.assertFalse(window.batch_export_figures.isChecked())
-            self.assertFalse(window.batch_figure_format.isEnabled())
-            self.assertEqual(
-                [
-                    window.batch_figure_format.itemData(idx)
-                    for idx in range(window.batch_figure_format.count())
-                ],
-                ["png", "pdf", "tiff"],
-            )
-
-            window.batch_export_figures.setChecked(True)
-
-            self.assertTrue(window.batch_figure_format.isEnabled())
-        finally:
-            window.close()
 
     def test_result_figure_title_includes_file_and_epoc(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from matplotlib.figure import Figure
-        from PySide6 import QtWidgets
-        from photon_cruncher.analysis.runner import AnalysisResult
-        from photon_cruncher.gui.main_window import MainWindow
+        from photon_cruncher.export.exporter import result_figure_title
+        from photon_cruncher.service import AnalysisResult
 
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
-        try:
-            processed = ProcessedSignal(
-                ts=np.array([0.0, 1.0]),
-                zall=np.array([[1.0, 2.0]]),
-                zall_smooth=np.array([[1.0, 2.0]]),
-                mean_z=np.array([1.0, 2.0]),
-                sem_z=np.array([0.0, 0.0]),
-                mean_z_smooth=np.array([1.0, 2.0]),
-                sem_z_smooth=np.array([0.0, 0.0]),
-                num_artifacts=0,
-            )
-            session = PhotometrySession(
+        processed = ProcessedSignal(
+            ts=np.array([0.0, 1.0]),
+            zall=np.array([[1.0, 2.0]]),
+            zall_smooth=np.array([[1.0, 2.0]]),
+            mean_z=np.array([1.0, 2.0]),
+            sem_z=np.array([0.0, 0.0]),
+            mean_z_smooth=np.array([1.0, 2.0]),
+            sem_z_smooth=np.array([0.0, 0.0]),
+            num_artifacts=0,
+        )
+        session = PhotometrySession(
+            streams={},
+            epocs={},
+            info={},
+            source_path=Path("example_recording.mat"),
+        )
+        result = AnalysisResult(
+            session=session,
+            epoc=Epoc(name="CueA", onset=np.array([1.0])),
+            channel_key="A_465",
+            processed=processed,
+            settings=ProcessingSettings(plot_smooth=False),
+            stream_store=("x405A", "x465A"),
+        )
+        self.assertEqual(
+            result_figure_title(result),
+            "example_recording.mat | Epoc: CueA",
+        )
+
+    def test_heatmap_trial_ticks_use_stable_ordinal_odd_rows(self) -> None:
+        from photon_cruncher.export.exporter import heatmap_trial_ticks
+
+        processed = ProcessedSignal(
+            ts=np.array([0.0, 1.0]),
+            zall=np.zeros((40, 2)),
+            zall_smooth=np.zeros((40, 2)),
+            mean_z=np.array([0.0, 0.0]),
+            sem_z=np.array([0.0, 0.0]),
+            mean_z_smooth=np.array([0.0, 0.0]),
+            sem_z_smooth=np.array([0.0, 0.0]),
+            num_artifacts=0,
+            trial_numbers=list(range(101, 141)),
+        )
+        positions, labels = heatmap_trial_ticks(processed, 40, max_ticks=20)
+        self.assertEqual(positions, list(range(1, 41, 2)))
+        self.assertEqual(labels, [str(position) for position in positions])
+
+    def test_result_figure_includes_zero_references_and_fixed_ticks(self) -> None:
+        from matplotlib.figure import Figure
+
+        from photon_cruncher.export.exporter import populate_result_figure
+        from photon_cruncher.service import AnalysisResult
+
+        ts = np.array([-2.0, -1.0, 1.0, 5.0])
+        rows = np.tile(np.array([-1.0, 0.5, 2.0, 1.0]), (15, 1))
+        processed = ProcessedSignal(
+            ts=ts,
+            zall=rows,
+            zall_smooth=rows,
+            mean_z=rows.mean(axis=0),
+            sem_z=np.full(ts.shape, 0.2),
+            mean_z_smooth=rows.mean(axis=0),
+            sem_z_smooth=np.full(ts.shape, 0.2),
+            num_artifacts=0,
+            trial_numbers=list(range(101, 116)),
+        )
+        result = AnalysisResult(
+            session=PhotometrySession(
                 streams={},
                 epocs={},
                 info={},
                 source_path=Path("example_recording.mat"),
-            )
-            result = AnalysisResult(
-                session=session,
-                epoc=Epoc(name="CueA", onset=np.array([1.0])),
-                channel_key="A_465",
-                processed=processed,
-                settings=ProcessingSettings(plot_smooth=False),
-                stream_store=("x405A", "x465A"),
-            )
-            figure = Figure()
-
-            window._populate_result_figure(figure, result)
-
-            self.assertIsNotNone(figure._suptitle)
-            self.assertEqual(
-                figure._suptitle.get_text(),
-                "example_recording.mat | Epoc: CueA",
-            )
-        finally:
-            window.close()
-
-    def test_heatmap_trial_ticks_are_integer_trial_labels(self) -> None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir())))
-        from PySide6 import QtWidgets
-        from photon_cruncher.gui.main_window import MainWindow
-
-        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        _ = app
-        window = MainWindow()
+            ),
+            epoc=Epoc(name="CueA", onset=np.array([1.0])),
+            channel_key="A_465",
+            processed=processed,
+            settings=ProcessingSettings(plot_smooth=False),
+            stream_store=("x405A", "x465A"),
+        )
+        figure = Figure(figsize=(10, 4.5))
         try:
-            processed = ProcessedSignal(
-                ts=np.array([0.0, 1.0]),
-                zall=np.zeros((40, 2)),
-                zall_smooth=np.zeros((40, 2)),
-                mean_z=np.array([0.0, 0.0]),
-                sem_z=np.array([0.0, 0.0]),
-                mean_z_smooth=np.array([0.0, 0.0]),
-                sem_z_smooth=np.array([0.0, 0.0]),
-                num_artifacts=0,
-                trial_numbers=list(range(101, 141)),
+            populate_result_figure(figure, result)
+            line_axis, heatmap_axis = figure.axes[:2]
+            self.assertIn(0.0, line_axis.get_xticks())
+            self.assertIn(0.0, line_axis.get_yticks())
+            self.assertIn(0.0, heatmap_axis.get_xticks())
+            self.assertEqual(
+                [int(tick) for tick in heatmap_axis.get_yticks()],
+                list(range(1, 16, 2)),
             )
-
-            positions, labels = window._heatmap_trial_ticks(processed, 40)
-
-            self.assertLessEqual(len(positions), 12)
-            self.assertTrue(all(isinstance(position, int) for position in positions))
-            self.assertTrue(all(float(position).is_integer() for position in positions))
-            self.assertTrue(all(label.isdigit() for label in labels))
-            self.assertEqual(labels[0], "101")
-            self.assertEqual(labels[-1], "140")
+            self.assertEqual(
+                [label.get_text() for label in heatmap_axis.get_yticklabels()],
+                [str(tick) for tick in range(1, 16, 2)],
+            )
+            dashed_references = [
+                line
+                for line in line_axis.lines
+                if line.get_linestyle() == "--" and line.get_color() == "#222222"
+            ]
+            self.assertTrue(
+                any(
+                    np.allclose(line.get_xdata(), [0.0, 0.0])
+                    for line in dashed_references
+                )
+            )
+            self.assertTrue(
+                any(
+                    np.allclose(line.get_ydata(), [0.0, 0.0])
+                    for line in dashed_references
+                )
+            )
         finally:
-            window.close()
+            figure.clear()
 
     def _trial_type_counts(self, source) -> dict[str, int]:
         counts: dict[str, int] = {}

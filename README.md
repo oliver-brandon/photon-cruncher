@@ -1,95 +1,70 @@
-# Photon Cruncher
+# Photon Cruncher Aurora
 
-Python 3.11+ desktop app for MATLAB-derived fiber photometry analysis. The
-pipeline follows lab preprocessing conventions, supports single-file and batch
-processing, reads MATLAB exports or raw TDT block folders, lets users inspect
-and export selected trials, and exports plotted data as CSV.
+Photon Cruncher Aurora is a desktop application for fiber photometry analysis.
+It reads MATLAB exports and raw TDT blocks, aligns signals to events, lets you
+inspect trials, and exports plots and data with analysis provenance.
 
-## v1.2.1 Analysis Correction
+## Availability
 
-The 405 fit now predicts the signal from its control (`signal = intercept +
-slope * 405`) before subtracting the fitted control. Earlier stable versions
-fitted the reverse relationship and then applied those coefficients to 405.
-**This correction can change z-scores and figures.** For consistent comparisons,
-reprocess recordings with the same version and settings into a fresh output
-folder, and validate results before combining them with older exports.
+This is the Aurora interface for Photon Cruncher's stable channel. Download the
+[latest stable release](https://github.com/oliver-brandon/photon-cruncher/releases/latest)
+for the lab. Aurora dev prereleases use a separate update channel.
 
-Each new CSV or figure export includes a neighboring `_analysis.json` file
-recording its source, app version, processing settings, and selected trials.
-These files also prevent replacement of another recording's identified exports.
-Same-named recordings within a batch get distinct source-named folders.
+## Scientific comparisons
 
-This maintenance release also fixes oversized smoothing windows, rejects
-baseline windows with fewer than two downsampled samples, counts rejected
-artifact trials once, reduces batch memory use, and excludes unused `Cam1`,
-`Cam2`, and `Tick` epocs.
+Version 1.2.1 corrected the 405 control regression. It predicts the signal
+from the 405 control before subtraction; older stable versions fit the inverse
+relationship. This can change z-scores and figures. Process comparison datasets
+with the same version and settings, preserve older exports, and use a fresh
+output folder when reprocessing. Existing exports without provenance sidecars
+cannot be identified by the overwrite guard. See
+[maintenance validation](docs/maintenance-1.2.1.md).
 
-## Download for Lab Users
+Every result export includes an `_analysis.json` sidecar with source, settings,
+version, trial selection and quality findings. Inspect QC findings before drawing
+conclusions.
 
-Most students should use the prebuilt app downloads from GitHub. They do not
-need Python, Conda, Terminal, Automator, or the project source folder.
+## Install and update
 
-### Windows
+Use the Windows x64 `.exe` or Apple Silicon macOS `.pkg` attached to the
+[latest stable release](https://github.com/oliver-brandon/photon-cruncher/releases/latest). Windows installers are not Authenticode
+signed and Windows SmartScreen may show a warning. macOS stable installers
+require Developer ID signing and notarization.
 
-1. Open the GitHub repository page.
-2. Click **Releases** on the right side of the page.
-3. Open the newest release.
-4. Download the Windows installer, such as
-   `Photon-Cruncher-v1.2.1-Windows.exe`.
-5. Double-click the installer and follow its prompts.
-6. Launch **Photon Cruncher** from the shortcut it creates.
+The existing stable update channel is retained for installed v1.2.0 and later
+apps. Use **Help → Check for Updates…**, then **Install and restart**, to upgrade
+a managed stable installation. Your existing Photon Cruncher shortcut opens Aurora. The older
+v1.1.4 ZIP build requires a fresh installer. Recordings and exports are stored
+outside the app installation.
 
-If Windows SmartScreen warns that the app is from an unknown publisher, choose
-**More info** and then **Run anyway** if you trust the downloaded file. This can
-still happen because the Windows installer is not Authenticode signed with a
-certificate.
+The release files use the names `Photon-Cruncher-Aurora-v<version>-Windows.exe`
+and `Photon-Cruncher-Aurora-v<version>-macOS.pkg`. The installed app is named
+**Photon Cruncher**, and its window is titled **Photon Cruncher Aurora**.
 
-### macOS
+## Developer source launch
 
-1. Open the GitHub repository page.
-2. Click **Releases** on the right side of the page.
-3. Open the newest release.
-4. Download the macOS installer, such as
-   `Photon-Cruncher-v1.2.1-macOS.pkg`.
-5. Open the installer and follow its prompts.
-6. Launch **Photon Cruncher** from Applications.
+Use Python 3.11 or newer and create an isolated environment:
 
-The release workflow requires the macOS app and installer to be Developer ID
-signed and notarized. It fails instead of publishing an unsigned macOS build.
+```bash
+python3 -m venv .build-venv
+.build-venv/bin/python -m pip install -e ./photon_cruncher
+./dev-aurora
+```
 
-## Update the App
+On Windows, create the environment with `py -3.11 -m venv .build-venv`,
+install using `.build-venv\Scripts\python.exe -m pip install -e ./photon_cruncher`,
+and launch with `.\dev-aurora.ps1`. Source launches do not receive in-place
+updates. Ubuntu source runs are for development.
 
-Installed v1.2.0 and newer apps check their own Windows or macOS stable channel
-after launch and every six hours while open. When an update is available, an
-**Update x.y.z** button appears in the lower-right corner. Click it to review
-the release notes, then choose **Install and restart** or **Later**. You can
-also choose **Help → Check for Updates…** at any time. A network failure does
-not interrupt analysis.
+## Building and releasing
 
-The old v1.1.4 zip build is not managed by Velopack and cannot receive v1.2.0
-automatically. Install the latest stable version once using its installer; later releases can
-then update in place. Recordings and exports stay outside the app installation
-and are not deleted by an update.
-
-### Update on Windows
-
-1. Click the update button or choose **Help → Check for Updates…**.
-2. Review the release notes and choose **Install and restart**.
-3. If a download fails, choose **Try again** later. The current installation is
-   not changed by an incomplete download.
-
-If the updater itself cannot be used, download the newest versioned Windows
-`.exe` installer from the stable GitHub release and run it again.
-
-### Update on macOS
-
-1. Click the update button or choose **Help → Check for Updates…**.
-2. Review the release notes and choose **Install and restart**.
-3. macOS may request an administrator password when updating an app installed
-   for all users. Choose **Later** if you do not want to restart.
-
-If the updater itself cannot be used, run the newest versioned macOS `.pkg`
-installer from the stable GitHub release.
+Build platform bundles with `scripts/build_macos_app.sh` or
+`scripts/build_windows_app.ps1`. Stable releases use a `v<version>` tag from
+`main`, package ID `com.photoncruncher.app`, and OS-specific `stable-*`
+channels. Verify regression jobs for both platforms, signing, notarization,
+installers, full/delta packages and feeds before announcing a release.
+See [project status](docs/project-status.md) for the current verification
+boundary.
 
 ## Data Expectations
 
@@ -102,17 +77,133 @@ Streams should include the expected photometry stores such as `x405A`, `x465A`,
 `x560A`, `x405C`, `x465C`, or `x560C`. Epocs are read from the TDT `epocs`
 collection or the equivalent MATLAB export schema.
 
-For batch processing, use **Add Files** for `.mat` files, **Add TDT Tank** for a
-TDT tank folder containing one or more block folders, or **Add Folder** for a
-mixed folder containing `.mat` files and TDT blocks.
+## Command-Line Access Point
+
+`photon-cruncher-cli` supports scripted analysis and agentic workflows.
+
+```bash
+photon-cruncher-cli inspect local-test-data --json
+```
+
+```bash
+photon-cruncher-cli analyze local-test-data \
+  --output-dir exports/agentic-run \
+  --all-epocs \
+  --epoc-policy prefer-left \
+  --channel A_465 \
+  --channel-smooth A_465=10 \
+  --use-isosbestic \
+  --polynomial-degree 1 \
+  --export both \
+  --figure-format png
+```
+
+The CLI uses the paired 405 isosbestic fit by default with polynomial degree
+`1`. The fit models the selected signal as a polynomial function of its paired
+405 control, then subtracts that fitted control contribution. Use
+`--polynomial-degree N` to change the fit degree, or `--no-isosbestic` to skip
+the fit and process the selected signal channel directly, including recordings
+that do not contain a 405 stream. Reusable JSON configs accept the corresponding
+processing fields: `"use_isosbestic": true` and `"polynomial_degree": 1`.
+
+Use `--channel-smooth CHANNEL=FACTOR` for channel-specific smoothing. Use
+`--all-epocs` to analyze every available epoc, optionally with
+`--epoc-policy prefer-left` (A/1_) or `--epoc-policy prefer-right` (C/2_).
+The symmetric `--plot-smoothed` / `--plot-raw`,
+`--baseline-correction` / `--no-baseline-correction`, artifact reset, and
+`--default-smoothing` flags can override either state from a JSON config.
+
+```bash
+photon-cruncher-cli validate-config analysis-config.json
+photon-cruncher-cli analyze --config analysis-config.json
+```
+
+Packaged downloads include the CLI beside the desktop app. CLI output is JSON.
+
+Analysis summaries distinguish `skipped` selections (such as no matching trials)
+from `errors` with a load, analysis, or export stage. Exit codes are `0` when at
+least one analysis succeeds, `1` for no matching analyses, `2` for invalid
+arguments/configuration, and `3` when runtime failures leave no successful
+analyses. Inspect `errors` even after exit code `0` to catch partial failures.
+
+Batch exports from both the GUI and CLI give same-named recordings separate
+folders with a short source identifier, including when flat output is requested.
+An existing analysis manifest belonging to another source blocks replacement;
+choose a fresh destination in that case. Rerunning the same source in its own
+destination still replaces its previous export.
+
+Baseline windows must contain at least two samples after downsampling and inside
+the extracted TRANGE. Invalid windows are reported before files are exported.
+
+## Aurora Desktop GUI
+
+Codename **Aurora**. Live analysis only via `photon_cruncher.service` (no
+synthetic demo feed). Aurora is supported as a desktop application, not as a
+website or normal-browser application.
+
+### Desktop app
+
+Opens a real desktop window (PySide6 + Qt WebEngine) wrapping the Aurora web UI:
+
+```bash
+# macOS / Linux
+./dev-aurora
+
+# Windows PowerShell
+.\dev-aurora.ps1
+```
+
+Both launchers run the canonical `photon_cruncher.aurora_main` entry point
+directly from the working tree using `.build-venv`. Use them for the fast local
+edit-and-test loop; release packaging remains a separate process.
+
+In the shell:
+- **File → Open MAT / TDT** uses native dialogs
+- **Data → Clear imports** (or **File → Clear All Imports**) removes every loaded MAT/TDT session and resets analysis and batch results without deleting exports, presets, or saved settings
+- Analysis runs through the local API → `photon_cruncher.service`
+- Align exposes explicit channel controls, reactive processing updates, and separate CSV/figure exports
+- Named analysis presets can be saved, imported, exported, and applied in Align or Trial Explorer; edited settings are marked as **Custom**
+- Trial Explorer shows original trial numbers, onset times, classified outcomes, and selected-trial plots/exports
+- Displayed plots include file, epoc, channel, labeled axes, and integer trial-aligned heatmap ticks
+- Batch Export runs as a responsive background job with live progress, real cancellation between analysis steps, and detailed exported/skipped/failed results
+- Result callouts report incomplete-trial loss, artifact removal, unstable baselines, extreme/non-finite z-scores, and signal-only processing
+- Processing and export-folder settings persist between launches
+- A lower-right update indicator shows an available update and release notes
+- **Help → Check for Updates…** runs an immediate manual update check
+- **Help → Export Diagnostic Report…** saves app/runtime, cache, updater, and recent-error details without raw photometry samples
+
+Architecture: `docs/architecture-aurora.md`.
+Current performance measurements: `docs/backend-performance.md`.
+
+Current branch/release state, verification evidence, known risks, and the next
+recommended work are maintained in `docs/project-status.md`.
 
 ## Trial Explorer
+
+
 
 Use the **Trial Explorer** tab when you want to inspect or export only certain
 trials from one file. Choose a file, choose an epoc or classified trial source,
 set the processing window and smoothing, then click **Load Trials**. The trial
 list can be checked or unchecked by hand, and the plot updates to show only the
 selected trials.
+
+Use the **Analysis preset** controls to save a named processing recipe, exchange
+it as JSON, or apply the same recipe in Align and Trial Explorer. **Default**
+restores the app defaults; **Custom** means at least one visible setting has
+changed since the selected preset was applied.
+
+## Batch Export
+
+Use **Add files**, **Add folder**, or **Add TDT tank** to build a multi-recording
+batch. Select the epocs and channels to export, then choose exact suffixes or
+prefer the `A / 1_` or `C / 2_` member when paired epocs are available. Each
+recording is written to its own output subfolder. CSV is enabled by default;
+figures can be added in PNG, PDF, or TIFF format. The batch runs in the
+background, loads each recording once for all selected epocs, reports live
+progress, and can be cancelled without waiting for every remaining file. After
+the export finishes, return to **Data** and choose **Clear imports** to remove
+the completed batch before importing a fresh one.
 
 For recordings with compatible behavior epocs, Photon Cruncher can add
 in-memory classified trial sources in Trial Explorer. These sources do not
@@ -123,57 +214,14 @@ exports include those trial labels in the row names.
 
 ## Notes
 
-* The preprocessing pipeline retains the lab's window, downsampling, baseline,
-  and smoothing conventions, with the 405 regression correction noted above.
+* The preprocessing pipeline preserves the lab workflow's analysis windows,
+  downsampling, baseline logic, and smoothing. Isosbestic regression explicitly
+  fits signal from the paired 405 control before subtraction.
 * Export outputs include heatmap CSVs with the time vector in the first row,
-  followed by the mean trace and per-trial z-score rows.
-
-## Developer Checks
-
-The stable branch runs regression tests on macOS and Windows for pushes and
-pull requests. Tests generate synthetic recordings, so private lab data is not
-required for CI. From a source checkout with the build environment installed:
-
-```bash
-QT_QPA_PLATFORM=offscreen .build-venv/bin/python -m unittest discover -s photon_cruncher/tests -t .
-.build-venv/bin/python scripts/version_metadata.py --check
-git diff --check
-```
-
-## Building and Publishing Stable Updates
-
-The existing platform build scripts still create local PyInstaller bundles and
-zip files:
-
-```bash
-# macOS
-scripts/build_macos_app.sh
-
-# Windows PowerShell
-.\scripts\build_windows_app.ps1
-```
-
-Source launches and these portable zip files are not managed by the automatic
-updater. The `Publish stable desktop updates` GitHub Actions workflow packages
-the bundles as Velopack installers and publishes separate `stable-win-x64` and
-`stable-osx-arm64` feeds.
-
-To publish a stable update:
-
-1. Change only `__version__` in `photon_cruncher/version.py`.
-2. Update `packaging/velopack/release-notes.md`.
-3. Commit and push the change to `main`.
-4. Run **Actions → Publish stable desktop updates → Run workflow** from `main`,
-   or push the matching `v<version>` tag.
-5. Confirm the release contains the readable Windows `.exe` installer, the
-   signed macOS `.pkg`, full packages, both stable JSON feeds, and delta
-   packages when a prior Velopack release exists.
-
-The macOS job requires the Developer ID certificate, keychain, Apple ID, and
-notarization secrets already used by the Aurora updater workflow. It validates,
-signs, notarizes, and assesses the installer before either platform is
-published. Windows packages are update-enabled but remain unsigned unless an
-Authenticode certificate is added separately.
+  followed by per-trial z-score rows.
+* Every GUI, CLI, and batch result also includes an `_analysis.json` provenance
+  sidecar with the Photon Cruncher version, source, epoc/channel, processing
+  settings, trial labels/onsets, exclusions, QC findings, and written files.
 
 ## License
 

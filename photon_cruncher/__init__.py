@@ -1,8 +1,9 @@
-"""Photometry analysis application."""
+"""Photon Cruncher Aurora photometry analysis application."""
 
 from photon_cruncher.version import APP_NAME as __app_name__
 from photon_cruncher.version import __version__
 
 
 def app_title() -> str:
-    return f"{__app_name__} v{__version__}"
+    # Version is displayed in the Aurora UI rail, not the window title.
+    return __app_name__

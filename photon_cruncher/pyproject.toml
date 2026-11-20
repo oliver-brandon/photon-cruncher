@@ -1,13 +1,12 @@
 [project]
 name = "photon-cruncher"
 dynamic = ["version"]
-description = "Fiber photometry analysis suite with MATLAB-faithful preprocessing."
+description = "Fiber photometry analysis suite with MATLAB-faithful preprocessing (Aurora desktop)."
 requires-python = ">=3.11"
-readme = "README.md"
+readme = { text = "Photon Cruncher Aurora analyzes fiber photometry recordings from MATLAB exports and TDT blocks. See the [Aurora documentation](https://github.com/oliver-brandon/photon-cruncher/tree/main#readme) for installation and usage.", content-type = "text/markdown" }
 dependencies = [
     "numpy>=1.25",
     "scipy>=1.11",
-    "pandas>=2.0",
     "PySide6>=6.6",
     "matplotlib>=3.8",
     "tdt>=0.7.3",
@@ -20,19 +19,22 @@ macos = ["pyobjc"]
 build = ["pyinstaller>=6.0"]
 
 [project.scripts]
-photon-cruncher = "photon_cruncher.main:main"
+photon-cruncher = "photon_cruncher.aurora_main:main"
+photon-cruncher-cli = "photon_cruncher.cli:main"
+photon-cruncher-aurora = "photon_cruncher.aurora_main:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
+include-package-data = false
 package-dir = { "photon_cruncher" = "." }
 packages = [
     "photon_cruncher",
     "photon_cruncher.analysis",
     "photon_cruncher.export",
-    "photon_cruncher.gui",
+    "photon_cruncher.gui_aurora",
     "photon_cruncher.io",
     "photon_cruncher.processing",
     "photon_cruncher.tests",
@@ -40,6 +42,20 @@ packages = [
 
 [tool.setuptools.dynamic]
 version = { attr = "photon_cruncher.version.__version__" }
+
+[tool.setuptools.package-data]
+"photon_cruncher.tests" = ["fixtures/golden_process_channel.npz"]
+"photon_cruncher.gui_aurora" = [
+    "static/*",
+    "static/css/*",
+    "static/js/*",
+    "static/img/*",
+]
+"photon_cruncher" = [
+    "assets/icons/*",
+    "assets/icons/png/*",
+    "assets/icons/aurora-options/*",
+]
 
 [tool.black]
 line-length = 88

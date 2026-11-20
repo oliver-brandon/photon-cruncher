@@ -10,7 +10,7 @@ vpk_bin="${VPK_BIN:-vpk}"
 output_dir="${VELOPACK_OUTPUT_DIR:-${project_root}/dist/velopack-releases}"
 stage_root="${project_root}/build/velopack/macos"
 release_notes="${project_root}/packaging/velopack/release-notes.md"
-entitlements="${project_root}/packaging/macos/PhotonCruncher.entitlements"
+entitlements="${project_root}/packaging/macos/aurora.entitlements"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Velopack macOS releases must be built on macOS." >&2
@@ -27,7 +27,7 @@ if [[ ! -x "${metadata_python}" ]]; then
 fi
 
 version="$("${metadata_python}" "${version_script}" --field version)"
-app_name="$("${metadata_python}" "${version_script}" --field app_name)"
+app_name="$("${metadata_python}" "${version_script}" --field install_app_name)"
 bundle_app_name="$("${metadata_python}" "${version_script}" --field bundle_app_name)"
 package_id="$("${metadata_python}" "${version_script}" --field update_package_id)"
 channel="$("${metadata_python}" "${version_script}" --field update_channel)"
@@ -70,6 +70,21 @@ mv "${staged_versioned_executable}" "${staged_main_executable}"
 /usr/libexec/PlistBuddy \
   -c "Set :CFBundleExecutable ${app_name}" \
   "${staged_app}/Contents/Info.plist"
+if [[ -f "${project_root}/dist/photon-cruncher-cli" ]]; then
+  mkdir -p "${staged_app}/Contents/Resources/bin"
+  staged_cli="${staged_app}/Contents/Resources/bin/photon-cruncher-cli"
+  cp \
+    "${project_root}/dist/photon-cruncher-cli" \
+    "${staged_cli}"
+  chmod +x "${staged_cli}"
+  codesign \
+    --force \
+    --options runtime \
+    --timestamp \
+    --sign "${MACOS_DEVELOPER_ID_APPLICATION}" \
+    --keychain "${MACOS_SIGNING_KEYCHAIN}" \
+    "${staged_cli}"
+fi
 
 set +e
 "${vpk_bin}" pack \

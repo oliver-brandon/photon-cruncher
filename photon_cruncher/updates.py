@@ -1,9 +1,10 @@
-"""Velopack update service for stable Photon Cruncher installations."""
+"""Stable Velopack update service shared by the Aurora desktop shell."""
 
 from __future__ import annotations
 
 import logging
 import os
+import platform
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
@@ -22,6 +23,7 @@ from photon_cruncher.version import (
 
 
 LOG = logging.getLogger(__name__)
+DEVELOPMENT_MODE_ENV = "PHOTON_CRUNCHER_DEV"
 
 
 class UpdateState(str, Enum):
@@ -85,7 +87,20 @@ class UpdateBackend(Protocol):
     def apply_and_restart(self, release: UpdateRelease) -> None: ...
 
 
+def development_mode_enabled(environ: dict[str, str] | None = None) -> bool:
+    """Return whether this source launch explicitly disabled app updates."""
+    source = os.environ if environ is None else environ
+    return source.get(DEVELOPMENT_MODE_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def update_channel() -> str:
+    if platform.system() == "Linux":
+        return f"{UPDATE_CHANNEL_PREFIX}-source"
     return update_target()[0]
 
 
@@ -129,6 +144,8 @@ def run_velopack_startup() -> bool:
 
 def velopack_runtime_available() -> bool:
     """Return whether this process can be managed by a Velopack installation."""
+    if development_mode_enabled() or platform.system() == "Linux":
+        return False
     return bool(
         getattr(sys, "frozen", False)
         or os.environ.get("PHOTON_CRUNCHER_FORCE_VELOPACK")
@@ -145,6 +162,10 @@ class VelopackBackend:
         package_id: str = UPDATE_PACKAGE_ID,
         repository_url: str = UPDATE_REPOSITORY_URL,
     ) -> None:
+        if platform.system() == "Linux":
+            raise UpdateConfigurationError(
+                "Linux source builds do not have an update feed"
+            )
         import velopack
 
         self.channel = validate_stable_channel(channel or update_channel())
@@ -249,7 +270,7 @@ class UpdateService:
                         UpdateState.CURRENT,
                         self.current_version,
                         self.channel,
-                        message="Photon Cruncher is up to date.",
+                        message="Photon Cruncher Aurora is up to date.",
                     )
                 )
             return self._set(
@@ -258,7 +279,7 @@ class UpdateService:
                     self.current_version,
                     self.channel,
                     release=release,
-                    message=f"Photon Cruncher v{release.version} is available.",
+                    message=f"Aurora v{release.version} is available.",
                 )
             )
         except UpdateConfigurationError as exc:
@@ -278,7 +299,7 @@ class UpdateService:
                     self.current_version,
                     self.channel,
                     message=(
-                        "Could not reach the Photon Cruncher update service. "
+                        "Could not reach the Aurora update service. "
                         "The app can continue offline."
                     ),
                 )
@@ -298,7 +319,7 @@ class UpdateService:
                 self.channel,
                 release=release,
                 progress=0,
-                message=f"Downloading Photon Cruncher v{release.version}...",
+                message=f"Downloading Aurora v{release.version}...",
             )
         )
         try:

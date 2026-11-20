@@ -2,12 +2,17 @@ name: Publish stable desktop updates
 
 on:
   workflow_dispatch:
+    inputs:
+      build_only:
+        description: Build and test candidate packages without publication
+        type: boolean
+        default: true
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: photon-cruncher-stable-update-publish
@@ -51,12 +56,13 @@ jobs:
       - name: Enforce stable-only publication
         env:
           EXPECTED_TAG: ${{ steps.metadata.outputs.release_tag }}
+          BUILD_ONLY: ${{ inputs.build_only }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
-              echo "Manual stable update publishing must run from the main branch." >&2
+            [[ "${BUILD_ONLY}" == "true" || "${GITHUB_REF}" == "refs/heads/main" ]] || {
+              echo "Manual stable publishing must run from the main branch." >&2
               exit 1
             }
           else
@@ -66,12 +72,13 @@ jobs:
             }
             git fetch origin main
             git merge-base --is-ancestor "${GITHUB_SHA}" origin/main || {
-              echo "The stable update tag must point to a commit contained in main." >&2
+              echo "The update tag must point to a commit contained in main." >&2
               exit 1
             }
           fi
 
   build-windows:
+    timeout-minutes: 35
     name: Build Windows installer and feed
     needs: validate-source
     runs-on: windows-latest
@@ -123,15 +130,38 @@ jobs:
         shell: pwsh
         run: .\scripts\package_windows_update.ps1
 
+      - name: Verify upgrade from stable 1.2.1
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pwsh scripts/smoke_stable_windows.ps1 -CandidateDirectory dist/velopack-releases -CandidateVersion ${{ needs.validate-source.outputs.version }}
+
+      - name: Verify installed Aurora UI
+        timeout-minutes: 7
+        shell: pwsh
+        run: |
+          & .build-venv-windows/Scripts/python.exe -m pip install websocket-client==1.9.0
+          & .build-venv-windows/Scripts/python.exe scripts/smoke_installed_gui.py "$env:RUNNER_TEMP/photon-stable-upgrade/current/Photon Cruncher.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Installed Aurora UI smoke failed" }
+
+      - name: Verify packaged CLI analysis
+        shell: pwsh
+        run: |
+          & .build-venv-windows/Scripts/python.exe scripts/smoke_packaged_analysis.py "$env:RUNNER_TEMP/photon-stable-upgrade/current/photon-cruncher-cli.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Packaged CLI analysis failed" }
+
       - name: Upload Windows release payload
         uses: actions/upload-artifact@v4
         with:
-          name: photon-cruncher-stable-windows-release
+          name: stable-windows-release
           path: dist/velopack-releases/*
           if-no-files-found: error
           retention-days: 7
 
   build-macos:
+    timeout-minutes: 75
     name: Build signed macOS installer and feed
     needs: validate-source
     runs-on: macos-15
@@ -193,7 +223,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          keychain="$RUNNER_TEMP/photon-cruncher-signing.keychain-db"
+          keychain="$RUNNER_TEMP/aurora-signing.keychain-db"
           app_cert="$RUNNER_TEMP/developer-id-application.p12"
           installer_cert="$RUNNER_TEMP/developer-id-installer.p12"
 
@@ -206,13 +236,13 @@ jobs:
           security import "$installer_cert" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
           security list-keychains -d user -s "$keychain"
-          xcrun notarytool store-credentials "photon-cruncher-velopack" \
+          xcrun notarytool store-credentials "aurora-velopack" \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_PASSWORD" \
             --keychain "$keychain"
           echo "MACOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-          echo "MACOS_NOTARY_PROFILE=photon-cruncher-velopack" >> "$GITHUB_ENV"
+          echo "MACOS_NOTARY_PROFILE=aurora-velopack" >> "$GITHUB_ENV"
 
       - name: Download previous macOS stable release
         continue-on-error: true
@@ -234,10 +264,31 @@ jobs:
           MACOS_DEVELOPER_ID_INSTALLER: ${{ secrets.MACOS_DEVELOPER_ID_INSTALLER }}
         run: scripts/package_macos_update.sh
 
+      - name: Verify upgrade from stable 1.2.1
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_VERSION: ${{ needs.validate-source.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="dist/velopack-releases/com.photoncruncher.app-${CANDIDATE_VERSION}-stable-osx-arm64-full.nupkg"
+          test -f "$candidate"
+          scripts/smoke_stable_macos.sh "$candidate"
+
+      - name: Verify installed Aurora UI
+        timeout-minutes: 7
+        run: |
+          .build-venv/bin/python -m pip install websocket-client==1.9.0
+          .build-venv/bin/python scripts/smoke_installed_gui.py "$RUNNER_TEMP/photon-stable-upgrade/Applications/Photon Cruncher.app/Contents/MacOS/Photon Cruncher"
+
+      - name: Verify packaged CLI analysis
+        run: .build-venv/bin/python scripts/smoke_packaged_analysis.py "$RUNNER_TEMP/photon-stable-upgrade/Applications/Photon Cruncher.app/Contents/Resources/bin/photon-cruncher-cli"
+
       - name: Upload macOS release payload
         uses: actions/upload-artifact@v4
         with:
-          name: photon-cruncher-stable-macos-release
+          name: stable-macos-release
           path: dist/velopack-releases/*
           if-no-files-found: error
           retention-days: 7
@@ -250,122 +301,41 @@ jobs:
             security delete-keychain "${MACOS_SIGNING_KEYCHAIN}"
           fi
 
-  publish-windows:
-    name: Publish Windows installer, packages, and feed
-    needs:
-      - validate-source
-      - build-windows
-      - build-macos
+  publish:
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    name: Publish verified stable release
+    if: ${{ github.event_name == 'push' || !inputs.build_only }}
+    needs: [validate-source, build-windows, build-macos]
     runs-on: ubuntu-latest
-
     steps:
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          dotnet-version: "8.0.x"
-
-      - name: Install pinned Velopack CLI
-        run: dotnet tool install --global vpk --version "${{ needs.validate-source.outputs.velopack_version }}"
-
-      - name: Download Windows release payload
-        uses: actions/download-artifact@v4
-        with:
-          name: photon-cruncher-stable-windows-release
+          name: stable-windows-release
           path: release-windows
-
-      - name: Publish Windows stable channel
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          vpk upload github \
-            --outputDir release-windows \
-            --channel "${{ needs.build-windows.outputs.channel }}" \
-            --repoUrl "https://github.com/${{ github.repository }}" \
-            --token "$GITHUB_TOKEN" \
-            --publish true \
-            --pre false \
-            --merge true \
-            --releaseName "Photon Cruncher v${{ needs.validate-source.outputs.version }}" \
-            --tag "${{ needs.validate-source.outputs.release_tag }}" \
-            --targetCommitish "${{ github.sha }}"
-
-      - name: Use readable Windows installer name
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ needs.validate-source.outputs.release_tag }}
-          INSTALLER_STEM: ${{ needs.validate-source.outputs.archive_stem }}
-        run: |
-          set -euo pipefail
-          installer="$(find release-windows -maxdepth 1 -name '*-Setup.exe' -print -quit)"
-          [[ -n "${installer}" ]] || {
-            echo "Windows installer was not found in the release payload." >&2
-            exit 1
-          }
-          friendly="release-windows/${INSTALLER_STEM}-Windows.exe"
-          cp "${installer}" "${friendly}"
-          gh release upload \
-            "${RELEASE_TAG}" "${friendly}" \
-            --repo "${GITHUB_REPOSITORY}" --clobber
-          gh release delete-asset \
-            "${RELEASE_TAG}" "$(basename "${installer}")" \
-            --repo "${GITHUB_REPOSITORY}" --yes
-
-  publish-macos:
-    name: Publish signed macOS installer, packages, and feed
-    needs:
-      - validate-source
-      - build-macos
-      - publish-windows
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/download-artifact@v4
         with:
-          dotnet-version: "8.0.x"
-
-      - name: Install pinned Velopack CLI
-        run: dotnet tool install --global vpk --version "${{ needs.validate-source.outputs.velopack_version }}"
-
-      - name: Download macOS release payload
-        uses: actions/download-artifact@v4
-        with:
-          name: photon-cruncher-stable-macos-release
+          name: stable-macos-release
           path: release-macos
-
-      - name: Merge macOS stable channel into release
+      - name: Point the stable tag at the verified main commit
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          vpk upload github \
-            --outputDir release-macos \
-            --channel "${{ needs.build-macos.outputs.channel }}" \
-            --repoUrl "https://github.com/${{ github.repository }}" \
-            --token "$GITHUB_TOKEN" \
-            --publish true \
-            --pre false \
-            --merge true \
-            --releaseName "Photon Cruncher v${{ needs.validate-source.outputs.version }}" \
-            --tag "${{ needs.validate-source.outputs.release_tag }}" \
-            --targetCommitish "${{ github.sha }}"
-
-      - name: Use readable macOS installer name
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.validate-source.outputs.release_tag }}
-          INSTALLER_STEM: ${{ needs.validate-source.outputs.archive_stem }}
         run: |
           set -euo pipefail
-          installer="$(find release-macos -maxdepth 1 -name '*-Setup.pkg' -print -quit)"
-          [[ -n "${installer}" ]] || {
-            echo "macOS installer was not found in the release payload." >&2
-            exit 1
-          }
-          friendly="release-macos/${INSTALLER_STEM}-macOS.pkg"
-          cp "${installer}" "${friendly}"
-          gh release upload \
-            "${RELEASE_TAG}" "${friendly}" \
-            --repo "${GITHUB_REPOSITORY}" --clobber
-          gh release delete-asset \
-            "${RELEASE_TAG}" "$(basename "${installer}")" \
-            --repo "${GITHUB_REPOSITORY}" --yes
+          git fetch origin --tags
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$GITHUB_SHA"
+      - name: Verify payloads and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.validate-source.outputs.version }}
+          RELEASE_TAG: ${{ needs.validate-source.outputs.release_tag }}
+          INSTALLER_STEM: ${{ needs.validate-source.outputs.archive_stem }}
+        run: python3 scripts/publish_stable_release.py

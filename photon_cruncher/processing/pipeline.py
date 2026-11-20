@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import compress
 from typing import Iterable
 
 import numpy as np
@@ -22,6 +23,8 @@ class ProcessingSettings:
     smooth_factor: int = 10
     artifact_405: float = np.inf
     artifact_465: float = np.inf
+    use_isosbestic: bool = True
+    polynomial_degree: int = 1
 
 
 @dataclass
@@ -39,6 +42,7 @@ class ProcessedSignal:
     trial_numbers: list[int] = field(default_factory=list)
     trial_labels: list[str] = field(default_factory=list)
     trial_times: list[float] = field(default_factory=list)
+    baseline_standard_deviations: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -49,16 +53,23 @@ class ExtractedTrials:
 
 
 def _moving_mean(trace: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1 or trace.size == 0:
-        return trace.copy()
-    # Explicit slicing preserves trace length even for oversized windows.
-    window = min(window, 2 * trace.size)
-    kernel = np.ones(window, dtype=float)
+    return _moving_mean_rows(trace.reshape(1, -1), window)[0]
+
+
+def _moving_mean_rows(data: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1 or data.size == 0:
+        return data.copy()
+    length = data.shape[1]
+    window = min(window, 2 * length)
+    kernel = np.ones(window)
     start = (window - 1) // 2
-    stop = start + trace.size
-    summed = np.convolve(trace, kernel, mode="full")[start:stop]
-    counts = np.convolve(np.ones_like(trace, dtype=float), kernel, mode="full")[start:stop]
-    return summed / counts
+    section = slice(start, start + length)
+    # All trials share the same shrinking window at the endpoints.
+    counts = np.convolve(np.ones(length), kernel)[section]
+    smoothed = np.empty_like(data, dtype=float)
+    for idx, row in enumerate(data):
+        smoothed[idx] = np.convolve(row, kernel)[section] / counts
+    return smoothed
 
 
 def _extract_trials(
@@ -81,12 +92,13 @@ def _extract_trials_with_edge_drops(
     trials: list[np.ndarray] = []
     trial_numbers: list[int] = []
     dropped_edge_trials: list[int] = []
+    stream_size = int(stream.size)
     for trial_idx, onset in enumerate(onsets, start=1):
         start_time = onset + trange[0]
         end_time = onset + trange[1]
         start_idx = int(np.rint((start_time - t0) * fs + SAMPLE_INDEX_EPSILON))
         end_idx = int(np.rint((end_time - t0) * fs + SAMPLE_INDEX_EPSILON)) + 1
-        if start_idx < 0 or end_idx > stream.size:
+        if start_idx < 0 or end_idx > stream_size:
             dropped_edge_trials.append(trial_idx)
             continue
         if end_idx > start_idx:
@@ -99,31 +111,36 @@ def _extract_trials_with_edge_drops(
     )
 
 
-def _remove_artifacts(trials: list[np.ndarray], artifact: float) -> tuple[list[np.ndarray], np.ndarray]:
-    good_mask = []
-    for trial in trials:
-        has_pos = np.any(trial > artifact)
-        has_neg = np.any(trial < -artifact)
-        good_mask.append(not (has_pos or has_neg))
-    good_mask_array = np.array(good_mask, dtype=bool)
-    filtered = [trial for trial, keep in zip(trials, good_mask_array) if keep]
-    return filtered, good_mask_array
+def _artifact_mask(trials: list[np.ndarray], artifact: float) -> np.ndarray:
+    if not trials:
+        return np.array([], dtype=bool)
+    if np.isinf(artifact):
+        return np.ones(len(trials), dtype=bool)
 
+    lengths = {trial.size for trial in trials}
+    if len(lengths) == 1:
+        arr = np.vstack(trials)
+        return (arr.max(axis=1) <= artifact) & (arr.min(axis=1) >= -artifact)
 
-def _trim_trials(trials: list[np.ndarray], min_length: int) -> list[np.ndarray]:
-    return [trial[:min_length] for trial in trials]
+    good_mask = np.empty(len(trials), dtype=bool)
+    for idx, trial in enumerate(trials):
+        good_mask[idx] = not (np.any(trial > artifact) or np.any(trial < -artifact))
+    return good_mask
 
 
 def _downsample_trials(trials: list[np.ndarray], factor: int) -> np.ndarray:
+    length = min(trial.size for trial in trials)
     if factor <= 1:
-        return np.vstack([trial for trial in trials])
-    downsampled = []
-    for trial in trials:
-        bins = trial.size // factor
-        trimmed = trial[: bins * factor]
-        reshaped = trimmed.reshape(bins, factor)
-        downsampled.append(reshaped.mean(axis=1))
-    return np.vstack(downsampled)
+        return np.stack([trial[:length] for trial in trials])
+    bins = length // factor
+    if not bins:
+        return np.empty((len(trials), 0), dtype=float)
+    # Reduce each source view before stacking, so overlapping event windows
+    # never require a second matrix at the raw acquisition rate.
+    return np.stack([
+        trial[:bins * factor].reshape(bins, factor).mean(axis=1)
+        for trial in trials
+    ])
 
 
 def _mean_and_sem(z_data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -139,35 +156,27 @@ def _baseline_correct(z_data: np.ndarray, ts: np.ndarray, base_adjust: float) ->
     idx_candidates = np.where(ts > base_adjust)[0]
     if idx_candidates.size == 0:
         return z_data
-    idx = idx_candidates[0]
-    corrected = z_data.copy()
-    for row in range(corrected.shape[0]):
-        val = corrected[row, idx]
-        diff = 0 - val
-        if val < 0:
-            corrected[row, :] = corrected[row, :] + abs(diff)
-        elif val > 0:
-            corrected[row, :] = corrected[row, :] - abs(diff)
-    return corrected
+    idx = int(idx_candidates[0])
+    vals = z_data[:, idx]
+    return z_data - vals[:, None]
+
+
+def _zscore_trials(y_df_all: np.ndarray, baseline_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    base = y_df_all[:, baseline_mask]
+    zb = base.mean(axis=1, keepdims=True)
+    zsd = base.std(axis=1, ddof=1, keepdims=True)
+    return (y_df_all - zb) / zsd, zsd[:, 0]
 
 
 def process_channel(
     session: PhotometrySession,
-    iso_stream: str,
+    iso_stream: str | None,
     signal_stream: str,
     epoc: Epoc,
     settings: ProcessingSettings,
 ) -> ProcessedSignal:
-    stream_405 = session.streams[iso_stream]
     stream_465 = session.streams[signal_stream]
 
-    extracted_405 = _extract_trials_with_edge_drops(
-        stream_405.data,
-        stream_405.fs,
-        epoc.onset,
-        settings.trange,
-        stream_405.t0,
-    )
     extracted_465 = _extract_trials_with_edge_drops(
         stream_465.data,
         stream_465.fs,
@@ -175,64 +184,63 @@ def process_channel(
         settings.trange,
         stream_465.t0,
     )
-    trials_by_number_405 = dict(zip(extracted_405.trial_numbers, extracted_405.trials))
-    trials_by_number_465 = dict(zip(extracted_465.trial_numbers, extracted_465.trials))
-    kept_trial_numbers = sorted(
-        set(trials_by_number_405).intersection(trials_by_number_465)
-    )
-    trials_405 = [trials_by_number_405[number] for number in kept_trial_numbers]
-    trials_465 = [trials_by_number_465[number] for number in kept_trial_numbers]
-    dropped_edge_trials = sorted(
-        set(extracted_405.dropped_edge_trials) | set(extracted_465.dropped_edge_trials)
-    )
+    if settings.use_isosbestic:
+        if settings.polynomial_degree < 1:
+            raise ValueError("Polynomial fit degree must be at least 1.")
+        if not iso_stream or iso_stream not in session.streams:
+            raise ValueError(
+                "A paired 405 isosbestic stream is required when isosbestic fitting is enabled."
+            )
+        stream_405 = session.streams[iso_stream]
+        extracted_405 = _extract_trials_with_edge_drops(
+            stream_405.data,
+            stream_405.fs,
+            epoc.onset,
+            settings.trange,
+            stream_405.t0,
+        )
+        controls = dict(zip(extracted_405.trial_numbers, extracted_405.trials))
+        aligned = [
+            (number, trial)
+            for number, trial in zip(extracted_465.trial_numbers, extracted_465.trials)
+            if number in controls
+        ]
+        kept_trial_numbers = [number for number, _ in aligned]
+        trials_465 = [trial for _, trial in aligned]
+        trials_405 = [controls[number] for number in kept_trial_numbers]
+        dropped_edge_trials = sorted(
+            set(extracted_405.dropped_edge_trials) | set(extracted_465.dropped_edge_trials)
+        )
+    else:
+        kept_trial_numbers = extracted_465.trial_numbers
+        trials_465 = extracted_465.trials
+        dropped_edge_trials = extracted_465.dropped_edge_trials
 
-    if not trials_405 or not trials_465:
+    if not trials_465:
         raise ValueError("No complete trials remain after dropping edge trials.")
+    good = _artifact_mask(trials_465, settings.artifact_465)
+    if settings.use_isosbestic:
+        good &= _artifact_mask(trials_405, settings.artifact_405)
+    num_artifacts = int(len(good) - np.count_nonzero(good))
+    if num_artifacts:
+        if num_artifacts == len(good):
+            raise ValueError("No trials remain after artifact removal.")
+        trials_465 = list(compress(trials_465, good))
+        kept_trial_numbers = list(compress(kept_trial_numbers, good))
+        if settings.use_isosbestic:
+            trials_405 = list(compress(trials_405, good))
 
-    _, good_405 = _remove_artifacts(trials_405, settings.artifact_405)
-    _, good_465 = _remove_artifacts(trials_465, settings.artifact_465)
-    good_trials = good_405 & good_465
-    num_artifacts = int((~good_trials).sum())
-    trials_405 = [
-        trial for trial, keep in zip(trials_405, good_trials) if keep
-    ]
-    trials_465 = [
-        trial for trial, keep in zip(trials_465, good_trials) if keep
-    ]
-    kept_trial_numbers = [
-        number for number, keep in zip(kept_trial_numbers, good_trials) if keep
-    ]
-
-    if not trials_405 or not trials_465:
-        raise ValueError("No trials remain after artifact removal.")
-
-    min_len_405 = min(trial.size for trial in trials_405)
-    min_len_465 = min(trial.size for trial in trials_465)
-    trials_405 = _trim_trials(trials_405, min_len_405)
-    trials_465 = _trim_trials(trials_465, min_len_465)
-
-    f405 = _downsample_trials(trials_405, settings.downsample_factor)
     f465 = _downsample_trials(trials_465, settings.downsample_factor)
-    common_length = min(f405.shape[1], f465.shape[1])
-    f405 = f405[:, :common_length]
-    f465 = f465[:, :common_length]
+    if settings.use_isosbestic:
+        f405 = _downsample_trials(trials_405, settings.downsample_factor)
+        common_length = min(f405.shape[1], f465.shape[1])
+        f405 = f405[:, :common_length]
+        f465 = f465[:, :common_length]
 
-    min_length1 = f405.shape[1]
     min_length2 = f465.shape[1]
-
-    mean_signal1 = f405.mean(axis=0)
-    std_signal1 = f405.std(axis=0, ddof=1) / np.sqrt(f405.shape[0])
-    dc_signal1 = mean_signal1.mean()
-
-    mean_signal2 = f465.mean(axis=0)
-    std_signal2 = f465.std(axis=0, ddof=1) / np.sqrt(f465.shape[0])
-    dc_signal2 = mean_signal2.mean()
-
-    _ = std_signal1
-    _ = std_signal2
-
-    ts1 = settings.trange[0] + (np.arange(1, min_length1 + 1) / stream_405.fs * settings.downsample_factor)
-    ts2 = settings.trange[0] + (np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor)
+    ts2 = settings.trange[0] + (
+        np.arange(1, min_length2 + 1) / stream_465.fs * settings.downsample_factor
+    )
     baseline_mask = (ts2 < settings.baseline_per[1]) & (ts2 > settings.baseline_per[0])
     if np.count_nonzero(baseline_mask) < 2:
         raise ValueError(
@@ -240,31 +248,33 @@ def process_channel(
             "inside TRANGE. Adjust the baseline, TRANGE, or downsample factor."
         )
 
-    mean_signal1 = mean_signal1 - dc_signal1
-    mean_signal2 = mean_signal2 - dc_signal2
+    if settings.use_isosbestic:
+        if settings.polynomial_degree >= f405.size:
+            raise ValueError(
+                "Polynomial fit degree must be smaller than the number of fitted samples."
+            )
+        # Fit the control stream to the signal stream, preserving the
+        # MATLAB-compatible Fortran-order trial flattening.
+        bls = np.polyfit(
+            f405.flatten(order="F"),
+            f465.flatten(order="F"),
+            settings.polynomial_degree,
+        )
+        y_fit_all = np.polyval(bls, f405)
+        y_df_all = f465 - y_fit_all
+    else:
+        y_df_all = f465
 
-    # Predict the signal from its paired control before subtracting the fit.
-    bls = np.polyfit(f405.flatten(order="F"), f465.flatten(order="F"), 1)
-    y_fit_all = bls[0] * f405 + bls[1]
-    y_df_all = f465 - y_fit_all
-
-    zall = np.zeros_like(y_df_all)
-    for i in range(y_df_all.shape[0]):
-        zb = y_df_all[i, baseline_mask].mean()
-        zsd = y_df_all[i, baseline_mask].std(ddof=1)
-        zall[i, :] = (y_df_all[i, :] - zb) / zsd
-
-    zall_smooth = np.zeros_like(zall)
-    for k in range(zall.shape[0]):
-        zall_smooth[k, :] = _moving_mean(zall[k, :], settings.smooth_factor)
+    zall, baseline_sd = _zscore_trials(y_df_all, baseline_mask)
+    zall_smooth = _moving_mean_rows(zall, settings.smooth_factor)
 
     if settings.set_baseline:
-        zall_smooth = _baseline_correct(zall_smooth, ts1, settings.base_adjust)
+        zall_smooth = _baseline_correct(zall_smooth, ts2, settings.base_adjust)
 
     mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
 
     if settings.set_baseline:
-        zall = _baseline_correct(zall, ts1, settings.base_adjust)
+        zall = _baseline_correct(zall, ts2, settings.base_adjust)
 
     mean_z, sem_z = _mean_and_sem(zall)
 
@@ -280,6 +290,7 @@ def process_channel(
         num_edge_trials=len(dropped_edge_trials),
         dropped_edge_trials=dropped_edge_trials,
         trial_numbers=kept_trial_numbers,
+        baseline_standard_deviations=baseline_sd.tolist(),
     )
 
 
@@ -300,8 +311,8 @@ def subset_processed_signal(
     if not keep_mask.any():
         raise ValueError("None of the selected trials are available for this channel.")
 
-    zall = processed.zall[keep_mask, :].copy()
-    zall_smooth = processed.zall_smooth[keep_mask, :].copy()
+    zall = processed.zall[keep_mask]
+    zall_smooth = processed.zall_smooth[keep_mask]
     mean_z, sem_z = _mean_and_sem(zall)
     mean_z_smooth, sem_z_smooth = _mean_and_sem(zall_smooth)
     kept_trial_numbers = [
@@ -325,6 +336,18 @@ def subset_processed_signal(
         if len(processed.trial_times) == len(trial_numbers)
         else []
     )
+    baseline_standard_deviations = (
+        [
+            value
+            for value, keep in zip(
+                processed.baseline_standard_deviations,
+                keep_mask,
+            )
+            if keep
+        ]
+        if len(processed.baseline_standard_deviations) == len(trial_numbers)
+        else []
+    )
 
     return ProcessedSignal(
         ts=processed.ts.copy(),
@@ -340,21 +363,30 @@ def subset_processed_signal(
         trial_numbers=kept_trial_numbers,
         trial_labels=trial_labels,
         trial_times=trial_times,
+        baseline_standard_deviations=baseline_standard_deviations,
     )
 
 
-def available_channels(session: PhotometrySession) -> dict[str, tuple[str, str, int]]:
-    mapping: dict[str, tuple[str, str, int]] = {}
-    if "x405A" in session.streams:
-        if "x465A" in session.streams:
-            mapping["A_465"] = ("x405A", "x465A", 10)
-        if "x560A" in session.streams:
-            mapping["A_560"] = ("x405A", "x560A", 30)
-    if "x405C" in session.streams:
-        if "x465C" in session.streams:
-            mapping["C_465"] = ("x405C", "x465C", 50)
-        if "x560C" in session.streams:
-            mapping["C_560"] = ("x405C", "x560C", 20)
+def available_channels(session: PhotometrySession) -> dict[str, tuple[str | None, str, int]]:
+    """Return signal channels, with a paired 405 stream when available.
+
+    Signal-only sessions remain analyzable when isosbestic fitting is disabled.
+    Corrected processing still requires the corresponding 405 stream.
+    """
+    mapping: dict[str, tuple[str | None, str, int]] = {}
+    channel_specs = (
+        ("A_465", "x405A", "x465A", 10),
+        ("A_560", "x405A", "x560A", 30),
+        ("C_465", "x405C", "x465C", 50),
+        ("C_560", "x405C", "x560C", 20),
+    )
+    for channel_key, control_stream, signal_stream, default_smooth in channel_specs:
+        if signal_stream in session.streams:
+            mapping[channel_key] = (
+                control_stream if control_stream in session.streams else None,
+                signal_stream,
+                default_smooth,
+            )
     return mapping
 
 

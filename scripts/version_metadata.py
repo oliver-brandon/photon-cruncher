@@ -24,8 +24,9 @@ def metadata() -> dict[str, str]:
     )
     return {
         "version": values["__version__"],
-        "ui_version": values["UI_VERSION"],
+        "ui_version": values["AURORA_UI_VERSION"],
         "app_name": values["APP_NAME"],
+        "install_app_name": values["INSTALL_APP_NAME"],
         "bundle_app_name": values["BUNDLE_APP_NAME"],
         "archive_stem": values["ARCHIVE_STEM"],
         "bundle_identifier": values["BUNDLE_IDENTIFIER"],
@@ -60,17 +61,6 @@ def validate_repo(values: dict[str, str]) -> list[str]:
             'version = { attr = "photon_cruncher.version.__version__" }',
             f'"velopack=={values["velopack_version"]}"',
         ),
-        PROJECT_ROOT / "photon_cruncher" / "main.py": (
-            "run_velopack_startup()",
-        ),
-        PROJECT_ROOT / "photon_cruncher" / "gui" / "main_window.py": (
-            "UpdateController(self)",
-        ),
-        PROJECT_ROOT / "photon_cruncher" / "gui" / "updater.py": (
-            "Check for Updates…",
-            "6 * 60 * 60 * 1000",
-            "Install and restart",
-        ),
         PROJECT_ROOT / "scripts" / "build_macos_app.sh": (
             "version_metadata.py",
             "--field bundle_app_name",
@@ -90,21 +80,22 @@ def validate_repo(values: dict[str, str]) -> list[str]:
             "velopack_hiddenimports",
         ),
         PROJECT_ROOT / ".github" / "workflows" / "build-desktop-apps.yml": (
-            '      - "v*"',
-            "vpk upload github",
+            "v*",
+            "scripts/publish_stable_release.py",
             "--pre false",
             "MACOS_DEVELOPER_ID_APPLICATION_P12_BASE64",
-            "${INSTALLER_STEM}-Windows.exe",
-            "${INSTALLER_STEM}-macOS.pkg",
+            "scripts/smoke_stable_windows.ps1",
+            "scripts/smoke_stable_macos.sh",
         ),
         PROJECT_ROOT / "scripts" / "package_macos_update.sh": (
             "--field update_channel",
             "--mainExe",
             '--packTitle "${app_name}"',
             "--signAppIdentity",
-            "--signInstallIdentity",
             "--notaryProfile",
-            "--signEntitlements",
+            "codesign",
+            "--options",
+            "--timestamp",
             "notarytool log",
         ),
         PROJECT_ROOT / "scripts" / "package_windows_update.ps1": (
@@ -114,7 +105,7 @@ def validate_repo(values: dict[str, str]) -> list[str]:
             "*-full.nupkg",
         ),
         PROJECT_ROOT / "packaging" / "velopack" / "release-notes.md": (
-            f"# Photon Cruncher {values['version']}",
+            f"# Photon Cruncher Aurora {values['version']}",
         ),
     }
     for path, needles in required_text.items():
@@ -125,7 +116,9 @@ def validate_repo(values: dict[str, str]) -> list[str]:
 
     literal_targets = (
         PROJECT_ROOT / "photon_cruncher" / "__init__.py",
-        PROJECT_ROOT / "photon_cruncher" / "main.py",
+        PROJECT_ROOT / "photon_cruncher" / "product.py",
+        PROJECT_ROOT / "photon_cruncher" / "gui_aurora" / "static" / "index.html",
+        PROJECT_ROOT / "photon_cruncher" / "gui_aurora" / "static" / "js" / "app.js",
         PROJECT_ROOT / "scripts" / "build_macos_app.sh",
         PROJECT_ROOT / "scripts" / "build_windows_app.ps1",
         PROJECT_ROOT / "packaging" / "macos" / "PhotonCruncher.spec",
@@ -138,8 +131,7 @@ def validate_repo(values: dict[str, str]) -> list[str]:
         for literal in forbidden:
             if literal in text:
                 errors.append(
-                    f"{path.relative_to(PROJECT_ROOT)} hard-codes canonical "
-                    f"value {literal!r}"
+                    f"{path.relative_to(PROJECT_ROOT)} hard-codes canonical value {literal!r}"
                 )
     return errors
 
