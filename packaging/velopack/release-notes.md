@@ -1,7 +1,6 @@
-# Photon Cruncher Aurora 2.0.7
+# Photon Cruncher Aurora 2.1.0
 
-- Improves heatmap responsiveness for large trial sets.
-- Reuses analyzed results for exports and reduces memory used during processing.
-- Speeds up event classification and compact plot responses.
-- Supports Aurora source development on Ubuntu, including the native desktop bridge.
-- Consolidates shared analysis and export logic while preserving analysis provenance.
+- The refreshed workspace keeps Session intake, Align, Trial explorer, and Batch export in familiar locations, with graphite panels, mint actions, and translucent navigation where supported.
+- Plot labels leave room around zero, and the status bar shows when the current analysis is ready to export.
+- Windows and Ubuntu match the refreshed Mac controls, with platform-appropriate fonts and keyboard shortcuts.
+- Fixes a macOS startup crash that could occur while Qt was setting the application icon.
