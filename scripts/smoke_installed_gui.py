@@ -83,7 +83,8 @@ def run(executable: Path, source: Path, output: Path) -> None:
              "document.querySelector('#batchStatus').textContent === 'FAIL'", "batch completion")
         status = evaluate("document.querySelector('#batchStatus').textContent")
         if status != "DONE":
-            raise RuntimeError(f"Batch failed: {evaluate('document.querySelector(\"#batchDetail\").textContent')}")
+            detail = evaluate("document.querySelector('#batchDetail').textContent")
+            raise RuntimeError(f"Batch failed: {detail}")
         outcomes = evaluate("Array.from(document.querySelectorAll('#batchResults .batch-result-status'), "
                             "item => item.textContent.trim().toLowerCase())")
         if not outcomes or any(outcome != "exported" for outcome in outcomes):
