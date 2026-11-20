@@ -42,24 +42,28 @@ def assets_dir() -> Path:
 
 def set_app_icon(app) -> None:
     """Apply the Aurora monogram icon to a Qt application."""
-    from PySide6 import QtGui
-
     icons_dir = assets_dir() / "icons"
-    icns_path = icons_dir / "photon-cruncher-aurora.icns"
-    ico_path = icons_dir / "photon-cruncher-aurora.ico"
-    png_dir = icons_dir / "png"
-
-    icon = QtGui.QIcon()
-    if sys.platform == "darwin" and icns_path.exists():
-        icon.addFile(str(icns_path))
+    if sys.platform == "darwin":
+        # The app bundle supplies the Dock icon. For source runs, use AppKit
+        # if available: Qt's setWindowIcon can trap in QImage::toCGImage on macOS.
+        if getattr(sys, "frozen", False):
+            return
         try:
             from AppKit import NSApplication, NSImage  # type: ignore
-
-            ns_icon = NSImage.alloc().initWithContentsOfFile_(str(icns_path))
+        except ImportError:
+            return
+        icns_path = icons_dir / "photon-cruncher-aurora.icns"
+        ns_icon = NSImage.alloc().initWithContentsOfFile_(str(icns_path))
+        if ns_icon is not None:
             NSApplication.sharedApplication().setApplicationIconImage_(ns_icon)
-        except Exception:
-            pass
-    elif sys.platform.startswith("win") and ico_path.exists():
+        return
+
+    from PySide6 import QtGui
+
+    ico_path = icons_dir / "photon-cruncher-aurora.ico"
+    png_dir = icons_dir / "png"
+    icon = QtGui.QIcon()
+    if sys.platform.startswith("win") and ico_path.exists():
         icon.addFile(str(ico_path))
     elif png_dir.exists():
         for path in sorted(png_dir.glob("photon-cruncher-aurora-*.png")):

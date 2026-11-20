@@ -54,6 +54,24 @@ class AuroraShellSpikeTests(unittest.TestCase):
             main(["--browser"])
         self.assertEqual(raised.exception.code, 2)
 
+    def test_macos_startup_avoids_qt_icon_conversion(self) -> None:
+        from photon_cruncher import product
+
+        for appkit in (None, mock.Mock()):
+            with (
+                self.subTest(appkit_available=appkit is not None),
+                mock.patch.object(product.sys, "platform", "darwin"),
+                mock.patch.dict("sys.modules", {"AppKit": appkit}),
+                mock.patch("PySide6.QtGui.QIcon") as icon,
+            ):
+                icon.return_value.isNull.return_value = False
+                app = mock.Mock()
+                product.set_app_icon(app)
+                app.setWindowIcon.assert_not_called()
+                if appkit is not None:
+                    native_app = appkit.NSApplication.sharedApplication.return_value
+                    native_app.setApplicationIconImage_.assert_called_once()
+
     def test_shell_module_imports(self) -> None:
         from photon_cruncher.gui_aurora import shell
 
