@@ -2,6 +2,12 @@
 (function () {
   "use strict";
 
+  const platform = navigator.userAgentData?.platform || navigator.platform || "";
+  const isMac = /mac/i.test(platform);
+  document.documentElement.dataset.platform = isMac ? "macos"
+    : /win/i.test(platform) ? "windows"
+    : /linux/i.test(platform) ? "linux" : "other";
+
   const state = {
     view: "data",
     path: null,
@@ -2758,7 +2764,7 @@
     if (hasSession()) {
       openBtn.textContent = "Add MAT files";
       $("dataHint").textContent =
-        "Multi-select MAT files (⌘/Ctrl-click) or TDT tanks/blocks. Click a session in Imported sessions to switch analysis focus.";
+        `Use ${isMac ? "⌘" : "Ctrl"}-click to select multiple files or folders. Select an imported session to analyze it.`;
       $("dataLede").textContent =
         state.sources.length > 1
           ? `${state.sources.length} recordings imported. Select a recording below to continue.`
@@ -3316,7 +3322,6 @@
   }
 
   function wireChrome() {
-    const isMac = /mac/i.test(navigator.userAgentData?.platform || navigator.platform);
     document.querySelectorAll(".nav-item kbd").forEach((hint) => {
       const number = hint.textContent;
       hint.textContent = isMac ? `⌘${number}` : `Ctrl+${number}`;

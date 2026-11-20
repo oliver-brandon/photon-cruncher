@@ -538,6 +538,8 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
 
         self.view = QWebEngineView(self)
         page = _QuietPage(self.view)
+        if sys.platform != "darwin":
+            page.setBackgroundColor(QtGui.QColor("#10141e"))
         self.view.setPage(page)
         settings = self.view.settings()
         settings.setAttribute(
@@ -601,10 +603,14 @@ class AuroraShellWindow(QtWidgets.QMainWindow):
         if sys.platform != "darwin":
             menu.setStyleSheet(
                 """
-                QMenuBar { background: #0b1220; color: #e8f7ff; padding: 2px; }
-                QMenuBar::item:selected { background: #12343a; }
-                QMenu { background: #0f1724; color: #e8f7ff; border: 1px solid #1f3347; }
-                QMenu::item:selected { background: #164e56; }
+                QMenuBar { background: #222937; color: #f0f3f9; padding: 2px 6px; }
+                QMenuBar::item { padding: 4px 8px; border-radius: 6px; }
+                QMenuBar::item:selected { background: #344958; }
+                QMenu { background: #222937; color: #f0f3f9; border: 1px solid #536273; padding: 4px; }
+                QMenu::item { padding: 6px 22px; border-radius: 6px; }
+                QMenu::item:selected { background: #344958; }
+                QMenu::item:disabled { color: #9ba7b9; }
+                QMenu::separator { height: 1px; background: #536273; margin: 4px 8px; }
                 """
             )
 

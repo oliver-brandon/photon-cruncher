@@ -1,7 +1,16 @@
 (function () {
   "use strict";
 
+  // Canvas text does not inherit CSS fonts. Resolve the workspace fonts on
+  // the first draw, after the app has identified its desktop platform.
+  let uiFont;
+  let monoFont;
   function prep(canvas) {
+    if (!uiFont) {
+      const style = getComputedStyle(canvas);
+      uiFont = style.getPropertyValue("--font").trim() || "system-ui";
+      monoFont = style.getPropertyValue("--mono").trim() || "monospace";
+    }
     const dpr = devicePixelRatio || 1;
     const w = canvas.clientWidth || canvas.width;
     const h = canvas.clientHeight || canvas.height;
@@ -77,14 +86,14 @@
   function drawTitle(ctx, title, w) {
     if (!title) return;
     ctx.fillStyle = "rgba(231,248,255,0.92)";
-    ctx.font = "600 11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.font = `600 11px ${uiFont}`;
     ctx.textAlign = "left";
     ctx.fillText(clippedText(ctx, title, Math.max(40, w - 24)), 12, 18);
   }
 
   function drawEmpty(ctx, w, h, message) {
     ctx.fillStyle = "rgba(139,163,184,0.9)";
-    ctx.font = "12px 'SFMono-Regular', Consolas, monospace";
+    ctx.font = `12px ${monoFont}`;
     ctx.textAlign = "center";
     ctx.fillText(message || "no data", w / 2, h / 2);
     ctx.textAlign = "left";
@@ -121,7 +130,7 @@
     const X = (t) => plot.l + ((t - x0) / xSpan) * plot.w;
     const Y = (v) => plot.t + ((yb.max - v) / (yb.max - yb.min)) * plot.h;
 
-    ctx.font = "10px 'SFMono-Regular', Consolas, monospace";
+    ctx.font = `10px ${monoFont}`;
     ctx.fillStyle = "rgba(139,163,184,0.88)";
     ctx.strokeStyle = "rgba(100,140,180,0.08)";
     for (const value of ticksIncludingZero(yb.min, yb.max, 4, plot.h, 14)) {
@@ -226,7 +235,7 @@
     ctx.globalAlpha = 1;
 
     ctx.fillStyle = "rgba(139,163,184,0.95)";
-    ctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.font = `11px ${uiFont}`;
     ctx.textAlign = "center";
     ctx.fillText("Time (s)", plot.l + plot.w / 2, h - 8);
     ctx.save();
@@ -338,7 +347,7 @@
     }
 
     ctx.fillStyle = "rgba(139,163,184,0.9)";
-    ctx.font = "10px 'SFMono-Regular', Consolas, monospace";
+    ctx.font = `10px ${monoFont}`;
     if (times.length) {
       const x0 = times[0];
       const x1 = times[times.length - 1];
@@ -367,7 +376,7 @@
       ctx.fillText(label, plot.l - 6, y + 3);
     });
     const plotBottom = plot.t + plot.h;
-    ctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.font = `11px ${uiFont}`;
     ctx.textAlign = "center";
     ctx.fillText("Time (s)", plot.l + plot.w / 2, plotBottom + 30);
     const barY = plotBottom + 38;
@@ -381,7 +390,7 @@
     ctx.strokeStyle = "rgba(255,255,255,0.24)";
     ctx.strokeRect(plot.l, barY, plot.w, barHeight);
     ctx.fillStyle = "rgba(139,163,184,0.95)";
-    ctx.font = "9px 'SFMono-Regular', Consolas, monospace";
+    ctx.font = `9px ${monoFont}`;
     ctx.textAlign = "left";
     ctx.fillText(formatTick(-limit), plot.l, barY + 18);
     ctx.textAlign = "center";

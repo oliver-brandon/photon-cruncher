@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      desktop_smoke:
+        description: Capture and test the Windows desktop workspace
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -62,3 +67,18 @@ jobs:
           else
             git show --format= --check HEAD
           fi
+      - name: Exercise Windows desktop workspace
+        timeout-minutes: 3
+        if: github.event_name == 'workflow_dispatch' && inputs.desktop_smoke && matrix.os == 'windows-latest'
+        env:
+          QT_QPA_PLATFORM: windows
+          PHOTON_CRUNCHER_DEV: '1'
+        run: python scripts/smoke_aurora_desktop.py "$RUNNER_TEMP/aurora-desktop"
+      - name: Upload desktop screenshots
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.desktop_smoke && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurora-windows-desktop
+          path: ${{ runner.temp }}/aurora-desktop/*.png
+          if-no-files-found: warn
+          retention-days: 3

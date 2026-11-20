@@ -23,6 +23,16 @@
   --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 
+/* Local font families preserve the metrics of the desktop workspace without a download. */
+:root[data-platform="windows"] {
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: Consolas, ui-monospace, monospace;
+}
+:root[data-platform="linux"] {
+  --font: Inter, "Noto Sans", system-ui, sans-serif;
+  --mono: "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+}
+
 * { box-sizing: border-box; }
 html, body {
   margin: 0;
@@ -311,6 +321,52 @@ h1 {
 .field input:focus, .field select:focus, .search:focus {
   border-color: rgba(0, 245, 212, 0.45);
   box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.12);
+}
+/* Use the Mac workspace's control geometry on Windows and Linux. The actual
+   select and checkbox elements still handle menus, keyboard focus and input. */
+@media (forced-colors: none) {
+  :root:is([data-platform="windows"], [data-platform="linux"]) select {
+    appearance: none;
+    min-height: 34px;
+    padding-inline-end: 31px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m2.5 4.5 3.5 3.5 3.5-3.5' fill='none' stroke='%23c0cada' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-size: 12px;
+    background-position: right 10px center;
+    background-repeat: no-repeat;
+  }
+  :root:is([data-platform="windows"], [data-platform="linux"]) input[type="checkbox"] {
+    appearance: none;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border: 1px solid var(--dim);
+    border-radius: 4px;
+    background-color: var(--panel-solid);
+    vertical-align: middle;
+  }
+  :root:is([data-platform="windows"], [data-platform="linux"]) input[type="checkbox"]:checked {
+    background-color: var(--cyan);
+    border-color: var(--cyan);
+  }
+  :root:is([data-platform="windows"], [data-platform="linux"]) input[type="checkbox"]:checked::before {
+    content: "";
+    width: 4px;
+    height: 8px;
+    margin-top: -2px;
+    border: solid #092d31;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  :root:is([data-platform="windows"], [data-platform="linux"]) input[type="checkbox"]:disabled {
+    opacity: .55;
+  }
+  :root:is([data-platform="windows"], [data-platform="linux"]) {
+    scrollbar-width: thin;
+    scrollbar-color: #647386 var(--void);
+  }
 }
 .field-grid {
   display: grid;
@@ -727,7 +783,7 @@ button.import-row.active {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--mute);
-  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 12px/1.55 var(--mono);
 }
 
 .processing-details {
